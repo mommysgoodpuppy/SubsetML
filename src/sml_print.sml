@@ -5,7 +5,7 @@ structure SmlPrint = struct
   open Syntax
   open Doc
 
-  val longid = fn (qs, s) => SubsetString.concatWith (qs @ [s], ".")
+  val longid = fn (qs, s) => SubsetString.concatWith (SubsetList.append (qs, [s]), ".")
 
   val scon = fn
       SInt s => s
@@ -163,8 +163,8 @@ structure SmlPrint = struct
       DVal (p, vs, plain, recs) =>
         let
           val bindings =
-            SmlList.map binding plain
-            @ (case recs of
+            SubsetList.append (SmlList.map binding plain,
+              case recs of
                  [] => []
                | first :: rest => cat (text "rec ", binding first) :: SmlList.map binding rest)
         in

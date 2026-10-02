@@ -10,7 +10,7 @@ structure Normalize = struct
 
   val rec pat = fn p =>
     case p of
-      PId (_, ([], "nil")) => PList []
+      PId (ignored1, ([], "nil")) => PList []
     | PRecord (pos, fields) => PRecord (pos, SmlList.map (fn (l, q) => (l, pat q)) fields)
     | PTuple ps => PTuple (SmlList.map pat ps)
     | PList ps => PList (SmlList.map pat ps)
@@ -20,13 +20,13 @@ structure Normalize = struct
          | (h', t') => PApp (pos, ([], "::"), PTuple [h', t']))
     | PApp (pos, id, q) => PApp (pos, id, pat q)
     | PTyped (q, t) => PTyped (pat q, t)
-    | _ => p
+    | ignored2 => p
 
   val rules = fn (f, g, rs) => SmlList.map (fn (p, e) => (f p, g e)) rs
 
   val rec exp = fn e =>
     case e of
-      EId (_, ([], "nil")) => EList []
+      EId (ignored3, ([], "nil")) => EList []
     | ERecord (pos, fields) => ERecord (pos, SmlList.map (fn (l, x) => (l, exp x)) fields)
     | ETuple es => ETuple (SmlList.map exp es)
     | EList es => EList (SmlList.map exp es)
@@ -48,15 +48,15 @@ structure Normalize = struct
     | ECase (x, rs) => ECase (exp x, rules (pat, exp, rs))
     (* First-class real comparisons are expanded to typed Workman lambdas. Contract
        their exact eta expansion for comparison; both operands must be the bound names. *)
-    | EFn [(PTuple [PTyped (PId (_, ([], x)), TyCon ([], ([], "real"))),
-                          PTyped (PId (_, ([], y)), TyCon ([], ([], "real")))],
+    | EFn [(PTuple [PTyped (PId (ignored4, ([], x)), TyCon ([], ([], "real"))),
+                          PTyped (PId (ignored5, ([], y)), TyCon ([], ([], "real")))],
                   EApp (EId (p, (["Real"], opr)),
-                        ETuple [EId (_, ([], a)), EId (_, ([], b))]))] =>
+                        ETuple [EId (ignored6, ([], a)), EId (ignored7, ([], b))]))] =>
         if (opr = "==" orelse opr = "!=") andalso x = a andalso y = b andalso x <> y
         then EId (p, (["Real"], opr))
-        else (case e of EFn rs => EFn (rules (pat, exp, rs)) | _ => e)
+        else (case e of EFn rs => EFn (rules (pat, exp, rs)) | ignored8 => e)
     | EFn rs => EFn (rules (pat, exp, rs))
-    | _ => e
+    | ignored9 => e
 
   and decs = fn ds =>
     SmlList.concat (SmlList.map (fn

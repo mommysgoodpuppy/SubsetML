@@ -15,21 +15,23 @@ failed matches. These costs exist even when a module has no explicit kernel call
 not extra List, Option or Result entry points in the custom Basis.
 
 Substring, collection traversal, ASCII classification, escaping, formatting integers and
-association tables can be source algorithms. All custom modules except SubsetString make no direct qualified
-host calls; SubsetString uses the one extraction operation. The source real comparator reports NaN as Unordered without host `Real.compare`.
+association tables can be source algorithms. The algorithm modules make no direct qualified host calls; SubsetString uses one extraction
+operation, while SubsetIo and SubsetProcess expose the six-operation CLI host profile. The source real comparator reports NaN as Unordered without host `Real.compare`.
 Character literals/equality suffice for the new ASCII tables, even though the
 current Workman operator `<` cannot compare characters.
 
 ## A practical first budget
 
-With native immutable strings and hardware real numbers, a reasonable candidate is **7–10
-library entry points beyond language operators**, using one native-string extraction operation. Counted individually, the families are:
+With native immutable strings and hardware real numbers, the implemented compiler CLI uses
+**7 library entry points beyond language operators**: one native-string extraction operation
+and six host/process operations. Extra numeric entry points remain candidates for a broader
+library, rather than requirements of the current compiler. Counted individually, the families are:
 
 | Family | Candidate operations | Count | What source can derive |
 |---|---|---:|---|
 | Text representation | native string to numeric codes | 1 | slices, explode/implode wrappers, concatenation, search, splitting, escaping, code-based comparisons |
 | Numeric support | floor, finite-value test, real formatting | 0–3 additional | length/index loops, min/max, checked index validation, integer division/modulo with defined ranges; source formatting may replace the formatter |
-| Host/process | arguments, read whole file, write whole file, write stdout, write stderr, exit | 6 | the compiler's command-line driver and diagnostics |
+| Host/process | arguments, read whole file, write whole file, write stdout, write stderr, exit | 6 implemented | the compiler's command-line driver and diagnostics |
 
 The numeric row is provisional: floor and finite testing may be provided as language/runtime
 intrinsics, and formatting may be source code. Moving a function between the language and
@@ -43,39 +45,48 @@ Code conversion no longer adds primitive entry points. Opaque native-string extr
 or streaming interface later. No array, reference, mutable hash table, general FFI, subprocess,
 clock or directory-enumeration API is required by the present compiler algorithm.
 
-The file operations should return Result, with typed errors and documented encoding, byte/text,
-file replacement and short-write behavior. Reading/writing whole files avoids exposing stream
+The implemented file operations return Result, with typed errors and documented byte/text,
+file replacement and short-write behavior (see the Basis I/O profile). Reading/writing whole files avoids exposing stream
 handles, close operations and exception recovery to the initial compiler. `writeStdout` and
-`writeStderr` should write exactly their input; a source `writeLine` can add a newline.
+`writeStderr` write exactly their input; a source `writeLine` can add a newline.
 Targets without a process can receive source text and return output through an embedding API,
 so the six host entry points belong to a command-line profile rather than every Basis program.
 
 ## Evidence from the current compiler
 
-The compiler currently uses a much broader bootstrap interface. Its actual needs separate as
-follows; these observations come from the source, not a claim about all SML implementations.
+The compiler uses source implementations for library algorithms and seven explicit host entry
+points. Its dependencies separate as follows; these observations describe this compiler, not
+all SML implementations.
 
-| Current source | Bootstrap dependencies | Migration direction |
+| Current source | Dependencies | Implementation |
 |---|---|---|
 | `src/lexer.sml`, `src/wm_lexer.sml` | SubsetSource, CompilerText, SubsetChar, real arithmetic/equality | migrated to SubsetSource/CompilerText; source lookup, slices and literal decoding |
-| `src/print.sml`, `src/sml_print.sml`, `src/wm_print.sml` | character/string escaping, concatenation, numeric formatting | source escaping/builders; settle code access and real formatting contracts |
+| `src/print.sml`, `src/sml_print.sml` | shared SML byte escaping and concatenation | migrated to source; SML printer graph checks and runs in Workman |
+| `src/wm_print.sml` | source byte conversion, concatenation, character tables and bounded hex arithmetic | migrated; printer graph checks and runs in Workman without native string indexing or numeric div/mod |
 | `src/doc.sml` | SubsetSource, source trimming/splitting/repetition, real comparisons | migrated; renderer graph checks and runs in Workman |
 | `src/parser.sml` | source text conversion/concatenation, portable SmlList/SmlOption, numeric comparison | parser graph checks and runs in Workman; tuple patterns use explicit fields |
-| elaborator, normalization and translation | list/option routines, numeric list indices/lengths, min/max and comparison | custom source collections; explicit index errors and real contracts |
-| `src/main.sml` | `TextIO.openIn/inputAll/closeIn/openOut/output/closeOut/stdErr`, `print`, `CommandLine.arguments`, `OS.Process.exit/success/failure` | six host operations above; stream mechanics stay inside adapters |
+| types, integer map, unification, environments, elaborator, bootstrap environment, normalization and translation | source lists, exact-natural arithmetic, byte text operations | compiler core checks and runs in Workman; no numeric formatter, floor/div/mod helper or native text indexing |
+| `src/main.sml` | SubsetIo whole-file byte reads/writes, stdout/stderr; SubsetProcess arguments and exit | six host operations above; stream mechanics stay inside adapters |
 
 `lib/num.sml` currently uses MLton integers, exceptions and full-SML functions behind its
 real-valued interface. Those implementation details are bootstrap scaffolding, not intrinsic
 requirements for a future SubsetML compiler. Replacing partial calls requires auditing callers
 and handling their Result values; renaming bindings alone is insufficient.
 
-There are two remaining kinds of self-hosting work. First, running the generated translator/
-checker in Workman needs migration away from unresolved bootstrap libraries and target support
-for the eventual kernel. Second, native self-hosting needs a code generator and runtime; these
-are not implemented yet. A compiler that emits artifacts can use an external build/link step:
+The generated translator/checker runs in Workman using the staged kernel adapters. Checking
+and translating the compiler itself also requires its recursive algorithms to work within the
+target runtime. Native self-hosting still needs a code generator and runtime; these are not
+implemented yet. A compiler that emits artifacts can use an external build/link step:
 self-hosting does not require it to launch a compiler, dynamically load code or expose an FFI.
 `make bootstrap-check` currently validates SubsetML → Workman → SubsetML and rebuilds with MLton;
 it does not establish execution of the whole compiler in Workman or a native backend.
+`make wm-selfcheck` runs the generated compiler against its complete SubsetML source graph.
+The generated compiler also reproduces the native compiler's Workman output byte for byte,
+excluding the two generated host declarations that staging replaces with target adapters.
+Running its `roundtrip` command on the complete source graph also succeeds. Direct tail-call
+scanning and accumulator-based item parsing avoid token-count stack growth. Deeply nested
+AST elaboration still uses ordinary recursion and can exceed Workman's JavaScript stack;
+removing that limit would require source traversal changes, not another host operation.
 
 ## Contracts to settle before freezing the ABI
 
@@ -97,5 +108,10 @@ byte sequences; host I/O remains separate. Source codecs/readers, string constru
 Both lexers now convert native input once and use the source-built byte index.
 
 The executable module dependency inventory remains [basis-dependencies.json](basis-dependencies.json).
-Only implemented extraction is listed there; candidate numeric and host/process entries remain
+Implemented extraction and CLI host operations are listed there; candidate numeric entries remain
 provisional.
+
+The generated CLI now checks and runs in Workman using SubsetIo and SubsetProcess.
+File access, exact standard-output/error writes, arguments and exit are the six host operations
+in `lib/subset_host.*`; checked byte conversion, path validation and diagnostics are source
+algorithms. The CLI no longer imports TextIO, CommandLine or OS.Process.

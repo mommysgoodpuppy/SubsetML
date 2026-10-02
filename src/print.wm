@@ -1,19 +1,22 @@
 // Prints abstract syntax as S-expressions, for tests and debugging.
 
 from "./syntax.wm" import * as Syntax;
+from "./subset_string.wm" import * as SubsetString;
+from "./subset_list.wm" import * as SubsetList;
+from "./compiler_text.wm" import * as CompilerText;
 from "./sml_list.wm" import * as SmlList;
 
 from "./syntax.wm" import *;
 
-let node = (name, parts) => { "(" ++ String.concatWith(" ")([name, ..parts]) ++ ")" };
+let node = (name, parts) => { "(" ++ SubsetString.concatWith([name, ..parts], " ") ++ ")" };
 
-let longid = (quals, id) => { String.concatWith(".")(List.append(quals, [id])) };
+let longid = (quals, id) => { SubsetString.concatWith(SubsetList.append(quals, [id]), ".") };
 
 let scon = match {
   SInt(s) => { s },
   SReal(s) => { s },
-  SString(s) => { "\"" ++ String.toString(s) ++ "\"" },
-  SChar(c) => { "#\"" ++ Char.toString(c) ++ "\"" }
+  SString(s) => { "\"" ++ CompilerText.escapeSmlString(s) ++ "\"" },
+  SChar(c) => { "#\"" ++ CompilerText.escapeSmlChar(c) ++ "\"" }
 };
 
 let rec ty = match {
@@ -77,13 +80,11 @@ and dec = match {
   DVal(_, vs, plain, recs) => {
     node(
       "val",
-      List.append(
+      SubsetList.concat([
         [tyvars(vs)],
-        List.append(
-          SmlList.map(binding)(plain),
-          if (SmlList.null(recs)) { [] } else { [node("rec", SmlList.map(binding)(recs))] }
-        )
-      )
+        SmlList.map(binding)(plain),
+        if (SmlList.null(recs)) { [] } else { [node("rec", SmlList.map(binding)(recs))] }
+      ])
     )
   },
   DType(_, bs) => {
@@ -98,7 +99,9 @@ and dec = match {
       SmlList.map((vs, tycon, cs) => { node(tycon, [tyvars(vs), ..SmlList.map(con)(cs)]) })(bs)
     )
   },
-  DOpen(_, ids) => { node("open", SmlList.map(String.concatWith("."))(ids)) }
+  DOpen(_, ids) => {
+    node("open", SubsetList.map(ids, (id) => { SubsetString.concatWith(id, ".") }))
+  }
 };
 
 let strdec = match {
@@ -112,6 +115,6 @@ let strdec = match {
 };
 
 let topdec = match {
-  TopDecs(sds) => { String.concatWith(" ")(SmlList.map(strdec)(sds)) },
+  TopDecs(sds) => { SubsetString.concatWith(SubsetList.map(sds, strdec), " ") },
   TopExp(_, e) => { node("it", [exp(e)]) }
 };

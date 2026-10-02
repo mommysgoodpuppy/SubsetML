@@ -2,7 +2,7 @@
 set -eu
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-modules="src/subset_text_host.sml src/subset_result.sml src/subset_option.sml src/subset_list.sml src/subset_list_pair.sml src/subset_order.sml src/subset_char.sml src/subset_bytes.sml src/subset_unicode.sml src/subset_utf8.sml src/subset_utf16.sml src/subset_string.sml src/subset_source.sml src/subset_sml_escape.sml"
+modules=$(python scripts/basis-sources.py)
 bin/subsetml check $modules tests/basis/custom_basis.sml tests/basis/custom_char_portable.sml tests/basis/custom_order_portable.sml
 python tests/basis/dependencies.py
 bin/subsetml roundtrip $modules tests/basis/custom_basis.sml tests/basis/custom_char_portable.sml tests/basis/custom_order_portable.sml
@@ -20,6 +20,10 @@ for dir in "$PWD/src" "$tmp/sml"; do
   {
     printf '$(SML_LIB)/basis/basis.mlb\n'
     for module in $modules; do
+      if [ "$(basename "$module")" = subset_host.sml ]; then
+        printf '%s\n' "$PWD/lib/subset_host.sml"
+        continue
+      fi
       if [ "$(basename "$module")" = subset_text_host.sml ]; then
         printf '%s\n' "$PWD/lib/subset_text_host.sml"
         continue
@@ -33,6 +37,10 @@ done
 {
   printf '$(SML_LIB)/basis/basis.mlb\n'
   for module in $modules; do
+      if [ "$(basename "$module")" = subset_host.sml ]; then
+        printf '%s\n' "$PWD/lib/subset_host.sml"
+        continue
+      fi
       if [ "$(basename "$module")" = subset_text_host.sml ]; then
         printf '%s\n' "$PWD/lib/subset_text_host.sml"
         continue
@@ -68,9 +76,21 @@ from "./subset_utf8.wm" import * as SubsetUtf8;
 from "./subset_utf16.wm" import * as SubsetUtf16;
 from "./subset_string.wm" import * as SubsetString;
 let foreign = '\u0100';
+let byteComparisonError = (result) => { match (result) {
+  SubsetResult.Err(SubsetBytes.NonByte(offset)) => { offset == 1 },
+  _ => { false },
+} };
+let stringComparisonError = (result) => { match (result) {
+  SubsetResult.Err(SubsetString.NonByte(offset)) => { offset == 1 },
+  _ => { false },
+} };
 let checked = SubsetString.fromNative("a\u0100") == SubsetResult.Err(SubsetString.NonByte(1))
   && SubsetString.toNative(['a', foreign]) == SubsetResult.Err(SubsetString.NonByte(1))
   && SubsetString.fromNative("a\u{1f600}") == SubsetResult.Err(SubsetString.NonByte(1))
+  && byteComparisonError(SubsetBytes.compare(['a', foreign], ['b']))
+  && byteComparisonError(SubsetBytes.compare(['b'], ['a', foreign]))
+  && stringComparisonError(SubsetString.compare("a\u0100", "b"))
+  && stringComparisonError(SubsetString.compare("b", "a\u0100"))
   && SubsetChar.toCode(foreign) == SubsetResult.Err(SubsetChar.NonByteCharacter)
   && SubsetBytes.reader([foreign]) == SubsetResult.Err(SubsetBytes.NonByte(0))
   && SubsetUtf8.decode(['a', foreign]) == SubsetResult.Err(SubsetUnicode.Error(SubsetUnicode.InvalidByte, 1))

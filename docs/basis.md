@@ -70,6 +70,101 @@ Option uses the existing `option` datatype (`NONE`/`SOME`, generated as `None`/`
 than a second representation. Tuple arguments are evaluated normally by SML: fallback values
 and supplied errors are eager, not lazily invoked callbacks.
 
+### Error procedures
+
+A **procedure** is an ordinary function that returns a Result. It starts with a Result value,
+passes that value through named transformations, and returns a Result for its caller to handle.
+This is a coding pattern, not a language construct. It avoids deeply nested `andThen` callbacks
+without exceptions, early-return syntax or new host operations.
+
+The runnable [errordemo.sml](../errordemo.sml) defines two local adapters:
+
+```sml
+val via = fn transform => fn wrapped =>
+  SubsetResult.andThen (wrapped, transform)
+
+val viaError = fn inject => fn transform => fn wrapped =>
+  SubsetResult.andThen (wrapped, fn value =>
+    SubsetResult.mapError (transform value, inject))
+```
+
+These are ordinary curried functions. They are local prototypes in the demo, not currently
+exports of `SubsetResult`; the core data-first `andThen` and `mapError` APIs remain unchanged.
+
+- `via transform` adapts a function from an unwrapped value to a Result into a function from
+  one Result to another. It calls `transform` only on success and preserves an existing error.
+- `viaError inject transform` also maps the transformation's own error into the procedure's
+  shared error type. It preserves an incoming error without calling either `transform` or
+  `inject`. The error mapper can be an ordinary datatype constructor.
+
+Each stage can change the successful value's type. All stages share one application error
+datatype, while the underlying operations can retain their own error types. In the demo,
+`InputFailure`, `ParseFailure` and `ValidationFailure` identify the failing stage:
+
+```sml
+val compileInput = fn input =>
+  let
+    val read = viaError InputFailure readInput
+    val parse = viaError ParseFailure decode
+    val compile = via requirePositive
+
+    val loaded = read (SubsetResult.Ok input)
+    val parsed = parse loaded
+  in
+    compile parsed
+  end
+```
+
+The sequential `val` bindings keep the procedure flat. After failure, subsequent adapters
+still run, but only propagate the Err; their underlying transformations do not run. This
+lets a caller perform one exhaustive `case` at a reporting or recovery boundary. Within a
+procedure, use an explicit `case` or `andThen` when branching on a successful value makes the
+control flow clearer. Carry a tuple or record as the successful value when later stages need
+information from earlier stages.
+
+Ordinary argument evaluation remains eager. Calling an effectful operation before passing
+its result to an adapter cannot be undone or skipped. Put work that must stop after failure
+inside the transformation. Similarly, placing already computed Results in a tuple does not
+sequence or short-circuit the operations that produced them.
+
+Expected input, decoding and validation failures should remain typed errors until a reporting
+boundary converts them to text. A binding such as `val Ok value = operation input` is instead
+a partial assertion: Err causes a pattern-match failure. This procedure pattern does not
+make such assertions safe or remove their exhaustiveness warnings. It also does not change
+the stack requirements of recursive AST algorithms.
+
+#### Differences from Workman ergonomics
+
+The pattern follows wm-mini's [carrier-oriented procedure design](../../wm-mini/docs/carriers.md).
+Its Result adapters have the same propagation behavior, but SubsetML uses ordinary SML syntax:
+
+| Workman facility | SubsetML form or scope |
+|---|---|
+| `Monad.via Result transform` | The demo's Result-specific `via transform`; no carrier record is required. |
+| `Monad.viaError Result inject transform` | The demo's `viaError inject transform`. |
+| `head :> read :> parse :> compile` | Sequential `val` bindings and ordinary function application. SubsetML has no pipeline operator. |
+| `Result\|a, b\|` carrier tuple lifting | No corresponding syntax. Use ordinary source helpers built from `andThen` and `map`, keeping deferred work inside callbacks when it must short-circuit. |
+| Carrier-generic `Monad` operations | The demo specializes to Result. A generic carrier abstraction is not needed for this pattern. |
+| `Task` and safe foreign-call error wrapping | Outside this demo and the current custom Result API. Host failures enter through the explicit adapters, such as `SubsetIo`; the pattern supplies no asynchronous runtime or exception catching. |
+
+Workman's pipeline and tuple-lift syntax are conveniences around carrier composition;
+`procedure`, `via` and `viaError` are not exception or early-return keywords there either.
+The shared portable part is the functions, typed errors and propagation discipline. Normal
+translation generates the demo's Workman implementation without replacing it with Workman's
+separate Result library or requiring these syntax conveniences.
+
+To check and run the example with MLton:
+
+```sh
+bin/subsetml check src/subset_result.sml errordemo.sml
+mlton -output /tmp/errordemo errordemo.mlb
+/tmp/errordemo
+```
+
+The demo prints `error procedure demo: ok` after checking success, each stage's error and
+skipping an effectful transformation after an earlier failure. It also checks and runs after
+translation to Workman.
+
 ### Lists
 
 | Operation | Contract |
@@ -86,17 +181,79 @@ and supplied errors are eager, not lazily invoked callbacks.
 | `find (xs, predicate)`, `exists (xs, predicate)`, `all (xs, predicate)` | Stop at the first decisive predicate result. Empty find is NONE, exists is false, all is true. |
 | `dropWhile (xs, predicate)` | Drop a prefix; invoke the predicate left to right, stopping at the first false result. |
 | `repeat (value, count)` | Ok list of count copies, or Err InvalidCount. |
+| `splitAt (xs, index)` | Ok (prefix, suffix), with exactly index elements in prefix. |
+| `at (xs, index)` | Ok element at the zero-based index. |
+| `take (xs, count)`, `drop (xs, count)` | Ok prefix or suffix; never silently truncate. |
+| `tabulate (count, f)` | Ok generated list; invoke f at real indices 0 through count−1, left to right. |
 | `head xs`, `tail xs`, `last xs` | Return Ok on a nonempty list; Err EmptyList on an empty list. |
 | `traverse (xs, f)` | Invoke a Result-producing f left to right; stop at its first Err, preserving that error. Successful output order matches the input. |
 
-These operations are in `SubsetList`. Its error type is `datatype error = EmptyList | InvalidCount`.
-`repeat` accepts finite integral counts from zero through 2^53−1, including negative zero.
+These operations are in `SubsetList`. Its error type is `datatype error = EmptyList | InvalidCount | InvalidIndex | OutOfBounds`.
+`repeat` and `tabulate` accept finite integral counts from zero through 2^53−1, including negative zero.
 It checks the count with bounded source binary arithmetic before allocating any list cells;
 negative, fractional, non-finite and larger counts return InvalidCount. The bound keeps
 countdown exact under the current binary64 numeric profile. Allocation exhaustion remains a
 runtime failure, not InvalidCount.
+Invalid indices/counts for `splitAt`, `at`, `take`, and `drop` return `InvalidIndex`;
+valid integral positions beyond the list return `OutOfBounds`. Splitting/taking/dropping
+at the list's length succeeds; accessing an element there returns `OutOfBounds`.
+`tabulate` validates its count before invoking any callback. These operations are source-only.
+
 An unsuccessful traverse returns no partial output list. Callback effects already performed
 remain; the library does not roll them back or catch exceptions from callbacks.
+
+### Exact natural numbers
+
+`SubsetNatural` operates on real-valued exact nonnegative integers from zero through
+2^53−1 in the current binary64 profile. `isValid value` tests this domain; negative zero
+is accepted. `divide (value, base)` returns `Ok (quotient, remainder)` with integer quotient
+and 0 ≤ remainder < base. Invalid values return `InvalidNatural`; invalid or zero divisors
+return `InvalidDivisor`. The value is checked before the divisor.
+
+`toString value` returns `Ok` ordinary unsigned decimal text, including `"0"` for either
+signed zero; invalid input returns `InvalidNatural`. It formats integers only. Neither
+operation needs host floor, division/modulo helpers or number formatting: division uses
+53 descending binary weights, and formatting repeatedly splits by ten. `split` is an
+internal unchecked helper for operands already known to satisfy the same domain.
+
+The compiler uses this module for type-variable names, counts in diagnostics and its
+persistent integer-map arithmetic. Tuple labels use a decimal character counter directly.
+
+### Whole-file byte I/O and process profile
+
+`SubsetIo` provides checked whole-file I/O. File contents and standard-output/error payloads
+are `char list` bytes; no text decoding, BOM handling, newline conversion or newline insertion
+occurs. Use the source UTF codecs explicitly for text. Its error type is
+`HostError of string | NonByte of real | InvalidPath`.
+
+| Operation | Contract |
+|---|---|
+| `readFile path` | Ok complete file bytes, or an error. |
+| `writeFile (bytes, path)` | Create/truncate and write the complete payload; return Ok unit on success. Parent directories must already exist. |
+| `writeStdout bytes`, `writeStderr bytes` | Write exactly the supplied bytes; return Ok unit on success. |
+| `errorText error` | Diagnostic byte string; host messages are target-dependent. |
+
+Paths are native byte strings interpreted by the adapter's filesystem convention. Source
+validation rejects non-byte paths and embedded NUL, and checks write payloads before opening
+files. `NonByte offset` identifies a foreign byte value outside 0–255; invalid NUL paths return
+`InvalidPath`. Operational failures return `HostError`; partial writes or truncation may have
+already happened, so this is not a transactional API. Adapters drain short writes; they report
+zero-progress writes as errors. These operations are synchronous in the current CLI profile.
+
+`SubsetProcess.arguments ()` returns `Ok` a list of validated argument byte strings, excluding
+the executable name, or a `SubsetIo.error`. It does not decode argument text.
+`SubsetProcess.exit success` terminates with success/failure (0/1 in the current adapters) and
+never returns. Arbitrary status codes and stream handles are outside this initial profile.
+
+The native adapter uses binary file I/O and raw POSIX output. The Workman adapter uses a
+Latin-1 carrier string only inside the FFI boundary, with Node binary file/output calls. It
+encodes Deno's Unicode argument and error-message text as UTF-8 bytes; the native adapter
+preserves OS byte strings. Neither adapter silently decodes file contents. These target
+marshalling conventions are not SubsetML's language string representation requirements.
+
+The six operations live in `SubsetHost`; the public `SubsetIo` and `SubsetProcess` wrappers
+are source code. Together with native-string extraction, the current compiler needs seven
+explicit host entry points beyond language support. Embeddings can omit the CLI profile.
 
 ### Paired lists
 
@@ -162,6 +319,15 @@ printing assert that their input characters belong to the language's byte domain
 native-string boundary validates that domain before supplying lexer text. No unchecked unwrap
 has been added to the custom Basis API.
 
+Ordering operators `<`, `>`, `<=`, and `>=` accept only `real` operands in SubsetML.
+Text ordering uses explicit source functions. `SubsetBytes.compare (left, right)` and
+`SubsetString.compare (left, right)` return `Ok SubsetOrder.Less`, `Equal`, or `Greater`
+in unsigned byte lexicographic order; a proper prefix sorts first. This is byte ordering,
+with no Unicode normalization, locale or collation. Both complete operands are validated
+before comparison, left first; foreign non-byte data returns `Err (NonByte offset)` from
+the respective module, even after a decisive prefix. The offset is within the invalid operand.
+Time and temporary storage are O(n + m); no additional host primitive is required.
+
 ### Byte sequences and readers
 
 `SubsetBytes` uses `char list` storage. `validate bytes` checks the byte domain and returns
@@ -219,6 +385,27 @@ uses shared trimming, splitting, concatenation and repetition for output.
 `tests/doc-portable.sh` checks exact layout, comment placement and helper contracts with
 original SML, round-tripped SML and generated Workman.
 
+### SML literal escaping
+
+`SubsetSmlEscape.escapeByte byte`, `escapeBytes bytes` and `escapeString string` return
+Result containing **literal contents**, without surrounding quotes or the character-literal
+prefix. Callers supply those delimiters. Byte inputs need no host calls; native string input
+uses the existing checked extraction boundary. Empty sequences/strings return an empty string.
+
+A complete source table supplies printable ASCII, escaped quote/backslash, named control
+escapes, caret escapes for the other ASCII controls and three-digit decimal escapes for
+127–255. Non-ASCII bytes are always escaped; Unicode encoding and classification are absent.
+Errors are `NonByte offset`: zero for an invalid single byte, the first invalid element's index
+for sequences or native strings. No partial output is returned. Table lookup is bounded by
+256 comparisons per byte; fragments are joined with source balanced concatenation.
+
+`tests/sml-printer.sh` compares every byte's spelling and the combined byte string against an
+independent MLton `Char.toString`/`String.toString` oracle, then decodes the emitted literals
+with the shared lexer. Original SML, round-tripped SML and Workman execute the same cases.
+It also checks printer precedence, nested conditionals, comments and foreign-byte rejection.
+The SML source printer and AST debug printer both use this module through internal checked
+compatibility helpers; those helpers assert the compiler's established byte-domain invariant.
+
 ### Strict Unicode codecs
 
 `SubsetUnicode.isScalar code` checks integral Unicode scalar codes, excluding surrogates.
@@ -272,19 +459,23 @@ custom module declares its source dependencies and explicit primitive calls. The
 | `SubsetListPair` | SubsetResult, SubsetList | none |
 | `SubsetOrder` | SubsetResult | none |
 | `SubsetChar` | SubsetOrder, SubsetResult | none |
-| `SubsetBytes` | SubsetChar, SubsetList, SubsetResult | none |
+| `SubsetBytes` | SubsetChar, SubsetList, SubsetOrder, SubsetResult | none |
 | `SubsetUnicode` | SubsetChar, SubsetList, SubsetResult | none |
 | `SubsetUtf8` | SubsetChar, SubsetList, SubsetResult, SubsetUnicode | none |
 | `SubsetUtf16` | SubsetChar, SubsetList, SubsetResult, SubsetUnicode | none |
-| `SubsetString` | SubsetChar, SubsetList, SubsetResult | SubsetTextHost.codes |
+| `SubsetString` | SubsetBytes, SubsetChar, SubsetList, SubsetResult | SubsetTextHost.codes |
+| `SubsetNatural` | SubsetList, SubsetResult, SubsetString | none |
 | `SubsetSource` | SubsetBytes, SubsetList, SubsetResult, SubsetString | none directly; extraction through SubsetString |
+| `SubsetSmlEscape` | SubsetList, SubsetResult, SubsetString | none directly; native-string entry uses extraction through SubsetString |
+| `SubsetIo` | SubsetList, SubsetResult, SubsetString | SubsetHost.readFile, writeFile, writeStdout, writeStderr |
+| `SubsetProcess` | SubsetIo, SubsetList, SubsetResult | SubsetHost.arguments, exit |
 
 This does not mean a backend needs no runtime. It needs ordinary language support for datatype
 values, options, lists, tuples, booleans, unit, functions, pattern matching, recursion, character literals and character equality.
 User callbacks may introduce their own dependencies; they are not hidden library primitives.
 
 No final primitive ABI is assumed yet. Native string conversion, byte-list/tree indexing
-and codec failure contracts are implemented above; broader collection indexing remains pending.
+and codec failure contracts are implemented above; streaming and broader resource contracts remain pending.
 The older character port demonstrates candidate needs for string size/subscript and character
 code conversion; it does not establish that all four must remain primitives in the final design.
 For example, some algorithms could use character lists instead of indexed strings. Future
@@ -312,8 +503,8 @@ parsed syntax, so introducing a qualified host call requires updating its declar
 ## Current implementation and migration
 
 `src/basis.sml` is still a table of bootstrap compatibility interfaces used by the checker.
-`lib/num.sml` is the full-SML numeric adapter used by MLton. Neither defines the final custom
-Basis API. The compiler and tests still rely on some SML host functions during this transition.
+`lib/num.sml` is the full-SML numeric adapter used by legacy tests. Neither defines the final custom
+Basis API. The compiler now uses source algorithms and the two explicitly staged host adapters.
 
 The bootstrap numeric adapters use real-valued sizes and indices because the language
 currently omits `int`. `lib/num.sml` is full SML outside the portable sources: indexed arguments
@@ -383,11 +574,10 @@ characters directly instead of comparing their integer codes. SML's ASCII classi
 
 `tests/char-basis.sh` compares original and round-tripped code to MLton for every byte-valued
 character, including every pair for ordering and empty/repeated/control/high-byte membership
-cases. It runs as part of `make test`. Checking the old port by itself still stops at the SML ordering constructor `LESS`; direct
-primitive probes also reject `String.sub` and `Char.ord`. This port is no longer imported by
-the compiler's generated graph. These Basis constructors and string/character
-primitives still need target support, so the generated SmlChar module is not yet runnable there. These algorithms are implemented; target support and migration to the custom API are separate
-remaining work. The final library need not retain the SML ordering constructor spellings.
+cases. It runs as part of `make test`. The historical port is not runnable in Workman: it
+retains `LESS`, `String.sub` and `Char.ord`. The compiler uses `SubsetChar` instead, so these
+compatibility dependencies require no new kernel operations. The custom library uses its own
+ordering constructors and source byte operations.
 
 `SubsetChar` adapts the same MLton classification rules and retains the MLton copyright
 notice and license attribution. Its literal tables and checked ASCII ordering replace the
@@ -396,8 +586,8 @@ older range/code arithmetic implementation; it does not include the MLWorks stri
 ## Open library questions
 
 - Extend collection and string APIs above the implemented checked byte/index boundary.
-- Define the final primitive interface and implement its thin target adapters.
-- Migrate bootstrap collection/numeric/I/O callers and replace Workman's separate library.
+- Refine and eventually freeze the implemented text and CLI kernel contracts.
+- Migrate remaining compatibility interfaces and replace Workman's separate library.
 - Consider immutable vectors and word-oriented modules if their required types become available
   in the language; library additions do not independently add language types.
 
@@ -412,8 +602,9 @@ UTF-8, UTF-16LE and UTF-16BE are encoded/decoded in ordinary SubsetML over bytes
 scalar codes. JavaScript representation is not a language requirement. Bytes, Unicode scalars
 and source/editor offsets retain separate contracts and the language's 8-bit semantics.
 
-See [text-design.md](text-design.md) for the adapters, performance tradeoffs and remaining
-compiler migration. The broader generated compiler still has bootstrap dependencies.
+See [text-design.md](text-design.md) for the adapters and performance tradeoffs. The generated
+compiler uses this text boundary plus the six CLI host operations; it checks, translates and
+round-trips its own SubsetML source graph.
 
 ### Comparison with wm-mini frontend-v3
 
@@ -452,3 +643,12 @@ source profile may need distinct adapters. V3's JS interop, `Result.debug` and u
 panics are host/invariant mechanisms to review during a port, not required general-purpose
 SubsetML FFI features. Its debug entry point's directory walk is likewise a tooling dependency,
 not evidence that the compiler kernel needs directory enumeration.
+
+`tests/kernel-portable.sh` runs a focused compiler-core fixture on MLton and Workman.
+Python integer arithmetic supplies independent natural division/formatting vectors through
+2^53−1. The fixture checks list index/count errors and callback order, persistent map updates,
+unification names, datatype elaboration, rejection of text ordering, and translation/parsing.
+It excludes CLI execution. `tests/io-portable.sh` checks all byte values in files and both
+output streams, argument/path marshalling, host errors, NUL paths and rejection before file
+truncation. `tests/cli-portable.sh` compares the native and generated Workman compiler's check,
+parse, format, round-trip and forward/reverse translation modes, including failure exits.

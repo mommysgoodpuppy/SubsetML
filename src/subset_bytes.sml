@@ -13,6 +13,33 @@ structure SubsetBytes = struct
             | SubsetResult.Ok code => go (rest, index + 1.0)
     in go (bytes, 0.0) end
 
+  (* Validate complete operands, then compare unsigned byte codes lexicographically. *)
+  (* Internal error adapter lets native strings retain their own error type. *)
+  val compareWith = fn (left, right, nonByte) =>
+    let
+      val codes = fn bytes =>
+        let
+          val rec go = fn
+              ([], offset, acc) => SubsetResult.Ok (SubsetList.reverse acc)
+            | (c :: rest, offset, acc) =>
+                case SubsetChar.toCode c of
+                  SubsetResult.Err error => SubsetResult.Err (nonByte offset)
+                | SubsetResult.Ok code => go (rest, offset + 1.0, code :: acc)
+        in go (bytes, 0.0, []) end
+      val rec order = fn
+          ([], []) => SubsetOrder.Equal
+        | ([], rest) => SubsetOrder.Less
+        | (rest, []) => SubsetOrder.Greater
+        | ((a : real) :: xs, b :: ys) =>
+            if a < b then SubsetOrder.Less
+            else (if a > b then SubsetOrder.Greater else order (xs, ys))
+    in
+      SubsetResult.andThen (codes left, fn xs =>
+        SubsetResult.map (codes right, fn ys => order (xs, ys)))
+    end
+
+  val compare = fn (left, right) => compareWith (left, right, fn offset => NonByte offset)
+
   val length = fn bytes => SubsetList.foldLeft (bytes, 0.0, fn (c, n) => n + 1.0)
   val trim = fn (bytes, predicate) =>
     SubsetList.reverse (SubsetList.dropWhile (

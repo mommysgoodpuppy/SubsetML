@@ -13,9 +13,14 @@ structure WmPrint = struct
   (* Names *)
 
   val capitalize = fn s =>
-    if s = "" then s else String.str (SubsetChar.toUpper (Num.String.sub (s, 0.0))) ^ Num.String.extract (s, 1.0, NONE)
+    case CompilerText.characters s of [] => "" | first :: rest =>
+      CompilerText.stringOf (SubsetChar.toUpper first :: rest)
 
-  val dotted = fn (qs, s) => String.concatWith "." (qs @ [s])
+  val startsUpper = fn s =>
+    case CompilerText.characters s of [] => false | first :: rest => SubsetChar.isUpper first
+  val startsAlpha = fn s =>
+    case CompilerText.characters s of [] => false | first :: rest => SubsetChar.isAlpha first
+  val dotted = fn (qs, s) => SubsetString.concatWith (SubsetList.append (qs, [s]), ".")
 
   (* Type constructors are capitalized; the Definition's `unit` and the Basis `real` take
      Workman's names. *)
@@ -40,27 +45,36 @@ structure WmPrint = struct
     | ([], "SOME") => "Some"
     | id =>
         (case SmlList.find (fn (sml, _) => sml = id) numNames of
-           SOME (_, wm) => dotted wm
+           SOME entry => let val (sml, wm) = entry in dotted wm end
          | NONE => dotted id)
 
   (* Workman tells constructors from variables by case; SubsetML code follows the same
      convention, with the Definition's lowercase constructors as exceptions. *)
   val isConName = fn (qs, s) =>
-    not (SmlList.null qs) orelse SubsetChar.isUpper (Num.String.sub (s, 0.0)) orelse s = "true" orelse s = "false"
+    not (SmlList.null qs) orelse startsUpper s orelse s = "true" orelse s = "false"
     orelse s = "nil"
 
   (* `'a` is written `a`: Workman type variables are lowercase type names. *)
-  val tyVarName = fn v => Num.String.extract (v, 1.0, NONE)
+  val tyVarName = fn v =>
+    case CompilerText.characters v of [] => "" | first :: rest => CompilerText.stringOf rest
 
   (* --------------------------------------------------------------------------------------- *)
   (* Constants *)
 
-  val minus = fn s => String.map (fn c => if c = #"~" then #"-" else c) s
+  val minus = fn s => CompilerText.map (fn c => if c = #"~" then #"-" else c) s
 
+  (* Compiler-internal byte code: subtraction splits at most fifteen hexadecimal groups. *)
   val hex2 = fn n =>
-    let val digits = "0123456789abcdef" in
-      String.implode [Num.String.sub (digits, Num.div (n, 16.0)), Num.String.sub (digits, Num.mod (n, 16.0))]
-    end
+    let
+      val SubsetResult.Ok byte = SubsetChar.fromCode n
+      val digits = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"]
+      val rec digit = fn (index, values) =>
+        case values of first :: rest =>
+          if index <= 0.0 then first else digit (index - 1.0, rest)
+      val rec split = fn (low, high) =>
+        if low >= 16.0 then split (low - 16.0, high + 1.0) else (high, low)
+      val (high, low) = split (n, 0.0)
+    in digit (high, digits) ^ digit (low, digits) end
 
   val escapeChar = fn (quote, c) =>
     case c of
@@ -69,19 +83,24 @@ structure WmPrint = struct
     | #"\r" => "\\r"
     | #"\\" => "\\\\"
     | _ =>
-        if c = quote then "\\" ^ String.str c
-        else (if SubsetChar.isPrint c then String.str c else "\\u00" ^ hex2 (let val SubsetResult.Ok code = SubsetChar.toCode c in code end))
+        if c = quote then "\\" ^ CompilerText.str c
+        else (if SubsetChar.isPrint c then CompilerText.str c else "\\u00" ^ hex2 (let val SubsetResult.Ok code = SubsetChar.toCode c in code end))
+
+  val withoutRealSuffix = fn s =>
+    case SubsetList.reverse (CompilerText.characters s) of
+      #"0" :: #"." :: rest => CompilerText.stringOf (SubsetList.reverse rest)
+    | bytes => CompilerText.stringOf (SubsetList.reverse bytes)
 
   val scon = fn
       SInt s => minus s
-    | SReal s => minus (if String.isSuffix ".0" s
-                           then Num.String.substring (s, 0.0, Num.String.size s - 2.0) else s)
-    | SString s => "\"" ^ String.concat (SmlList.map (fn c => escapeChar (#"\"", c)) (String.explode s)) ^ "\""
+    | SReal s => minus (withoutRealSuffix s)
+    | SString s => "\"" ^ SubsetString.concat (SubsetList.map (CompilerText.characters s,
+        fn c => escapeChar (#"\"", c))) ^ "\""
     | SChar c => "'" ^ escapeChar (#"'", c) ^ "'"
 
   val isNegative = fn
-      SInt s => Num.String.sub (s, 0.0) = #"~"
-    | SReal s => Num.String.sub (s, 0.0) = #"~"
+      SInt s => (case CompilerText.characters s of #"~" :: rest => true | bytes => false)
+    | SReal s => (case CompilerText.characters s of #"~" :: rest => true | bytes => false)
     | _ => false
 
   (* --------------------------------------------------------------------------------------- *)
@@ -99,7 +118,7 @@ structure WmPrint = struct
 
   val typeParams = fn
       [] => ""
-    | vs => "<" ^ String.concatWith ", " (SmlList.map tyVarName vs) ^ ">"
+    | vs => "<" ^ SubsetString.concatWith (SubsetList.map (vs, tyVarName), ", ") ^ ">"
 
   (* --------------------------------------------------------------------------------------- *)
   (* Patterns
@@ -204,7 +223,7 @@ structure WmPrint = struct
   (* An expression usable as `e.lab`: a variable or a chain of such selections. *)
   val rec selectable = fn
       EId (_, id) => not (isConName id)
-    | EApp (ESelect (_, l), e) => SubsetChar.isAlpha (Num.String.sub (l, 0.0)) andalso selectable e
+    | EApp (ESelect (_, l), e) => startsAlpha l andalso selectable e
     | _ => false
 
   (* The body of a block: a `let` contributes its declarations and expressions. *)
@@ -266,9 +285,9 @@ structure WmPrint = struct
              else
                (* div, mod, o and before: no Workman operator, so the SML operator stays. *)
                (0.0, cats [parenAt (9.0, expL l), atom (p, " " ^ opr ^ " "), parenAt (9.0, expL r)])
-         | (SOME (spelling, level), _) =>
-             (level, cats [parenAt (level, expL l), atom (p, " " ^ spelling ^ " "),
-                           parenAt (level + 1.0, expL r)])
+         | (SOME entry, _) =>
+             let val (spelling, level) = entry in (level, cats [parenAt (level, expL l), atom (p, " " ^ spelling ^ " "),
+                           parenAt (level + 1.0, expL r)]) end
          | (NONE, false) => call (EId (p, ([], opr)), ETuple [l, r]))
     | EApp (EId (p, ([], "not")), e) => (7.0, cat (atom (p, "!"), parenAt (7.0, expL e)))
     | EApp (EId (p, ([], "~")), e) =>
@@ -276,12 +295,12 @@ structure WmPrint = struct
           (* `-3` would read back as a negative literal, so a literal operand keeps parentheses. *)
           (7.0, cat (atom (p, "-"),
                    case (e, level >= 9.0) of
-                     (EScon _, _) => cats [text "(", d, text ")"]
+                     (EScon (ignoredPos, ignoredConstant), ignoredLevel) => cats [text "(", d, text ")"]
                    | (_, true) => d
                    | (_, false) => cats [text "(", d, text ")"]))
         end
     | EApp (ESelect (p, l), e) =>
-        if selectable e andalso SubsetChar.isAlpha (Num.String.sub (l, 0.0))
+        if selectable e andalso startsAlpha l
         then (10.0, cats [exp e, atom (p, "." ^ l)])
         else call (ESelect (p, l), e)
     | EApp (f, a) => call (f, a)
@@ -328,7 +347,7 @@ structure WmPrint = struct
   and arms = fn rules =>
     let
       val arm = fn (p, e) => cats [pat (true, false, p), text " => ", block (blockParts e)]
-      val count = Num.List.length rules
+      val count = SubsetList.length rules
       val rec go = fn
           (_, []) => []
         | (i, r :: rest) => (if i < count - 1.0 then cat (arm r, text ",") else arm r) :: go (i + 1.0, rest)
@@ -339,7 +358,7 @@ structure WmPrint = struct
   (* `{ decs; e1; ...; en }`, on one line when it is a single short expression. *)
   and block = fn (ds, es) =>
     let
-      val count = Num.List.length es
+      val count = SubsetList.length es
       val rec exps = fn
           (_, []) => []
         | (i, e :: rest) => (if i < count - 1.0 then cat (exp e, text ";") else exp e) :: exps (i + 1.0, rest)
@@ -347,7 +366,7 @@ structure WmPrint = struct
     in
       case items of
         [single] =>
-          if SmlList.null ds andalso fits single andalso Num.String.size (valOf (flat single)) <= 60.0
+          if SmlList.null ds andalso (case flat single of SOME text => CompilerText.size text <= 60.0 | NONE => false)
           then cats [text "{ ", single, text " }"]
           else stack [text "{", indent (2.0, single), text "}"]
       | _ => stack [text "{", indent (2.0, stack items), text "}"]
@@ -372,13 +391,13 @@ structure WmPrint = struct
     case d of
       DVal (p, [], plain, []) => andGroup (atom (p, "let "), SmlList.map binding plain)
     | DVal (p, [], [], recs) => andGroup (atom (p, "let rec "), SmlList.map binding recs)
-    | DVal _ => fallback d
+    | DVal (ignoredPos, ignoredVariables, ignoredPlain, ignoredRecursive) => fallback d
     | DType (p, [(vs, tycon, TyRecord fields)]) =>
         cats [atom (p, "record "), text (capitalize tycon ^ typeParams vs ^ " = "),
               group ("{", ",", "}", SmlList.map (fn (l, t) => cats [text (l ^ ": "), ty t]) fields),
               text ";"]
     | DType (p, binds) =>
-        if SmlList.exists (fn (_, _, t) => case t of TyRecord _ => true | _ => false) binds
+        if SmlList.exists (fn (ignoredVariables, ignoredName, t) => case t of TyRecord _ => true | _ => false) binds
         then fallback d
         else
           andGroup (atom (p, "type "),
@@ -407,8 +426,10 @@ structure WmPrint = struct
         end
     | DOpen (p, ids) =>
         if SmlList.all (fn id => SmlList.exists (fn s => [s] = id) structures) ids
-        then stack (SmlList.map (fn id => atom (p, "from \"./" ^ fileName (dotted ([], List.last id))
-                                               ^ "\" import *;")) ids)
+        then stack (SmlList.map (fn id =>
+          let val SubsetResult.Ok name = SubsetList.last id in
+            atom (p, "from \"./" ^ fileName (dotted ([], name)) ^ "\" import *;")
+          end) ids)
         else fallback d
 
   (* A declaration with no Workman form, in SML syntax and ended by `;` so that WmParse can
@@ -425,7 +446,7 @@ structure WmPrint = struct
             then #"_" :: SubsetChar.toLower c :: go (rest, false)
             else SubsetChar.toLower c :: go (rest, false)
     in
-      String.implode (go (String.explode name, true)) ^ ".wm"
+      CompilerText.stringOf (go (CompilerText.characters name, true)) ^ ".wm"
     end
 
   val topdec = fn (structures, td) =>
@@ -442,9 +463,12 @@ structure WmPrint = struct
   val commentStyle = fn
       [single] => ["// " ^ trim single]
     | lines =>
-        let val n = Num.List.length lines in
-          Num.List.tabulate (n, fn i =>
-            (if Real.== (i, 0.0) then "/*" else "") ^ Num.List.nth (lines, i) ^ (if Real.== (i, n - 1.0) then "*/" else ""))
-        end
+        let
+          val rec decorate = fn
+              ([], isFirst, acc) => SubsetList.reverse acc
+            | (line :: rest, isFirst, acc) =>
+                decorate (rest, false,
+                  ((if isFirst then "/*" else "") ^ line ^ (if SubsetList.isEmpty rest then "*/" else "")) :: acc)
+        in decorate (lines, true, []) end
 
 end

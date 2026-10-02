@@ -7,9 +7,14 @@
      subsetml sml OUTDIR FILE.wm... translate Workman modules to SubsetML files in OUTDIR
      subsetml roundtrip FILE...     check that SML -> Workman -> SML preserves each file's syntax */
 
+from "./subset_io.wm" import * as SubsetIo;
+from "./compiler_text.wm" import * as CompilerText;
+from "./subset_result.wm" import * as SubsetResult;
+from "./subset_process.wm" import * as SubsetProcess;
 from "./syntax.wm" import * as Syntax;
 from "./parser.wm" import * as Parser;
 from "./sml_list.wm" import * as SmlList;
+from "./subset_list.wm" import * as SubsetList;
 from "./translate.wm" import * as Translate;
 from "./sml_list_pair.wm" import * as SmlListPair;
 from "./wm_parse.wm" import * as WmParse;
@@ -20,42 +25,59 @@ from "./normalize.wm" import * as Normalize;
 from "./basis.wm" import * as Basis;
 from "./elab.wm" import * as Elab;
 
-let readFile = (path) => {
-  let ins = TextIO.openIn(path);
-  let text = TextIO.inputAll(ins);
-  let _ = TextIO.closeIn(ins);
-  text
+let eprint = (text) => {
+  match(SubsetIo.writeStderr(CompilerText.characters(text))) {
+    SubsetResult.Ok(result) => { result },
+    SubsetResult.Err(error) => { SubsetProcess.exit(false) }
+  }
 };
-
+let fatal = (message) => { (eprint(message ++ "\n"); SubsetProcess.exit(false)) };
+let readFile = (path) => {
+  match(SubsetIo.readFile(path)) {
+    SubsetResult.Ok(bytes) => { CompilerText.stringOf(bytes) },
+    SubsetResult.Err(error) => { fatal(path ++ ": " ++ SubsetIo.errorText(error)) }
+  }
+};
 let writeFile = (path, text) => {
-  let out = TextIO.openOut(path);
-  TextIO.output(out, text);
-  TextIO.closeOut(out)
+  match(SubsetIo.writeFile(CompilerText.characters(text), path)) {
+    SubsetResult.Ok(result) => { result },
+    SubsetResult.Err(error) => { fatal(path ++ ": " ++ SubsetIo.errorText(error)) }
+  }
+};
+let output = (text) => {
+  match(SubsetIo.writeStdout(CompilerText.characters(text))) {
+    SubsetResult.Ok(result) => { result },
+    SubsetResult.Err(error) => { fatal(SubsetIo.errorText(error)) }
+  }
 };
 
 // 1-based line and column of a byte offset.
 let lineCol = (src, offset) => {
-  let rec go = (i, line, col) => {
-    if (if (i >= offset) { true } else { i >= String.size(src) }) { (line, col) } else {
-      let newline = String.sub(src, i) == '\n';
-      go(
-        i + 1,
-        if (newline) { line + 1 } else { line },
-        if (newline) { 1 } else { col + 1 }
-      )
+  let rec go = (bytes, i, line, col) => {
+    if (i >= offset) { (line, col) } else {
+      match(bytes) {
+        [] => { (line, col) },
+        [c, ..rest] => {
+          let newline = c == '\n';
+          go(
+            rest,
+            i + 1,
+            if (newline) { line + 1 } else { line },
+            if (newline) { 1 } else { col + 1 }
+          )
+        }
+      }
     }
   };
-  go(0, 1, 1)
+  go(CompilerText.characters(src), 0, 1, 1)
 };
 
 let errorLineKind = (path, src, kind, msg, pos) => {
   let (line, col) = lineCol(src, pos);
-  path ++ ":" ++ Number.toString(line) ++ ":" ++ Number.toString(col) ++ ": " ++ kind ++ ": " ++ msg ++ "\n"
+  path ++ ":" ++ CompilerText.natural(line) ++ ":" ++ CompilerText.natural(col) ++ ": " ++ kind ++ ": " ++ msg ++ "\n"
 };
 
 let errorLine = (path, src, msg, pos) => { errorLineKind(path, src, "error", msg, pos) };
-
-let eprint = (s) => { TextIO.output(TextIO.stdErr, s) };
 
 type Parsed =
   | Parsed<String, String, List<Syntax.Topdec>, List<Syntax.Comment>>
@@ -73,53 +95,51 @@ let load = (path) => {
 let usage = () => {
   (
     eprint("usage: subsetml (check | parse | fmt | roundtrip) FILE...\n       subsetml wm OUTDIR FILE...\n       subsetml sml OUTDIR FILE.wm...\n");
-    OS.Process.exit(OS.Process.failure)
+    SubsetProcess.exit(false)
   )
 };
 
-let finish = (ok) => {
-  OS.Process.exit(if (ok) { OS.Process.success } else { OS.Process.failure })
-};
+let finish = (ok) => { SubsetProcess.exit(ok) };
 
 // Runs `f` on every file once all of them have parsed.
 let withParsed = (files, f) => {
   let loaded = SmlList.map(load)(files);
   let parsed = SmlList.concat(SmlList.map(match {
-    Parsed(p) => { [p] },
+    Parsed(path, src, prog, comments) => { [(path, src, prog, comments)] },
     Failed => { [] }
   })(loaded));
   if (SmlList.null(files)) { usage() } else {
-    if ((List.length(parsed): Number) == List.length(files)) { finish(f(parsed)) } else { finish(false) }
+    if ((SubsetList.length(parsed): Number) == SubsetList.length(files)) { finish(f(parsed)) } else { finish(false) }
   }
 };
 
 let translate = (outDir, parsed) => {
-  let structures = SmlList.concat(SmlList.map((_, _, prog, _) => { Translate.structureOf(prog) })(parsed));
+  let structures = SmlList.concat(SmlList.map((ignored2, ignored3, prog, ignored4) => { Translate.structureOf(prog) })(parsed));
   let results = SmlList.map((path, src, prog, comments) => { Translate.toWm(structures, path, src, prog, comments) })(parsed);
   let errors = SmlList.concat(SmlList.map(match {
     Translate.TranslateError(e) => { [e] },
-    Translate.Output(_) => { [] }
+    Translate.Output(ignored5Field0, ignored5Field1, ignored5Field2) => { [] }
   })(results));
-  let warn = ((path, src, _, _), result) => {
+  let warn = ((path, src, ignored6, ignored7), result) => {
     match(result) {
-      Translate.Output(_, _, warnings) => {
+      Translate.Output(ignored8, ignored9, warnings) => {
         SmlList.app((pos, msg) => { eprint(errorLineKind(path, src, "warning", msg, pos)) })(warnings)
       },
-      Translate.TranslateError(_) => { void }
+      Translate.TranslateError(ignored10) => { void }
     }
   };
   match(errors) {
     [] => {
       (
         SmlList.app(match {
-          Translate.Output(name, text, _) => { writeFile(outDir ++ "/" ++ name, text) },
-          Translate.TranslateError(_) => { void }
+          Translate.Output(name, text, ignored11) => { writeFile(outDir ++ "/" ++ name, text) },
+          Translate.TranslateError(ignored12) => { void }
         })(results);
         SmlListPair.app(warn)(parsed, results);
         true
       )
     },
-    _ => {
+    Var(ignored13) => {
       (SmlList.app((e) => { eprint("error: " ++ e ++ "\n") })(errors); false)
     }
   }
@@ -149,21 +169,24 @@ let fromWm = (outDir, files) => {
     None => { [] }
   })(loaded));
   let recovered = SmlList.map((m) => { Translate.recover(modules, m) })(modules);
-  let ok = (List.length(modules): Number) == List.length(files);
+  let ok = (SubsetList.length(modules): Number) == SubsetList.length(files);
   let results = SmlList.map(match {
-    Unify.Err(msg, _) => { (eprint("error translating Workman: " ++ msg ++ "\n"); None) },
-    Unify.Ok((Var(path), Var(src), Var(prog), Var(cs)), _) => {
-      let (_, phrases) = Translate.module(prog);
+    Unify.Err(msg, ignored14) => { (eprint("error translating Workman: " ++ msg ++ "\n"); None) },
+    Unify.Ok((Var(path), Var(src), Var(prog), Var(cs)), ignored15) => {
+      let (ignored16, phrases) = Translate.module(prog);
       let (ds, es) = Translate.parts(phrases);
       let stem = Translate.baseName(path);
-      let name = if (String.isSuffix(".wm")(stem)) { String.substring(stem, 0, String.size(stem) - 3) } else { stem };
+      let name = if (CompilerText.isSuffix(stem, ".wm")) { CompilerText.slice(stem, 0, CompilerText.size(stem) - 3) } else { stem };
       Some(outDir ++ "/" ++ name ++ ".sml", Translate.fromWm(path, src, ds, es, cs))
     }
   })(recovered);
   if (if (ok) { SmlList.all(SmlOption.isSome)(results) } else { false }) {
     (
       SmlList.app(match {
-        Some(path, text) => { writeFile(path, text) },
+        Some(entry) => {
+          let (path, text) = entry;
+          writeFile(path, text)
+        },
         None => { void }
       })(results);
       true
@@ -173,11 +196,11 @@ let fromWm = (outDir, files) => {
 
 // SML -> Workman -> SML must give back the same declarations, up to Normalize.
 let roundTrip = (parsed) => {
-  let structures = SmlList.concat(SmlList.map((_, _, prog, _) => { Translate.structureOf(prog) })(parsed));
+  let structures = SmlList.concat(SmlList.map((ignored17, ignored18, prog, ignored19) => { Translate.structureOf(prog) })(parsed));
   let loaded = SmlList.map((path, src, prog, comments) => {
     match(Translate.toWm(structures, path, src, prog, comments)) {
       Translate.TranslateError(msg) => { (eprint(msg ++ "\n"); None) },
-      Translate.Output(name, text, _) => {
+      Translate.Output(name, text, ignored20) => {
         match(WmParse.parseModule(text)) {
           WmParse.ParseError(msg, pos) => { (eprint(errorLine(path, text, msg, pos)); None) },
           WmParse.Module(ds, es, cs) => {
@@ -200,20 +223,20 @@ let roundTrip = (parsed) => {
     None => { [] }
   })(loaded));
   let show = (prog) => {
-    let (_, phrases) = Translate.module(prog);
+    let (ignored21, phrases) = Translate.module(prog);
     let (ds, es) = Translate.parts(phrases);
     List.append(
       SmlList.map(Print.dec)(Normalize.decs(ds)),
       SmlList.map((e) => { Print.exp(Normalize.exp(e)) })(es)
     )
   };
-  let check = (path, _, prog, _) => {
-    match(SmlList.find((p, _, _, _) => { p == path })(modules)) {
+  let check = (path, ignored22, prog, ignored23) => {
+    match(SmlList.find((p, ignored24, ignored25, ignored26) => { p == path })(modules)) {
       None => { false },
       Some(m) => {
         match(Translate.recover(modules, m)) {
-          Unify.Err(msg, _) => { (eprint(path ++ ": round trip: " ++ msg ++ "\n"); false) },
-          Unify.Ok((_, _, Var(actual), _), _) => {
+          Unify.Err(msg, ignored27) => { (eprint(path ++ ": round trip: " ++ msg ++ "\n"); false) },
+          Unify.Ok((Var(ignored28), Var(ignored29), Var(actual), Var(ignored30)), ignored31) => {
             if (show(prog) == show(actual)) { true } else {
               (eprint(path ++ ": syntax changed in the round trip\n"); false)
             }
@@ -229,13 +252,13 @@ let roundTrip = (parsed) => {
    error. */
 let typeCheck = (parsed) => {
   match(Basis.initial) {
-    Unify.Err(msg, _) => {
+    Unify.Err(msg, ignored32) => {
       (eprint("internal error in the basis: " ++ msg ++ "\n"); false)
     },
-    Unify.Ok(basis, _) => {
+    Unify.Ok(basis, ignored33) => {
       let rec go = match {
-        (_, [], _) => { true },
-        (Var(env), [(Var(path), Var(src), Var(prog), _), ..rest], Var(st)) => {
+        (Var(ignored34), [], Var(ignored35)) => { true },
+        (Var(env), [(Var(path), Var(src), Var(prog), Var(ignored36)), ..rest], Var(st)) => {
           match(Elab.program(env, prog, st)) {
             Unify.Ok(env', st') => { go(env', rest, st') },
             Unify.Err(msg, pos) => { (eprint(errorLine(path, src, msg, pos)); false) }
@@ -248,15 +271,21 @@ let typeCheck = (parsed) => {
 };
 
 let main = () => {
-  match(CommandLine.arguments()) {
+  let args = match(SubsetProcess.arguments()) {
+    SubsetResult.Ok(values) => { values },
+    SubsetResult.Err(error) => { fatal(SubsetIo.errorText(error)) }
+  };
+  match(args) {
     ["check", ..files] => { withParsed(files, typeCheck) },
-    ["parse-only", ..files] => { withParsed(files, (_) => { true }) },
+    ["parse-only", ..files] => { withParsed(files, (ignored37) => { true }) },
     ["parse", ..files] => {
       withParsed(
         files,
         (parsed) => {
           (
-            SmlList.app((_, _, prog, _) => { SmlList.app((p) => { print(Print.topdec(p) ++ "\n") })(prog) })(parsed);
+            SmlList.app((ignored38, ignored39, prog, ignored40) => {
+              SmlList.app((p) => { output(Print.topdec(p) ++ "\n") })(prog)
+            })(parsed);
             true
           )
         }
@@ -267,7 +296,7 @@ let main = () => {
         files,
         (parsed) => {
           (
-            SmlList.app((_, src, prog, comments) => { print(Translate.toSml(src, prog, comments)) })(parsed);
+            SmlList.app((ignored41, src, prog, comments) => { output(Translate.toSml(src, prog, comments)) })(parsed);
             true
           )
         }
@@ -278,8 +307,8 @@ let main = () => {
       if (SmlList.null(files)) { usage() } else { finish(fromWm(outDir, files)) }
     },
     ["roundtrip", ..files] => { withParsed(files, roundTrip) },
-    _ => { usage() }
+    Var(ignored42) => { usage() }
   }
 };
 
-let _ = main();
+let ignored43 = main();

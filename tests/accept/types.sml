@@ -11,7 +11,7 @@ val four = twice (fn n => n + 1.0) 2.0
 (* Overloading must be resolved by the context: SML's default, int, is omitted (spec 9.3). *)
 val addReal = fn (x : real, y) => x + y
 val half = addReal (1.0, 2.5) / 2.0
-val less = "a" < "b" andalso #"a" < #"b" andalso 1.0 < 2.0
+val less = 1.0 < 2.0 andalso 2.0 > 1.0 andalso 1.0 <= 1.0 andalso 2.0 >= 2.0
 val negate = ~ 3.0 + abs (~ 4.0)
 
 (* Equality types: datatypes admit equality unless a constructor holds a function. *)

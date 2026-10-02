@@ -22,8 +22,8 @@ structure Env = struct
   val plus = fn (Env (s1, t1, v1), Env (s2, t2, v2)) => Env (s2 @ s1, t2 @ t1, v2 @ v1)
 
   val assoc = fn (key, entries) =>
-    case SmlList.find (fn (k, _) => k = key) entries of
-      SOME (_, v) => SOME v
+    case SmlList.find (fn (k, ignored1) => k = key) entries of
+      SOME entry => let val (key, v) = entry in SOME v end
     | NONE => NONE
 
   (* The environment of a structure path, with whether it comes from the Basis. *)
@@ -31,23 +31,23 @@ structure Env = struct
     case path of
       [] => SOME (env, false)
     | name :: rest =>
-        let val Env (strs, _, _) = env in
+        let val Env (strs, ignored2, ignored3) = env in
           case assoc (name, strs) of
-            SOME (inner, basis) =>
-              (case structureAt (inner, rest) of
-                 SOME (found, innerBasis) => SOME (found, basis orelse innerBasis)
-               | NONE => NONE)
+            SOME entry =>
+              let val (inner, basis) = entry in (case structureAt (inner, rest) of
+                 SOME foundEntry => let val (found, innerBasis) = foundEntry in SOME (found, basis orelse innerBasis) end
+               | NONE => NONE) end
           | NONE => NONE
         end
 
   val value = fn (env, (quals, x)) =>
     case structureAt (env, quals) of
-      SOME (Env (_, _, vals), _) => assoc (x, vals)
+      SOME entry => let val (Env (strs, tys, vals), basis) = entry in assoc (x, vals) end
     | NONE => NONE
 
   val tycon = fn (env, (quals, x)) =>
     case structureAt (env, quals) of
-      SOME (Env (_, tys, _), _) => assoc (x, tys)
+      SOME entry => let val (Env (strs, tys, vals), basis) = entry in assoc (x, tys) end
     | NONE => NONE
 
   val withValues = fn vals => Env ([], [], vals)
@@ -55,7 +55,7 @@ structure Env = struct
   val withStructure = fn (name, env, basis) => Env ([(name, (env, basis))], [], [])
 
   (* The label sets of the record type declarations in scope (spec R3). *)
-  val recordLabelSets = fn Env (_, tys, _) =>
-    SmlList.concat (SmlList.map (fn (_, TyStr (_, TRecord fields, _)) => [SmlList.map (fn (l, _) => l) fields] | _ => []) tys)
+  val recordLabelSets = fn Env (ignored4, tys, ignored5) =>
+    SmlList.concat (SmlList.map (fn (ignored6, TyStr (ignored7, TRecord fields, ignored8)) => [SmlList.map (fn (l, ignored9) => l) fields] | ignored10 => []) tys)
 
 end

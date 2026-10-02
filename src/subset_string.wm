@@ -4,6 +4,7 @@ from "./subset_result.wm" import * as SubsetResult;
 from "./subset_list.wm" import * as SubsetList;
 from "./subset_char.wm" import * as SubsetChar;
 from "./subset_text_host.wm" import * as SubsetTextHost;
+from "./subset_bytes.wm" import * as SubsetBytes;
 
 type Error = | NonByte<Number>;
 let literals = [
@@ -276,6 +277,20 @@ let fromNative = (value) => {
     }
   };
   go(SubsetTextHost.codes(value), 0, [])
+};
+
+let compare = (left, right) => {
+  SubsetResult.andThen(
+    fromNative(left),
+    (xs) => {
+      SubsetResult.andThen(
+        fromNative(right),
+        (ys) => {
+          SubsetBytes.compareWith(xs, ys, (offset) => { NonByte(offset) })
+        }
+      )
+    }
+  )
 };
 
 let rec concat = (pieces) => {

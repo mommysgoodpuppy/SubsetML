@@ -249,12 +249,16 @@ structure Lexer = struct
           back (i - 1.0)
         end
 
-      val rec push = fn (r, start, acc, cs) =>
-        case r of
-          Ok (tok, j) => loop (j, (tok, start) :: acc, cs)
-        | Err (message, offset) => LexError (message, offset)
+      val charConstant = fn i =>
+        case lexString (i, i + 2.0, []) of
+          Ok (s, j) =>
+            if Real.== (CompilerText.size s, 1.0) then
+              Ok (TScon (SChar ((let val SubsetResult.Ok decoded = SubsetSource.fromNative s in CompilerText.sub (decoded, 0.0) end))), j)
+            else Err ("a character constant must contain exactly one character", i)
+        | Err (message, offset) => Err (message, offset)
 
-      and loop = fn (i, acc, cs) =>
+      (* Token helpers return the next token; only this loop advances the scan. *)
+      val rec loop = fn (i, acc, cs) =>
         if i >= n then Tokens (SmlList.rev ((TEOF, n) :: acc), SmlList.rev cs)
         else
           case at i of
@@ -273,26 +277,36 @@ structure Lexer = struct
                  Ok (s, j) => loop (j, (TScon (SString s), i) :: acc, cs)
                | Err (message, offset) => LexError (message, offset))
           | #"#" =>
-              if has (i + 1.0, #"\"") then charConstant (i, acc, cs) else push (lexSymbolic i, i, acc, cs)
+              if has (i + 1.0, #"\"") then (case charConstant i of
+                 Ok (tok, j) => loop (j, (tok, i) :: acc, cs)
+               | Err (message, offset) => LexError (message, offset)) else (case lexSymbolic i of
+                 Ok (tok, j) => loop (j, (tok, i) :: acc, cs)
+               | Err (message, offset) => LexError (message, offset))
           | #"~" =>
-              if digitAt (i + 1.0) then push (lexNumber i, i, acc, cs) else push (lexSymbolic i, i, acc, cs)
-          | #"'" => push (lexTyVar i, i, acc, cs)
+              if digitAt (i + 1.0) then (case lexNumber i of
+                 Ok (tok, j) => loop (j, (tok, i) :: acc, cs)
+               | Err (message, offset) => LexError (message, offset)) else (case lexSymbolic i of
+                 Ok (tok, j) => loop (j, (tok, i) :: acc, cs)
+               | Err (message, offset) => LexError (message, offset))
+          | #"'" => (case lexTyVar i of
+                 Ok (tok, j) => loop (j, (tok, i) :: acc, cs)
+               | Err (message, offset) => LexError (message, offset))
           | #"_" => loop (i + 1.0, (TKey "_", i) :: acc, cs)
           | c =>
               case (isFormatting c, punctuation c, SubsetChar.isDigit c, SubsetChar.isAlpha c, isSymbolic c) of
                 (true, _, _, _, _) => loop (i + 1.0, acc, cs)
               | (_, true, _, _, _) => loop (i + 1.0, (TKey (CompilerText.str c), i) :: acc, cs)
-              | (_, _, true, _, _) => push (lexNumber i, i, acc, cs)
-              | (_, _, _, true, _) => push (lexAlnum i, i, acc, cs)
-              | (_, _, _, _, true) => push (lexSymbolic i, i, acc, cs)
+              | (_, _, true, _, _) => (case lexNumber i of
+                 Ok (tok, j) => loop (j, (tok, i) :: acc, cs)
+               | Err (message, offset) => LexError (message, offset))
+              | (_, _, _, true, _) => (case lexAlnum i of
+                 Ok (tok, j) => loop (j, (tok, i) :: acc, cs)
+               | Err (message, offset) => LexError (message, offset))
+              | (_, _, _, _, true) => (case lexSymbolic i of
+                 Ok (tok, j) => loop (j, (tok, i) :: acc, cs)
+               | Err (message, offset) => LexError (message, offset))
               | _ => LexError ("unexpected character", i)
 
-      and charConstant = fn (i, acc, cs) =>
-        case lexString (i, i + 2.0, []) of
-          Ok (s, j) =>
-            if Real.== (CompilerText.size s, 1.0) then loop (j, (TScon (SChar ((let val SubsetResult.Ok decoded = SubsetSource.fromNative s in CompilerText.sub (decoded, 0.0) end))), i) :: acc, cs)
-            else LexError ("a character constant must contain exactly one character", i)
-        | Err (message, offset) => LexError (message, offset)
     in
       loop (0.0, [], [])
     end

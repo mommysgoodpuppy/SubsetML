@@ -1,5 +1,5 @@
 {
-  "status": "source byte/text operations and codecs implemented; lexers, parser and document renderer migrated",
+  "status": "source Basis and compiler core implemented; generated compiler checks and translates its own sources using seven explicit host entry points",
   "modules": {
     "SubsetResult": {
       "source": "src/subset_result.sml",
@@ -48,7 +48,8 @@
       "sourceDependencies": [
         "SubsetChar",
         "SubsetList",
-        "SubsetResult"
+        "SubsetResult",
+        "SubsetOrder"
       ],
       "primitives": []
     },
@@ -86,11 +87,21 @@
       "sourceDependencies": [
         "SubsetChar",
         "SubsetList",
-        "SubsetResult"
+        "SubsetResult",
+        "SubsetBytes"
       ],
       "primitives": [
         "SubsetTextHost.codes"
       ]
+    },
+    "SubsetNatural": {
+      "source": "src/subset_natural.sml",
+      "sourceDependencies": [
+        "SubsetList",
+        "SubsetResult",
+        "SubsetString"
+      ],
+      "primitives": []
     },
     "SubsetSource": {
       "source": "src/subset_source.sml",
@@ -110,6 +121,32 @@
         "SubsetString"
       ],
       "primitives": []
+    },
+    "SubsetIo": {
+      "source": "src/subset_io.sml",
+      "sourceDependencies": [
+        "SubsetList",
+        "SubsetResult",
+        "SubsetString"
+      ],
+      "primitives": [
+        "SubsetHost.readFile",
+        "SubsetHost.writeFile",
+        "SubsetHost.writeStdout",
+        "SubsetHost.writeStderr"
+      ]
+    },
+    "SubsetProcess": {
+      "source": "src/subset_process.sml",
+      "sourceDependencies": [
+        "SubsetIo",
+        "SubsetList",
+        "SubsetResult"
+      ],
+      "primitives": [
+        "SubsetHost.arguments",
+        "SubsetHost.exit"
+      ]
     }
   },
   "languageRequirements": [
@@ -140,9 +177,9 @@
     "output": "MLton print writes supplied text; current Workman print appends a newline"
   },
   "pending": [
-    "broader collection indexing contracts",
-    "target byte I/O contracts",
-    "remaining compiler bootstrap text migration"
+    "remaining collection and resource contracts",
+    "streaming and broader process profiles",
+    "arbitrary real-number formatting contracts"
   ],
   "hostAdapters": {
     "SubsetTextHost": {
@@ -151,6 +188,20 @@
       "workman": "lib/subset_text_host.wm",
       "operations": [
         "codes"
+      ]
+    },
+    "SubsetHost": {
+      "sml": "lib/subset_host.sml",
+      "checkerStub": "src/subset_host.sml",
+      "workman": "lib/subset_host.wm",
+      "javascript": "lib/subset_host.js",
+      "operations": [
+        "readFile",
+        "writeFile",
+        "writeStdout",
+        "writeStderr",
+        "arguments",
+        "exit"
       ]
     }
   }

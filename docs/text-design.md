@@ -99,9 +99,10 @@ foreign bytes or convert a native string once. Both compiler lexers now use this
 lookahead and spans, with byte offsets and typed rejection of non-byte source text. The internal
 `CompilerText` compatibility module asserts established bounds when adapting these Results to
 existing lexer code. The parser now uses checked byte conversion for identifier/label classification and source
-concatenation for qualified-name diagnostics. Other compiler modules still use bootstrap text
-APIs and require migration. The document renderer now uses the source index for original
-source positions, plus shared trimming, field splitting and checked repetition for layout.
+concatenation for qualified-name diagnostics. The remaining compiler text helpers now also use this source layer. The document renderer now uses the source index for original
+source positions, plus shared trimming, field splitting and checked repetition for layout. The SML source and AST debug printers use source byte escaping and concatenation. The Workman
+printer also uses source character construction, name conversion and hexadecimal escaping,
+without native slicing/indexing or numeric div/mod.
 
 ## Frontend-v3 and offset profiles
 
@@ -128,3 +129,8 @@ must become an explicit optional/error result instead of depending on host NaN b
 3. **Done:** convert each lexer input once and remove its indexed bootstrap String dependencies.
 4. Migrate remaining compiler text operations and check the generated compiler graph.
 5. Add editor offset adapters separately; optimize storage after measuring actual workloads.
+
+The compiler types, unifier, elaborator, reverse parser, normalization and translation now
+use source text operations. CLI text helpers use the byte layer; file/process access is
+provided by the six-operation SubsetIo/SubsetProcess profile. Exact count formatting is provided by
+`SubsetNatural`; arbitrary floating-point formatting is a separate contract.

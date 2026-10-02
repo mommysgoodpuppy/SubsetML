@@ -15,7 +15,7 @@
 structure SmlChar = struct
 
   val compare = fn (c : char, d : char) =>
-    if c < d then LESS else (if c > d then GREATER else EQUAL)
+    if (Num.Char.ord c) < (Num.Char.ord d) then LESS else (if (Num.Char.ord c) > (Num.Char.ord d) then GREATER else EQUAL)
 
   val contains = fn s =>
     let val size = Num.String.size s in
@@ -29,22 +29,22 @@ structure SmlChar = struct
   val notContains = fn s =>
     let val member = contains s in fn c => not (member c) end
 
-  val isLower = fn c => #"a" <= c andalso c <= #"z"
-  val isUpper = fn c => c <= #"Z" andalso #"A" <= c
-  val isDigit = fn c => c <= #"9" andalso #"0" <= c
-  val isGraph = fn c => #"!" <= c andalso c <= #"~"
-  val isPrint = fn c => #" " <= c andalso c <= #"~"
-  val isCntrl = fn c => c < #" " orelse c = #"\127"
-  val isAscii = fn c => c <= #"\127"
+  val isLower = fn c => (Num.Char.ord #"a") <= (Num.Char.ord c) andalso (Num.Char.ord c) <= (Num.Char.ord #"z")
+  val isUpper = fn c => (Num.Char.ord c) <= (Num.Char.ord #"Z") andalso (Num.Char.ord #"A") <= (Num.Char.ord c)
+  val isDigit = fn c => (Num.Char.ord c) <= (Num.Char.ord #"9") andalso (Num.Char.ord #"0") <= (Num.Char.ord c)
+  val isGraph = fn c => (Num.Char.ord #"!") <= (Num.Char.ord c) andalso (Num.Char.ord c) <= (Num.Char.ord #"~")
+  val isPrint = fn c => (Num.Char.ord #" ") <= (Num.Char.ord c) andalso (Num.Char.ord c) <= (Num.Char.ord #"~")
+  val isCntrl = fn c => (Num.Char.ord c) < (Num.Char.ord #" ") orelse c = #"\127"
+  val isAscii = fn c => (Num.Char.ord c) <= (Num.Char.ord #"\127")
 
-  val isAlpha = fn c => if #"a" <= c then c <= #"z" else #"A" <= c andalso c <= #"Z"
+  val isAlpha = fn c => if (Num.Char.ord #"a") <= (Num.Char.ord c) then (Num.Char.ord c) <= (Num.Char.ord #"z") else (Num.Char.ord #"A") <= (Num.Char.ord c) andalso (Num.Char.ord c) <= (Num.Char.ord #"Z")
   val isAlphaNum = fn c =>
-    if #"A" <= c then (if #"a" <= c then c <= #"z" else c <= #"Z")
-    else #"0" <= c andalso c <= #"9"
+    if (Num.Char.ord #"A") <= (Num.Char.ord c) then (if (Num.Char.ord #"a") <= (Num.Char.ord c) then (Num.Char.ord c) <= (Num.Char.ord #"z") else (Num.Char.ord c) <= (Num.Char.ord #"Z"))
+    else (Num.Char.ord #"0") <= (Num.Char.ord c) andalso (Num.Char.ord c) <= (Num.Char.ord #"9")
   val isHexDigit = fn c =>
-    if #"A" <= c then (if #"a" <= c then c <= #"f" else c <= #"F")
-    else #"0" <= c andalso c <= #"9"
-  val isSpace = fn c => if #"\r" < c then c = #" " else #"\t" <= c
+    if (Num.Char.ord #"A") <= (Num.Char.ord c) then (if (Num.Char.ord #"a") <= (Num.Char.ord c) then (Num.Char.ord c) <= (Num.Char.ord #"f") else (Num.Char.ord c) <= (Num.Char.ord #"F"))
+    else (Num.Char.ord #"0") <= (Num.Char.ord c) andalso (Num.Char.ord c) <= (Num.Char.ord #"9")
+  val isSpace = fn c => if (Num.Char.ord #"\r") < (Num.Char.ord c) then c = #" " else (Num.Char.ord #"\t") <= (Num.Char.ord c)
   val isPunct = fn c => isGraph c andalso not (isAlphaNum c)
 
   val toLower = fn c =>

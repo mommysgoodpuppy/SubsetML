@@ -257,23 +257,17 @@ structure WmLexer = struct
           go (start, 0.0)
         end
 
-      val rec push = fn (r, start, acc, cs) =>
-        case r of
-          Ok (tok, j) => loop (j, (tok, start) :: acc, cs)
-        | Err (message, offset) => LexError (message, offset)
-
-      and comment = fn (start, j, acc, cs) =>
-        let
-          val body = CompilerText.substring (source, start + 2.0, j - start - 2.0)
-        in
-          loop (j, acc, (start, body, trailing start) :: cs)
-        end
-
-      and loop = fn (i, acc, cs) =>
+      (* Token helpers return the next token; only this loop advances the scan. *)
+      val rec loop = fn (i, acc, cs) =>
         if i >= n then Tokens (SmlList.rev ((WEOF, n) :: acc), SmlList.rev cs)
         else
           case (at i, startsWith (i, "//") orelse startsWith (i, "--"), startsWith (i, "/*")) of
-            (_, true, _) => comment (i, skipWhile (fn d => d <> #"\n", i), acc, cs)
+            (_, true, _) => let
+              val j = skipWhile (fn d => d <> #"\n", i)
+              val body = CompilerText.substring (source, i + 2.0, j - i - 2.0)
+            in
+              loop (j, acc, (i, body, trailing i) :: cs)
+            end
           | (_, _, true) =>
               (case blockComment (i, i + 2.0, 1.0) of
                  Ok (_, j) => loop (j, acc, (i, CompilerText.substring (source, i + 2.0, j - i - 4.0), trailing i) :: cs)
@@ -301,14 +295,20 @@ structure WmLexer = struct
           | (c, _, _) =>
               case (isSpace c, SubsetChar.isDigit c, SubsetChar.isAlpha c) of
                 (true, _, _) => loop (i + 1.0, acc, cs)
-              | (_, true, _) => push (lexNumber i, i, acc, cs)
+              | (_, true, _) => (case lexNumber i of
+                     Ok (tok, j) => loop (j, (tok, i) :: acc, cs)
+                   | Err (message, offset) => LexError (message, offset))
               | (_, _, true) =>
                   if smlStart i then
                     (case smlPhraseEnd i of
                        Ok (_, j) => loop (j + 1.0, (WSml (CompilerText.substring (source, i, j - i)), i) :: acc, cs)
                      | Err (message, offset) => LexError (message, offset))
-                  else push (lexPath i, i, acc, cs)
-              | _ => push (lexSymbol i, i, acc, cs)
+                  else (case lexPath i of
+                     Ok (tok, j) => loop (j, (tok, i) :: acc, cs)
+                   | Err (message, offset) => LexError (message, offset))
+              | _ => (case lexSymbol i of
+                     Ok (tok, j) => loop (j, (tok, i) :: acc, cs)
+                   | Err (message, offset) => LexError (message, offset))
     in
       loop (0.0, [], [])
     end

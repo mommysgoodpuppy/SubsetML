@@ -3,6 +3,7 @@
 from "./subset_result.wm" import * as SubsetResult;
 from "./subset_char.wm" import * as SubsetChar;
 from "./subset_list.wm" import * as SubsetList;
+from "./subset_order.wm" import * as SubsetOrder;
 
 type Error = InvalidIndex | OutOfBounds | NonByte<Number>;
 type Reader = | Reader<List<Char>, Number>;
@@ -19,6 +20,37 @@ let validate = (bytes) => {
   };
   go(bytes, 0)
 };
+
+// Validate complete operands, then compare unsigned byte codes lexicographically.
+// Internal error adapter lets native strings retain their own error type.
+let compareWith = (left, right, nonByte) => {
+  let codes = (bytes) => {
+    let rec go = match {
+      ([], Var(offset), Var(acc)) => { SubsetResult.Ok(SubsetList.reverse(acc)) },
+      ([c, ..rest], Var(offset), Var(acc)) => {
+        match(SubsetChar.toCode(c)) {
+          SubsetResult.Err(error) => { SubsetResult.Err(nonByte(offset)) },
+          SubsetResult.Ok(code) => { go(rest, offset + 1, [code, ..acc]) }
+        }
+      }
+    };
+    go(bytes, 0, [])
+  };
+  let rec order = match {
+    ([], []) => { SubsetOrder.Equal },
+    ([], Var(rest)) => { SubsetOrder.Less },
+    (Var(rest), []) => { SubsetOrder.Greater },
+    ([(Var(a): Number), ..xs], [b, ..ys]) => {
+      if (a < b) { SubsetOrder.Less } else { if (a > b) { SubsetOrder.Greater } else { order(xs, ys) } }
+    }
+  };
+  SubsetResult.andThen(
+    codes(left),
+    (xs) => { SubsetResult.map(codes(right), (ys) => { order(xs, ys) }) }
+  )
+};
+
+let compare = (left, right) => { compareWith(left, right, (offset) => { NonByte(offset) }) };
 
 let length = (bytes) => { SubsetList.foldLeft(bytes, 0, (c, n) => { n + 1 }) };
 let trim = (bytes, predicate) => {

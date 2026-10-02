@@ -342,14 +342,27 @@ let lex = (src) => {
         back(i - 1)
       };
 
-      let rec push = (r, start, acc, cs) => {
-        match(r) {
-          Ok(tok, j) => { loop(j, [(tok, start), ..acc], cs) },
-          Err(message, offset) => { LexError(message, offset) }
+      let charConstant = (i) => {
+        match(lexString(i, i + 2, [])) {
+          Ok(s, j) => {
+            if ((CompilerText.size(s): Number) == 1) {
+              Ok(
+                TScon(SChar({
+                  let SubsetResult.Ok(decoded) = SubsetSource.fromNative(s);
+                  CompilerText.sub(decoded, 0)
+                })),
+                j
+              )
+            } else {
+              Err("a character constant must contain exactly one character", i)
+            }
+          },
+          Err(message, offset) => { Err(message, offset) }
         }
-      }
+      };
 
-      and loop = (i, acc, cs) => {
+      // Token helpers return the next token; only this loop advances the scan.
+      let rec loop = (i, acc, cs) => {
         if (i >= n) { Tokens(SmlList.rev([(TEOF, n), ..acc]), SmlList.rev(cs)) } else {
           match(at(i)) {
             '(' => {
@@ -376,50 +389,64 @@ let lex = (src) => {
               }
             },
             '#' => {
-              if (has(i + 1, '"')) { charConstant(i, acc, cs) } else { push(lexSymbolic(i), i, acc, cs) }
+              if (has(i + 1, '"')) {
+                match(charConstant(i)) {
+                  Ok(tok, j) => { loop(j, [(tok, i), ..acc], cs) },
+                  Err(message, offset) => { LexError(message, offset) }
+                }
+              } else {
+                match(lexSymbolic(i)) {
+                  Ok(tok, j) => { loop(j, [(tok, i), ..acc], cs) },
+                  Err(message, offset) => { LexError(message, offset) }
+                }
+              }
             },
             '~' => {
-              if (digitAt(i + 1)) { push(lexNumber(i), i, acc, cs) } else { push(lexSymbolic(i), i, acc, cs) }
+              if (digitAt(i + 1)) {
+                match(lexNumber(i)) {
+                  Ok(tok, j) => { loop(j, [(tok, i), ..acc], cs) },
+                  Err(message, offset) => { LexError(message, offset) }
+                }
+              } else {
+                match(lexSymbolic(i)) {
+                  Ok(tok, j) => { loop(j, [(tok, i), ..acc], cs) },
+                  Err(message, offset) => { LexError(message, offset) }
+                }
+              }
             },
-            '\'' => { push(lexTyVar(i), i, acc, cs) },
+            '\'' => {
+              match(lexTyVar(i)) {
+                Ok(tok, j) => { loop(j, [(tok, i), ..acc], cs) },
+                Err(message, offset) => { LexError(message, offset) }
+              }
+            },
             '_' => { loop(i + 1, [(TKey("_"), i), ..acc], cs) },
             Var(c) => {
               match(isFormatting(c), punctuation(c), SubsetChar.isDigit(c), SubsetChar.isAlpha(c), isSymbolic(c)) {
                 (true, _, _, _, _) => { loop(i + 1, acc, cs) },
                 (_, true, _, _, _) => { loop(i + 1, [(TKey(CompilerText.str(c)), i), ..acc], cs) },
-                (_, _, true, _, _) => { push(lexNumber(i), i, acc, cs) },
-                (_, _, _, true, _) => { push(lexAlnum(i), i, acc, cs) },
-                (_, _, _, _, true) => { push(lexSymbolic(i), i, acc, cs) },
+                (_, _, true, _, _) => {
+                  match(lexNumber(i)) {
+                    Ok(tok, j) => { loop(j, [(tok, i), ..acc], cs) },
+                    Err(message, offset) => { LexError(message, offset) }
+                  }
+                },
+                (_, _, _, true, _) => {
+                  match(lexAlnum(i)) {
+                    Ok(tok, j) => { loop(j, [(tok, i), ..acc], cs) },
+                    Err(message, offset) => { LexError(message, offset) }
+                  }
+                },
+                (_, _, _, _, true) => {
+                  match(lexSymbolic(i)) {
+                    Ok(tok, j) => { loop(j, [(tok, i), ..acc], cs) },
+                    Err(message, offset) => { LexError(message, offset) }
+                  }
+                },
                 _ => { LexError("unexpected character", i) }
               }
             }
           }
-        }
-      }
-
-      and charConstant = (i, acc, cs) => {
-        match(lexString(i, i + 2, [])) {
-          Ok(s, j) => {
-            if ((CompilerText.size(s): Number) == 1) {
-              loop(
-                j,
-                [
-                  (
-                    TScon(SChar({
-                      let SubsetResult.Ok(decoded) = SubsetSource.fromNative(s);
-                      CompilerText.sub(decoded, 0)
-                    })),
-                    i
-                  ),
-                  ..acc
-                ],
-                cs
-              )
-            } else {
-              LexError("a character constant must contain exactly one character", i)
-            }
-          },
-          Err(message, offset) => { LexError(message, offset) }
         }
       };
       loop(0, [], [])

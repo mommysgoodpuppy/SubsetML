@@ -164,11 +164,17 @@ structure Parser = struct
         if SmlList.exists (fn (l', _) => l = l') rest then SOME l else duplicateLabel rest
 
   (* `x1 sep x2 sep ... xn` with n >= 1. *)
-  val rec separated = fn (item, sep, ts) =>
-    bind (item ts) (fn x => fn ts =>
-      if isKey (sep, ts) then
-        bind (separated (item, sep, advance ts)) (fn xs => fn ts => Done (x :: xs, ts))
-      else Done ([x], ts))
+  val separated = fn (item, sep, ts) =>
+    let
+      val rec loop = fn (acc, ts) =>
+        case item ts of
+          Done (x, rest) =>
+            if isKey (sep, rest) then loop (x :: acc, advance rest)
+            else Done (SmlList.rev (x :: acc), rest)
+        | Fail (message, offset) => Fail (message, offset)
+    in
+      loop ([], ts)
+    end
 
   (* ---------------------------------------------------------------------------------------- *)
   (* Infix resolution (Definition §2.6) *)

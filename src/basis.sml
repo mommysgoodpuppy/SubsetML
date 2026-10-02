@@ -11,7 +11,8 @@ structure Basis = struct
   (* --------------------------------------------------------------------------------------- *)
   (* Types *)
 
-  val tyStr = fn tn => TyStr (arityOf tn, TCon (tn, Num.List.tabulate (arityOf tn, TGen)), [])
+  val arguments = fn tn => let val SubsetResult.Ok args = SubsetList.tabulate (arityOf tn, TGen) in args end
+  val tyStr = fn tn => TyStr (arityOf tn, TCon (tn, arguments tn), [])
 
   val conEntry = fn (name, scheme) => (name, (scheme, SCon))
 
@@ -26,7 +27,7 @@ structure Basis = struct
   val orderTy = TCon (orderName, [])
   val orderCons = [("LESS", ([], orderTy)), ("EQUAL", ([], orderTy)), ("GREATER", ([], orderTy))]
 
-  val withCons = fn (tn, cons) => TyStr (arityOf tn, TCon (tn, Num.List.tabulate (arityOf tn, TGen)), cons)
+  val withCons = fn (tn, cons) => TyStr (arityOf tn, TCon (tn, arguments tn), cons)
 
   val topTypes =
     [("unit", TyStr (0.0, unitTy, [])),
@@ -197,7 +198,6 @@ structure Basis = struct
      operation SML would default to int is reported instead of silently typed (spec §9.3). `/`
      has one type here and appears among the values above. *)
   val numClass = KClass [intName, realName]
-  val textClass = KClass [intName, realName, stringName, charName]
   val binary = fn result => TArrow (tupleTy [alpha, alpha], result)
 
   val special =
@@ -206,10 +206,10 @@ structure Basis = struct
      ("+", (([numClass], binary alpha), SValue)),
      ("-", (([numClass], binary alpha), SValue)),
      ("*", (([numClass], binary alpha), SValue)),
-     ("<", (([textClass], binary boolTy), SValue)),
-     (">", (([textClass], binary boolTy), SValue)),
-     ("<=", (([textClass], binary boolTy), SValue)),
-     (">=", (([textClass], binary boolTy), SValue)),
+     ("<", (([numClass], binary boolTy), SValue)),
+     (">", (([numClass], binary boolTy), SValue)),
+     ("<=", (([numClass], binary boolTy), SValue)),
+     (">=", (([numClass], binary boolTy), SValue)),
      ("~", (([numClass], TArrow (alpha, alpha)), SValue)),
      ("abs", (([numClass], TArrow (alpha, alpha)), SValue))]
 
@@ -219,19 +219,19 @@ structure Basis = struct
   (* The scheme of a type written in SubsetML syntax, or the reason it is malformed. *)
   val scheme = fn (env, text) =>
     case Lexer.lex text of
-      Lexer.LexError (msg, _) => Unify.Err (msg, 0.0)
-    | Lexer.Tokens (ts, _) =>
+      Lexer.LexError (msg, ignored1) => Unify.Err (msg, 0.0)
+    | Lexer.Tokens (ts, ignored2) =>
         case Parser.parseTy ts of
-          Parser.Fail e => Unify.Err e
-        | Parser.Done (t, _) =>
+          Parser.Fail (message, pos) => Unify.Err (message, pos)
+        | Parser.Done (t, ignored3) =>
             let
               val vars = Elab.distinct (Elab.tyVarsOf t)
               val rec index = fn
-                  (_, [], _) => NONE
+                  (ignored4, [], ignored5) => NONE
                 | (v, w :: rest, i) => if v = w then SOME (TGen i) else index (v, rest, i + 1.0)
             in
               Unify.bind (Elab.elabTy (env, fn v => index (v, vars, 0.0), 0.0, t, Unify.initial)) (fn body => fn st =>
-                Unify.Ok ((SmlList.map (fn _ => KPlain) vars, body), st))
+                Unify.Ok ((SmlList.map (fn ignored6 => KPlain) vars, body), st))
             end
 
   (* Puts `inner` at `path` inside `outer`, creating structures on the way. *)
@@ -240,51 +240,51 @@ structure Basis = struct
       [] => plus (outer, inner)
     | name :: rest =>
         let
-          val Env (strs, tys, vals) = outer
+          val Env.Env (strs, tys, vals) = outer
           val existing =
             case assoc (name, strs) of
-              SOME (e, _) => e
+              SOME entry => let val (e, basis) = entry in e end
             | NONE => empty
         in
-          Env ((name, (nest (existing, rest, inner), true)) :: SmlList.filter (fn (n, _) => n <> name) strs, tys, vals)
+          Env.Env ((name, (nest (existing, rest, inner), true)) :: SmlList.filter (fn (n, ignored7) => n <> name) strs, tys, vals)
         end
 
   (* The initial environment, or the first malformed entry. *)
   val initial =
     let
       val topEnv =
-        Env ([], topTypes,
+        Env.Env ([], topTypes,
              SmlList.map conEntry (boolCons @ listCons @ optionCons @ orderCons) @ special)
       (* The structures' types, so that value types can name them (TextIO.instream). *)
       val typesEnv =
-        SmlList.foldl (fn ((path, tys, _), env) =>
+        SmlList.foldl (fn ((path, tys, ignored8), env) =>
                       nest (env, path, withTypes (SmlList.map (fn (n, tn) => (n, tyStr tn)) tys)))
           topEnv structures
       val values = fn (scope, entries) =>
         SmlList.foldl (fn ((name, text), acc) =>
                       case acc of
-                        Unify.Err e => Unify.Err e
+                        Unify.Err (message, pos) => Unify.Err (message, pos)
                       | Unify.Ok (vals, st) =>
                           case scheme (scope, text) of
-                            Unify.Ok (s, _) => Unify.Ok (vals @ [(name, (s, SValue))], st)
-                          | Unify.Err (msg, _) => Unify.Err ("basis entry " ^ name ^ ": " ^ msg, 0.0))
+                            Unify.Ok (s, ignored9) => Unify.Ok (vals @ [(name, (s, SValue))], st)
+                          | Unify.Err (msg, ignored10) => Unify.Err ("basis entry " ^ name ^ ": " ^ msg, 0.0))
           (Unify.Ok ([], Unify.initial)) entries
       (* Values are elaborated where their structure's types are in scope. *)
       val scopeOf = fn path =>
         case structureAt (typesEnv, path) of
-          SOME (inner, _) => plus (typesEnv, inner)
+          SOME entry => let val (inner, ignored11) = entry in plus (typesEnv, inner) end
         | NONE => typesEnv
     in
       case values (typesEnv, topValues) of
-        Unify.Err e => Unify.Err e
-      | Unify.Ok (tops, _) =>
-          SmlList.foldl (fn ((path, _, entries), acc) =>
+        Unify.Err (message, pos) => Unify.Err (message, pos)
+      | Unify.Ok (tops, ignored12) =>
+          SmlList.foldl (fn ((path, ignored13, entries), acc) =>
                         case acc of
-                          Unify.Err e => Unify.Err e
+                          Unify.Err (message, pos) => Unify.Err (message, pos)
                         | Unify.Ok (env, st) =>
                             case values (scopeOf path, entries) of
-                              Unify.Ok (vals, _) => Unify.Ok (nest (env, path, withValues vals), st)
-                            | Unify.Err e => Unify.Err e)
+                              Unify.Ok (vals, ignored14) => Unify.Ok (nest (env, path, withValues vals), st)
+                            | Unify.Err (message, pos) => Unify.Err (message, pos))
             (Unify.Ok (plus (typesEnv, withValues tops), Unify.initial)) structures
     end
 

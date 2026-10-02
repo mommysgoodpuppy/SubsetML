@@ -3,7 +3,7 @@
 
 from "./subset_result.wm" import * as SubsetResult;
 
-type Error = EmptyList | InvalidCount;
+type Error = EmptyList | InvalidCount | InvalidIndex | OutOfBounds;
 
 let isEmpty = match {
   [] => { true },
@@ -95,16 +95,55 @@ let rec dropWhile = (xs, predicate) => {
 
 /* Counts must be exact nonnegative integers below 2^53. Check integrality with
    bounded binary weights before allocating; no numeric floor primitive is needed. */
-let repeat = (value, count: Number) => {
+let validCount = (count: Number) => {
   let rec integral = (remaining, weight) => {
     if (weight < 1) { if (remaining <= 0) { remaining >= 0 } else { false } } else {
       integral(if (remaining >= weight) { remaining - weight } else { remaining }, weight / 2)
     }
   };
+  if (if (count >= 0) { count < 9007199254740992 } else { false }) { integral(count, 4503599627370496) } else { false }
+};
+
+let repeat = (value, count) => {
   let rec build = (remaining, acc) => {
     if (remaining <= 0) { acc } else { build(remaining - 1, [value, ..acc]) }
   };
-  if (if (if (count >= 0) { count < 9007199254740992 } else { false }) { integral(count, 4503599627370496) } else { false }) { SubsetResult.Ok(build(count, [])) } else { SubsetResult.Err(InvalidCount) }
+  if (validCount(count)) { SubsetResult.Ok(build(count, [])) } else { SubsetResult.Err(InvalidCount) }
+};
+
+let splitAt = (xs, index) => {
+  let rec go = (rest, remaining, acc) => {
+    if (remaining <= 0) { SubsetResult.Ok(reverse(acc), rest) } else {
+      match(rest) {
+        [] => { SubsetResult.Err(OutOfBounds) },
+        [x, ..tail] => { go(tail, remaining - 1, [x, ..acc]) }
+      }
+    }
+  };
+  if (validCount(index)) { go(xs, index, []) } else { SubsetResult.Err(InvalidIndex) }
+};
+let at = (xs, index) => {
+  SubsetResult.andThen(
+    splitAt(xs, index),
+    (prefix, rest) => {
+      match(rest) {
+        [] => { SubsetResult.Err(OutOfBounds) },
+        [x, ..tail] => { SubsetResult.Ok(x) }
+      }
+    }
+  )
+};
+let take = (xs, count) => {
+  SubsetResult.map(splitAt(xs, count), (prefix, rest) => { prefix })
+};
+let drop = (xs, count) => {
+  SubsetResult.map(splitAt(xs, count), (prefix, rest) => { rest })
+};
+let tabulate = (count, f) => {
+  let rec go = (index, acc) => {
+    if (index >= count) { SubsetResult.Ok(reverse(acc)) } else { go(index + 1, [f(index), ..acc]) }
+  };
+  if (validCount(count)) { go(0, []) } else { SubsetResult.Err(InvalidCount) }
 };
 
 let head = match {

@@ -231,12 +231,16 @@ let rec duplicateLabel = match {
 };
 
 // `x1 sep x2 sep ... xn` with n >= 1.
-let rec separated = (item, sep, ts) => {
-  bind(item(ts))((x) => (ts) => {
-    if (isKey(sep, ts)) {
-      bind(separated(item, sep, advance(ts)))((xs) => (ts) => { Done([x, ..xs], ts) })
-    } else { Done([x], ts) }
-  })
+let separated = (item, sep, ts) => {
+  let rec loop = (acc, ts) => {
+    match(item(ts)) {
+      Done(x, rest) => {
+        if (isKey(sep, rest)) { loop([x, ..acc], advance(rest)) } else { Done(SmlList.rev([x, ..acc]), rest) }
+      },
+      Fail(message, offset) => { Fail(message, offset) }
+    }
+  };
+  loop([], ts)
 };
 
 // ----------------------------------------------------------------------------------------

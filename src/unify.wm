@@ -11,6 +11,9 @@ from "./int_map.wm" import * as IntMap;
 from "./sml_list.wm" import * as SmlList;
 from "./subset_char.wm" import * as SubsetChar;
 from "./subset_result.wm" import * as SubsetResult;
+from "./compiler_text.wm" import * as CompilerText;
+from "./subset_string.wm" import * as SubsetString;
+from "./subset_list.wm" import * as SubsetList;
 
 from "./types.wm" import *;
 
@@ -38,7 +41,7 @@ type Res<a> = Ok<a, State> | Err<String, Syntax.Pos>;
 let bind = (r) => (k) => {
   match(r) {
     Ok(x, st) => { k(x)(st) },
-    Err(e) => { Err(e) }
+    Err(message, pos) => { Err(message, pos) }
   }
 };
 
@@ -66,7 +69,7 @@ let freshStamp = match {
 };
 
 let lookup = match {
-  (State(vars, _, _, _, _), Var(v)) => {
+  (State(vars, ignored1, ignored2, ignored3, ignored4), Var(v)) => {
     match(IntMap.find(vars, v)) {
       Some(info) => { info },
       None => { Free(KPlain, 0) }
@@ -84,10 +87,10 @@ let rec prune = (st, t) => {
     TVar(v) => {
       match(lookup(st, v)) {
         Bound(t') => { prune(st, t') },
-        Free(_) => { t }
+        Free(ignored5, ignoredFreeLevel) => { t }
       }
     },
-    _ => { t }
+    Var(ignored6) => { t }
   }
 };
 
@@ -110,10 +113,12 @@ let freeVars = (st, t) => {
       TVar(v) => {
         if (SmlList.exists((w) => { (w: Number) == v })(acc)) { acc } else { List.append(acc, [v]) }
       },
-      TCon(_, ts) => { SmlList.foldl(go)(acc)(ts) },
+      TCon(ignored7, ts) => { SmlList.foldl(go)(acc)(ts) },
       TArrow(a, b) => { go(b, go(a, acc)) },
-      TRecord(fields) => { SmlList.foldl(((_, a), acc) => { go(a, acc) })(acc)(fields) },
-      _ => { acc }
+      TRecord(fields) => {
+        SmlList.foldl(((ignored8, a), acc) => { go(a, acc) })(acc)(fields)
+      },
+      Var(ignored9) => { acc }
     }
   };
   go(t, [])
@@ -125,10 +130,10 @@ let freeVars = (st, t) => {
 let varName = (i) => {
   "'" ++ (if (i < 26) {
     match(SubsetChar.fromCode(97 + i)) {
-      SubsetResult.Ok(c) => { String.str(c) },
-      SubsetResult.Err(error) => { "t" ++ Number.toString(i) }
+      SubsetResult.Ok(c) => { CompilerText.str(c) },
+      SubsetResult.Err(error) => { "t" ++ CompilerText.natural(i) }
     }
-  } else { "t" ++ Number.toString(i) })
+  } else { "t" ++ CompilerText.natural(i) })
 };
 
 // Prints types, naming their free variables consistently across the list.
@@ -141,16 +146,18 @@ let showAll = (st, ts) => {
     )
   })([])(ts');
   let rec indexOf = match {
-    (_, [], _) => { 0 },
+    (Var(ignored10), [], Var(ignored11)) => { 0 },
     (Var(v), [w, ..rest], Var(i)) => { if ((v: Number) == w) { i } else { indexOf(v, rest, i + 1) } }
   };
   // Explicit type variables keep their names, so free variables avoid them.
   let rec rigids = match {
     TRigid(name) => { [name] },
-    TCon(_, ts) => { SmlList.concat(SmlList.map(rigids)(ts)) },
+    TCon(ignored12, ts) => { SmlList.concat(SmlList.map(rigids)(ts)) },
     TArrow(a, b) => { List.append(rigids(a), rigids(b)) },
-    TRecord(fields) => { SmlList.concat(SmlList.map((_, a) => { rigids(a) })(fields)) },
-    _ => { [] }
+    TRecord(fields) => {
+      SmlList.concat(SmlList.map((ignored13, a) => { rigids(a) })(fields))
+    },
+    Var(ignored14) => { [] }
   };
   let taken = SmlList.concat(SmlList.map(rigids)(ts'));
   let rec nth = (i, candidate) => {
@@ -161,11 +168,11 @@ let showAll = (st, ts) => {
   let varText = (v) => {
     let name = nth(indexOf(v, vars, 0), 0);
     match(lookup(st, v)) {
-      Free(KEq, _) => { "'" ++ name },
-      Free(KClass(names), _) => {
-        name ++ " (" ++ String.concatWith(" or ")(SmlList.map(nameOf)(names)) ++ ")"
+      Free(KEq, ignored15) => { "'" ++ name },
+      Free(KClass(names), ignored16) => {
+        name ++ " (" ++ SubsetString.concatWith(SmlList.map(nameOf)(names), " or ") ++ ")"
       },
-      _ => { name }
+      Var(ignored17) => { name }
     }
   };
   // Levels: arrow 0, tuple 1, application 2.
@@ -178,17 +185,17 @@ let showAll = (st, ts) => {
       TCon(n, []) => { nameOf(n) },
       TCon(n, [a]) => { show(2, a) ++ " " ++ nameOf(n) },
       TCon(n, args) => {
-        "(" ++ String.concatWith(", ")(SmlList.map((a) => { show(0, a) })(args)) ++ ") " ++ nameOf(n)
+        "(" ++ SubsetString.concatWith(SmlList.map((a) => { show(0, a) })(args), ", ") ++ ") " ++ nameOf(n)
       },
       TArrow(a, b) => { paren(0, show(1, a) ++ " -> " ++ show(0, b)) },
       TRecord([]) => { "unit" },
       TRecord(fields) => {
         match(tupleComponents(fields)) {
           Some(parts) => {
-            paren(1, String.concatWith(" * ")(SmlList.map((a) => { show(2, a) })(parts)))
+            paren(1, SubsetString.concatWith(SmlList.map((a) => { show(2, a) })(parts), " * "))
           },
           None => {
-            "{" ++ String.concatWith(", ")(SmlList.map((l, a) => { l ++ " : " ++ show(0, a) })(fields)) ++ "}"
+            "{" ++ SubsetString.concatWith(SmlList.map((l, a) => { l ++ " : " ++ show(0, a) })(fields), ", ") ++ "}"
           }
         }
       }
@@ -200,7 +207,7 @@ let showAll = (st, ts) => {
 let show = (st, t) => {
   match(showAll(st, [t])) {
     [s] => { s },
-    _ => { "" }
+    Var(ignored18) => { "" }
   }
 };
 
@@ -215,13 +222,13 @@ let combine = match {
   (Var(k), KPlain) => { Some(k) },
   (KEq, KEq) => { Some(KEq) },
   (KEq, KClass(ns)) => {
-    match(SmlList.filter((_, _, _, eq) => { eq })(ns)) {
+    match(SmlList.filter((ignored19, ignored20, ignored21, eq) => { eq })(ns)) {
       [] => { None },
       Var(ns') => { Some(KClass(ns')) }
     }
   },
   (KClass(ns), KEq) => {
-    match(SmlList.filter((_, _, _, eq) => { eq })(ns)) {
+    match(SmlList.filter((ignored22, ignored23, ignored24, eq) => { eq })(ns)) {
       [] => { None },
       Var(ns') => { Some(KClass(ns')) }
     }
@@ -237,7 +244,7 @@ let combine = match {
 let kindText = match {
   KEq => { "an equality type" },
   KClass(ns) => {
-    "one of " ++ String.concatWith(", ")(SmlList.map(nameOf)(ns))
+    "one of " ++ SubsetString.concatWith(SmlList.map(nameOf)(ns), ", ")
   },
   KPlain => { "a type" }
 };
@@ -248,33 +255,35 @@ let rec adjust = (st, level, t) => {
     TVar(v) => {
       match(lookup(st, v)) {
         Free(k, l) => { if (l > level) { set(st, v, Free(k, level)) } else { st } },
-        Bound(_) => { st }
+        Bound(ignored25) => { st }
       }
     },
-    TCon(_, ts) => { SmlList.foldl((a, st) => { adjust(st, level, a) })(st)(ts) },
+    TCon(ignored26, ts) => { SmlList.foldl((a, st) => { adjust(st, level, a) })(st)(ts) },
     TArrow(a, b) => { adjust(adjust(st, level, a), level, b) },
     TRecord(fields) => {
-      SmlList.foldl(((_, a), st) => { adjust(st, level, a) })(st)(fields)
+      SmlList.foldl(((ignored27, a), st) => { adjust(st, level, a) })(st)(fields)
     },
-    _ => { st }
+    Var(ignored28) => { st }
   }
 };
 
 let rec occurs = (st, v, t) => {
   match(prune(st, t)) {
     TVar(w) => { (v: Number) == w },
-    TCon(_, ts) => { SmlList.exists((a) => { occurs(st, v, a) })(ts) },
+    TCon(ignored29, ts) => { SmlList.exists((a) => { occurs(st, v, a) })(ts) },
     TArrow(a, b) => { if (occurs(st, v, a)) { true } else { occurs(st, v, b) } },
-    TRecord(fields) => { SmlList.exists((_, a) => { occurs(st, v, a) })(fields) },
-    _ => { false }
+    TRecord(fields) => {
+      SmlList.exists((ignored30, a) => { occurs(st, v, a) })(fields)
+    },
+    Var(ignored31) => { false }
   }
 };
 
 // Makes t satisfy kind k.
 let rec require = (st, k, t) => {
   match(k, prune(st, t)) {
-    (KPlain, _) => { Unified(st) },
-    (_, TVar(w)) => {
+    (KPlain, Var(ignored32)) => { Unified(st) },
+    (Var(ignored33), TVar(w)) => {
       match(lookup(st, w)) {
         Free(k2, l) => {
           match(combine(k, k2)) {
@@ -284,22 +293,24 @@ let rec require = (st, k, t) => {
             }
           }
         },
-        Bound(_) => { Unified(st) }
+        Bound(ignored34) => { Unified(st) }
       }
     },
-    (KEq, TCon((_, Var(name), _, Var(eq)), args)) => {
+    (KEq, TCon((Var(ignored35), Var(name), Var(ignored36), Var(eq)), args)) => {
       if (eq) { requireAll(st, k, args) } else { Mismatch("type " ++ name ++ " does not admit equality") }
     },
-    (KEq, TRecord(fields)) => { requireAll(st, k, SmlList.map((_, t) => { t })(fields)) },
-    (KEq, TArrow(_)) => { Mismatch("function types do not admit equality") },
+    (KEq, TRecord(fields)) => {
+      requireAll(st, k, SmlList.map((ignored37, t) => { t })(fields))
+    },
+    (KEq, TArrow(ignored38, ignoredArrowResult)) => { Mismatch("function types do not admit equality") },
     (KEq, TRigid(name)) => {
       Mismatch("type variable " ++ name ++ " does not admit equality")
     },
     (KClass(ns), TCon(n, [])) => {
       if (SmlList.exists((m) => { sameName(n, m) })(ns)) { Unified(st) } else { Mismatch("the overloaded operation needs " ++ kindText(k)) }
     },
-    (KClass(_), _) => { Mismatch("the overloaded operation needs " ++ kindText(k)) },
-    (_, TGen(_)) => { Unified(st) }
+    (KClass(ignored39), Var(ignored40)) => { Mismatch("the overloaded operation needs " ++ kindText(k)) },
+    (Var(ignored41), TGen(ignored42)) => { Unified(st) }
   }
 }
 
@@ -324,19 +335,23 @@ let rec unify = (st, a, b) => {
     },
     (TArrow(a1, r1), TArrow(a2, r2)) => { andThen(unify(st, a1, a2), (st) => { unify(st, r1, r2) }) },
     (TRecord(f1), TRecord(f2)) => {
-      if (SmlList.map((l, _) => { l })(f1) == SmlList.map((l, _) => { l })(f2)) {
-        unifyAll(st, SmlList.map((_, t) => { t })(f1), SmlList.map((_, t) => { t })(f2))
+      if (SmlList.map((l, ignored43) => { l })(f1) == SmlList.map((l, ignored44) => { l })(f2)) {
+        unifyAll(
+          st,
+          SmlList.map((ignored45, t) => { t })(f1),
+          SmlList.map((ignored46, t) => { t })(f2)
+        )
       } else { Mismatch("") }
     },
     (TRigid(x), TRigid(y)) => { if (x == y) { Unified(st) } else { Mismatch("") } },
-    _ => { Mismatch("") }
+    Var(ignored47) => { Mismatch("") }
   }
 }
 
 and unifyAll = (st, xs, ys) => {
   match(xs, ys) {
     ([x, ..xs'], [y, ..ys']) => { andThen(unify(st, x, y), (st) => { unifyAll(st, xs', ys') }) },
-    _ => { Unified(st) }
+    Var(ignored48) => { Unified(st) }
   }
 }
 
@@ -367,21 +382,21 @@ let generalize = (st, level, rigid, t) => {
   let t' = resolve(st, t);
   let vars = SmlList.filter((v) => {
     match(lookup(st, v)) {
-      Free(_, l) => { l > level },
-      Bound(_) => { false }
+      Free(ignored49, l) => { l > level },
+      Bound(ignored50) => { false }
     }
   })(freeVars(st, t'));
   let kinds = SmlList.map((v) => {
     match(lookup(st, v)) {
-      Free(k, _) => { k },
-      Bound(_) => { KPlain }
+      Free(k, ignored51) => { k },
+      Bound(ignored52) => { KPlain }
     }
   })(vars);
-  let count = List.length(vars);
+  let count = SubsetList.length(vars);
   // The position of x in a list, by the given equality.
   let indexIn = (same, x, xs) => {
     let rec go = match {
-      ([], _) => { None },
+      ([], Var(ignored53)) => { None },
       ([y, ..rest], Var(i)) => { if (same(x, y)) { Some(i) } else { go(rest, i + 1) } }
     };
     go(xs, 0)
@@ -407,8 +422,8 @@ let generalize = (st, level, rigid, t) => {
       TCon(n, ts) => { TCon(n, SmlList.map(go)(ts)) },
       TArrow(a, b) => { TArrow(go(a), go(b)) },
       TRecord(fields) => { TRecord(SmlList.map((l, a) => { (l, go(a)) })(fields)) },
-      TGen(_) => { t }
+      TGen(ignored54) => { t }
     }
   };
-  (List.append(kinds, SmlList.map((_) => { KPlain })(rigid)), go(t'))
+  (List.append(kinds, SmlList.map((ignored55) => { KPlain })(rigid)), go(t'))
 };

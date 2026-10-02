@@ -3,15 +3,15 @@ structure Print = struct
 
   open Syntax
 
-  val node = fn (name, parts) => "(" ^ String.concatWith " " (name :: parts) ^ ")"
+  val node = fn (name, parts) => "(" ^ SubsetString.concatWith (name :: parts, " ") ^ ")"
 
-  val longid = fn (quals, id) => String.concatWith "." (quals @ [id])
+  val longid = fn (quals, id) => SubsetString.concatWith (SubsetList.append (quals, [id]), ".")
 
   val scon = fn
       SInt s => s
     | SReal s => s
-    | SString s => "\"" ^ String.toString s ^ "\""
-    | SChar c => "#\"" ^ Char.toString c ^ "\""
+    | SString s => "\"" ^ CompilerText.escapeSmlString s ^ "\""
+    | SChar c => "#\"" ^ CompilerText.escapeSmlChar c ^ "\""
 
   val rec ty = fn
       TyVar v => v
@@ -60,14 +60,14 @@ structure Print = struct
 
   and dec = fn
       DVal (_, vs, plain, recs) =>
-        node ("val", [tyvars vs] @ SmlList.map binding plain
-                     @ (if SmlList.null recs then [] else [node ("rec", SmlList.map binding recs)]))
+        node ("val", SubsetList.concat [[tyvars vs], SmlList.map binding plain,
+          (if SmlList.null recs then [] else [node ("rec", SmlList.map binding recs)])])
     | DType (_, bs) =>
         node ("type", SmlList.map (fn (vs, tycon, t) => node (tycon, [tyvars vs, ty t])) bs)
     | DDatatype (_, bs) =>
         node ("datatype",
               SmlList.map (fn (vs, tycon, cs) => node (tycon, tyvars vs :: SmlList.map con cs)) bs)
-    | DOpen (_, ids) => node ("open", SmlList.map (String.concatWith ".") ids)
+    | DOpen (_, ids) => node ("open", SubsetList.map (ids, fn id => SubsetString.concatWith (id, ".")))
 
   val strdec = fn
       SDec d => dec d
@@ -75,7 +75,7 @@ structure Print = struct
         node ("structure", SmlList.map (fn (name, ds) => node (name, SmlList.map dec ds)) bs)
 
   val topdec = fn
-      TopDecs sds => String.concatWith " " (SmlList.map strdec sds)
+      TopDecs sds => SubsetString.concatWith (SubsetList.map (sds, strdec), " ")
     | TopExp (_, e) => node ("it", [exp e])
 
 end

@@ -198,7 +198,8 @@ These are unchanged (§4, §6), including the parts that are easy to get wrong:
   Equality type variables still arise during inference even though `''a` can't be written. `real`
   does not admit equality.
 * **Overloading** (Appendix E): `abs ~ + - * div mod / < > <= >=` are overloaded over the
-  classes of Appendix E restricted to SubsetML's types (`real`, `string`, `char`). Unresolved
+  numeric classes of Appendix E restricted to SubsetML's `real` type. Text operands
+  to `< > <= >=` are rejected; use explicit custom Basis comparisons. Unresolved
   overloading defaults to `int` in SML, which SubsetML omits (§9.3), so an overloaded identifier
   whose type its context does not determine is rejected: `fn (x, y) => x + y` needs an annotation
   such as `(x : real, y)`.
@@ -288,7 +289,7 @@ end of a file may be omitted.
 | `=` | kept |
 | `ref`, `:=` | **omitted** |
 | `Match`, `Bind` as identifiers | **omitted** (still raised dynamically, §5) |
-| overloaded identifiers (Appendix E) | kept, resolving to `real`, `string` or `char` (`div` and `mod` omitted) |
+| overloaded identifiers (Appendix E) | numeric only, resolving to `real` (`div` and `mod` omitted) |
 
 ### 9.2 Bootstrap namespace restriction
 

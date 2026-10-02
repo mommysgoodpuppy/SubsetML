@@ -25,6 +25,34 @@ for _ in range(100):
     cases.append(values)
 
 print('structure TextVectors = struct')
+# Python byte ordering supplies an independent lexicographic oracle.
+order_cases = [(b'', b''), (b'', b'a'), (b'a', b''),
+               (b'a', b'aa'), (b'aa', b'a'), (b'a\x00', b'a'),
+               (b'\x7f', b'\x80'), (b'\xff', b'\x00')]
+order_cases += [(bytes([n]), b'\x7f') for n in range(256)]
+for _ in range(80):
+    left = bytes(rng.randrange(256) for _ in range(rng.randrange(12)))
+    right = left if rng.randrange(4) == 0 else bytes(rng.randrange(256) for _ in range(rng.randrange(12)))
+    order_cases.append((left, right))
+print('  val orderCases = [')
+print(',\n'.join('    (' + bytes_literal(a) + ', ' + bytes_literal(b) + ', SubsetOrder.'
+      + ('Less' if a < b else 'Greater' if a > b else 'Equal') + ')'
+      for a, b in order_cases))
+print('  ]')
+print('''  val sameOrder = fn
+      (SubsetOrder.Less, SubsetOrder.Less) => true
+    | (SubsetOrder.Equal, SubsetOrder.Equal) => true
+    | (SubsetOrder.Greater, SubsetOrder.Greater) => true
+    | other => false
+  val ordering = SubsetList.all (orderCases, fn (left, right, expected) =>
+    (case SubsetBytes.compare (left, right) of
+      SubsetResult.Ok actual => sameOrder (actual, expected) | SubsetResult.Err error => false)
+    andalso (case (SubsetString.toNative left, SubsetString.toNative right) of
+      (SubsetResult.Ok a, SubsetResult.Ok b) =>
+        (case SubsetString.compare (a, b) of
+          SubsetResult.Ok actual => sameOrder (actual, expected) | SubsetResult.Err error => false)
+    | other => false))''')
+
 print('  val same = fn (actual, expected) =>')
 print('    case SubsetListPair.zip (actual, expected) of')
 print('      SubsetResult.Err error => false')
@@ -87,5 +115,5 @@ print('''  val bridge = fn bytes =>
     bridge bytes andalso matches (SubsetUtf8.decode bytes, utf8)
     andalso matches (SubsetUtf16.decode (bytes, SubsetUtf16.LittleEndian), little)
     andalso matches (SubsetUtf16.decode (bytes, SubsetUtf16.BigEndian), big))
-  val _ = if valid andalso binary then print "text reference vectors: ok\\n" else print "FAILED\\n"
+  val _ = if valid andalso binary andalso ordering then print "text reference vectors: ok\\n" else print "FAILED\\n"
 end''')

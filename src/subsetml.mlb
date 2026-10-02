@@ -2,6 +2,7 @@ $(SML_LIB)/basis/basis.mlb
 ../lib/num.sml
 ../lib/subset_text_host.sml
 subset_result.sml
+../lib/subset_host.sml
 subset_option.sml
 subset_list.sml
 subset_list_pair.sml
@@ -12,8 +13,11 @@ subset_unicode.sml
 subset_utf8.sml
 subset_utf16.sml
 subset_string.sml
+subset_natural.sml
 subset_source.sml
 subset_sml_escape.sml
+subset_io.sml
+subset_process.sml
 sml_list.sml
 sml_list_pair.sml
 sml_option.sml

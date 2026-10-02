@@ -337,22 +337,15 @@ let lex = (src) => {
         go(start, 0)
       };
 
-      let rec push = (r, start, acc, cs) => {
-        match(r) {
-          Ok(tok, j) => { loop(j, [(tok, start), ..acc], cs) },
-          Err(message, offset) => { LexError(message, offset) }
-        }
-      }
-
-      and comment = (start, j, acc, cs) => {
-        let body = CompilerText.substring(source, start + 2, j - start - 2);
-        loop(j, acc, [(start, body, trailing(start)), ..cs])
-      }
-
-      and loop = (i, acc, cs) => {
+      // Token helpers return the next token; only this loop advances the scan.
+      let rec loop = (i, acc, cs) => {
         if (i >= n) { Tokens(SmlList.rev([(WEOF, n), ..acc]), SmlList.rev(cs)) } else {
           match(at(i), if (startsWith(i, "//")) { true } else { startsWith(i, "--") }, startsWith(i, "/*")) {
-            (_, true, _) => { comment(i, skipWhile((d) => { d != '\n' }, i), acc, cs) },
+            (_, true, _) => {
+              let j = skipWhile((d) => { d != '\n' }, i);
+              let body = CompilerText.substring(source, i + 2, j - i - 2);
+              loop(j, acc, [(i, body, trailing(i)), ..cs])
+            },
             (_, _, true) => {
               match(blockComment(i, i + 2, 1)) {
                 Ok(_, j) => {
@@ -411,7 +404,12 @@ let lex = (src) => {
             (Var(c), _, _) => {
               match(isSpace(c), SubsetChar.isDigit(c), SubsetChar.isAlpha(c)) {
                 (true, _, _) => { loop(i + 1, acc, cs) },
-                (_, true, _) => { push(lexNumber(i), i, acc, cs) },
+                (_, true, _) => {
+                  match(lexNumber(i)) {
+                    Ok(tok, j) => { loop(j, [(tok, i), ..acc], cs) },
+                    Err(message, offset) => { LexError(message, offset) }
+                  }
+                },
                 (_, _, true) => {
                   if (smlStart(i)) {
                     match(smlPhraseEnd(i)) {
@@ -420,9 +418,19 @@ let lex = (src) => {
                       },
                       Err(message, offset) => { LexError(message, offset) }
                     }
-                  } else { push(lexPath(i), i, acc, cs) }
+                  } else {
+                    match(lexPath(i)) {
+                      Ok(tok, j) => { loop(j, [(tok, i), ..acc], cs) },
+                      Err(message, offset) => { LexError(message, offset) }
+                    }
+                  }
                 },
-                _ => { push(lexSymbol(i), i, acc, cs) }
+                _ => {
+                  match(lexSymbol(i)) {
+                    Ok(tok, j) => { loop(j, [(tok, i), ..acc], cs) },
+                    Err(message, offset) => { LexError(message, offset) }
+                  }
+                }
               }
             }
           }

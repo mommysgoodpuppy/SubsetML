@@ -77,6 +77,11 @@ structure SubsetString = struct
             | SubsetResult.Ok c => go (rest, offset + 1.0, c :: bytes)
     in go (SubsetTextHost.codes value, 0.0, []) end
 
+  val compare = fn (left, right) =>
+    SubsetResult.andThen (fromNative left, fn xs =>
+      SubsetResult.andThen (fromNative right, fn ys =>
+        SubsetBytes.compareWith (xs, ys, fn offset => NonByte offset)))
+
   val rec concat = fn pieces =>
     case pieces of [] => "" | [value] => value | first :: second :: rest =>
       let

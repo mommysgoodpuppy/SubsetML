@@ -2,7 +2,7 @@
 set -eu
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-modules="src/subset_text_host.sml "$(python -c 'import json; print(" ".join(m["source"] for m in json.load(open("docs/basis-dependencies.json"))["modules"].values()))')
+modules=$(python scripts/basis-sources.py)
 python tests/basis/text_vectors.py > "$tmp/text_vectors.sml"
 bin/subsetml check $modules tests/basis/text_basis.sml "$tmp/text_vectors.sml"
 bin/subsetml roundtrip $modules tests/basis/text_basis.sml "$tmp/text_vectors.sml"
@@ -15,6 +15,10 @@ for dir in "$PWD/src" "$tmp/sml"; do
   {
     printf '$(SML_LIB)/basis/basis.mlb\n'
     for module in $modules; do
+      if [ "$(basename "$module")" = subset_host.sml ]; then
+        printf '%s\n' "$PWD/lib/subset_host.sml"
+        continue
+      fi
       if [ "$(basename "$module")" = subset_text_host.sml ]; then
         printf '%s\n' "$PWD/lib/subset_text_host.sml"
         continue

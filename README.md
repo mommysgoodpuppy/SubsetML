@@ -17,6 +17,8 @@ SubsetML currently omits `int`; numbers use `real`. For library APIs, dependenci
 migration, see the [SubsetML Basis documentation](docs/basis.md), with the
 [candidate self-hosting kernel](docs/self-hosting-kernel.md) and
 [minimal byte/Unicode text design](docs/text-design.md) documented alongside it.
+The Basis docs describe the [error procedure pattern](docs/basis.md#error-procedures),
+with a runnable [errordemo.sml](errordemo.sml) and a comparison to Workman's error ergonomics.
 
 SubsetML is implemented in SubsetML. The sources in `src/` are SubsetML, so for now MLton builds
 them, and `make selfcheck` has the implementation check its own source.
@@ -45,13 +47,15 @@ bin/subsetml wm OUTDIR FILE...    # translates to Workman (one module per file)
 bin/subsetml sml OUTDIR FILE.wm...# translates Workman back to SubsetML
 make test                         # self-check, tests, and translation round trips
 make wm                           # writes src/foo.wm next to each src/foo.sml
+make wm-selfcheck                  # generated Workman compiler checks its own SubsetML sources
 make watch                        # keeps src/*.wm in sync while you edit
 make custom-basis-check           # custom library contracts, translation and Workman execution
 make text-basis-check             # byte readers and strict UTF codecs against reference vectors
 make bootstrap-check              # src -> Workman -> SML, then builds and runs the result
 ```
 
-Every program under `tests/accept` must also type-check with `mlton -stop tc`, with the bootstrap adapters supplied, checking its SML language compatibility. Each `src/foo.wm` is generated for reading side by side. The exception is
-`subset_text_host.wm`: `make wm` stages its single extraction adapter from `lib/`.
+Every program under `tests/accept` must also type-check with `mlton -stop tc`, with the bootstrap adapters supplied, checking its SML language compatibility. Each `src/foo.wm` is generated for reading side by side and executing in Workman. `make wm` stages the text extraction and
+file/process adapters from `lib/`, replacing their generated host declarations.
+Run the generated compiler with `wm run src/main.wm -- check FILE...`.
 String construction, byte indexing and codecs come from shared SubsetML source.
 Edit the `.sml` files; the `.wm` files are overwritten.

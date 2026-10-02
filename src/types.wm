@@ -1,7 +1,10 @@
 // Semantic types (Definition §4.2), as the type checker represents them.
 
-from "./sml_list.wm" import * as SmlList;
+from "./subset_list.wm" import * as SubsetList;
+from "./compiler_text.wm" import * as CompilerText;
 from "./subset_char.wm" import * as SubsetChar;
+from "./sml_list.wm" import * as SmlList;
+from "./subset_result.wm" import * as SubsetResult;
 
 /* A type name (Definition §4.1): its stamp, its printed name, its arity, and whether it
    admits equality, given type arguments that do. */
@@ -51,18 +54,20 @@ let listTy = (t) => { TCon(listName, [t]) };
 // ---------------------------------------------------------------------------------------
 // Records. Numeric labels come first, in numeric order, then the others alphabetically.
 
-let isNumeric = (l) => { SmlList.all(SubsetChar.isDigit)(String.explode(l)) };
+let isNumeric = (l) => {
+  SubsetList.all(CompilerText.characters(l), SubsetChar.isDigit)
+};
 
 let labelLess = (a, b) => {
   match(isNumeric(a), isNumeric(b)) {
     (true, true) => {
-      if (String.size(a) < String.size(b)) { true } else {
-        if ((String.size(a): Number) == String.size(b)) { a < b } else { false }
+      if (CompilerText.size(a) < CompilerText.size(b)) { true } else {
+        if ((CompilerText.size(a): Number) == CompilerText.size(b)) { CompilerText.less(a, b) } else { false }
       }
     },
     (true, false) => { true },
     (false, true) => { false },
-    (false, false) => { a < b }
+    (false, false) => { CompilerText.less(a, b) }
   }
 };
 
@@ -77,29 +82,52 @@ let sortFields = (fields) => {
   SmlList.foldl(insert)([])(fields)
 };
 
+/* Tuple labels are a decimal counter, stored least significant digit first.
+   Carry is source character matching; no numeric formatter or division is needed. */
+let rec nextTupleLabel = match {
+  [] => { ['1'] },
+  ['9', ..rest] => { ['0', ..nextTupleLabel(rest)] },
+  ['0', ..rest] => { ['1', ..rest] },
+  ['1', ..rest] => { ['2', ..rest] },
+  ['2', ..rest] => { ['3', ..rest] },
+  ['3', ..rest] => { ['4', ..rest] },
+  ['4', ..rest] => { ['5', ..rest] },
+  ['5', ..rest] => { ['6', ..rest] },
+  ['6', ..rest] => { ['7', ..rest] },
+  ['7', ..rest] => { ['8', ..rest] },
+  ['8', ..rest] => { ['9', ..rest] }
+};
+
+let tupleLabel = (digits) => { CompilerText.stringOf(SubsetList.reverse(digits)) };
+
 let tupleTy = (ts) => {
   let rec number = match {
     (_, []) => { [] },
-    (Var(i), [t, ..rest]) => { [(Number.toString(i), t), ..number(i + 1, rest)] }
+    (Var(digits), [t, ..rest]) => {
+      [(tupleLabel(digits), t), ..number(nextTupleLabel(digits), rest)]
+    }
   };
-  TRecord(number(1, ts))
+  TRecord(number(['1'], ts))
 };
 
 // The components of a tuple type, if the labels are exactly 1, ..., n with n >= 2.
 let tupleComponents = (fields) => {
   let rec check = match {
     (_, []) => { true },
-    (Var(i), [(Var(l), _), ..rest]) => {
-      if (l == Number.toString(i)) { check(i + 1, rest) } else { false }
+    (Var(digits), [(Var(l), _), ..rest]) => {
+      if (l == tupleLabel(digits)) { check(nextTupleLabel(digits), rest) } else { false }
     }
   };
-  if (if (List.length(fields) >= 2) { check(1, fields) } else { false }) { Some(SmlList.map((_, t) => { t })(fields)) } else { None }
+  if (if (SubsetList.length(fields) >= 2) { check(['1'], fields) } else { false }) { Some(SmlList.map((_, t) => { t })(fields)) } else { None }
 };
 
 // Replaces TGen i by the i-th argument.
 let rec substGen = (args, t) => {
   match(t) {
-    TGen(i) => { List.nth(args, i) },
+    TGen(i) => {
+      let SubsetResult.Ok(t) = SubsetList.at(args, i);
+      t
+    },
     TCon(n, ts) => { TCon(n, SmlList.map((a) => { substGen(args, a) })(ts)) },
     TArrow(a, b) => { TArrow(substGen(args, a), substGen(args, b)) },
     TRecord(fields) => {

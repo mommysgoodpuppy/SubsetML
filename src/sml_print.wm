@@ -4,15 +4,15 @@
 from "./syntax.wm" import * as Syntax;
 from "./doc.wm" import * as Doc;
 from "./subset_string.wm" import * as SubsetString;
+from "./subset_list.wm" import * as SubsetList;
 from "./compiler_text.wm" import * as CompilerText;
 from "./sml_list.wm" import * as SmlList;
 from "./parser.wm" import * as Parser;
-from "./subset_list.wm" import * as SubsetList;
 
 from "./syntax.wm" import *;
 from "./doc.wm" import *;
 
-let longid = (qs, s) => { SubsetString.concatWith(List.append(qs, [s]), ".") };
+let longid = (qs, s) => { SubsetString.concatWith(SubsetList.append(qs, [s]), ".") };
 
 let scon = match {
   SInt(s) => { s },
@@ -262,7 +262,7 @@ and binding = (p, e) => { cats([pat(p), text(" = "), exp(e)]) }
 
 and dec = match {
   DVal(p, vs, plain, recs) => {
-    let bindings = List.append(
+    let bindings = SubsetList.append(
       SmlList.map(binding)(plain),
       match(recs) {
         [] => { [] },

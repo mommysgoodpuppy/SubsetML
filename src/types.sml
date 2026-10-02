@@ -52,14 +52,14 @@ structure Types = struct
   (* --------------------------------------------------------------------------------------- *)
   (* Records. Numeric labels come first, in numeric order, then the others alphabetically. *)
 
-  val isNumeric = fn l => SmlList.all SubsetChar.isDigit (String.explode l)
+  val isNumeric = fn l => SubsetList.all (CompilerText.characters l, SubsetChar.isDigit)
 
   val labelLess = fn (a, b) =>
     case (isNumeric a, isNumeric b) of
-      (true, true) => Num.String.size a < Num.String.size b orelse (Real.== (Num.String.size a, Num.String.size b) andalso a < b)
+      (true, true) => CompilerText.size a < CompilerText.size b orelse (Real.== (CompilerText.size a, CompilerText.size b) andalso CompilerText.less (a, b))
     | (true, false) => true
     | (false, true) => false
-    | (false, false) => a < b
+    | (false, false) => CompilerText.less (a, b)
 
   (* Insertion sort: records are small. *)
   val sortFields = fn fields =>
@@ -72,13 +72,30 @@ structure Types = struct
       SmlList.foldl insert [] fields
     end
 
+  (* Tuple labels are a decimal counter, stored least significant digit first.
+     Carry is source character matching; no numeric formatter or division is needed. *)
+  val rec nextTupleLabel = fn
+      [] => [#"1"]
+    | #"9" :: rest => #"0" :: nextTupleLabel rest
+    | #"0" :: rest => #"1" :: rest
+    | #"1" :: rest => #"2" :: rest
+    | #"2" :: rest => #"3" :: rest
+    | #"3" :: rest => #"4" :: rest
+    | #"4" :: rest => #"5" :: rest
+    | #"5" :: rest => #"6" :: rest
+    | #"6" :: rest => #"7" :: rest
+    | #"7" :: rest => #"8" :: rest
+    | #"8" :: rest => #"9" :: rest
+
+  val tupleLabel = fn digits => CompilerText.stringOf (SubsetList.reverse digits)
+
   val tupleTy = fn ts =>
     let
       val rec number = fn
           (_, []) => []
-        | (i, t :: rest) => (Num.toString i, t) :: number (i + 1.0, rest)
+        | (digits, t :: rest) => (tupleLabel digits, t) :: number (nextTupleLabel digits, rest)
     in
-      TRecord (number (1.0, ts))
+      TRecord (number ([#"1"], ts))
     end
 
   (* The components of a tuple type, if the labels are exactly 1, ..., n with n >= 2. *)
@@ -86,15 +103,15 @@ structure Types = struct
     let
       val rec check = fn
           (_, []) => true
-        | (i, (l, _) :: rest) => l = Num.toString i andalso check (i + 1.0, rest)
+        | (digits, (l, _) :: rest) => l = tupleLabel digits andalso check (nextTupleLabel digits, rest)
     in
-      if Num.List.length fields >= 2.0 andalso check (1.0, fields) then SOME (SmlList.map (fn (_, t) => t) fields) else NONE
+      if SubsetList.length fields >= 2.0 andalso check ([#"1"], fields) then SOME (SmlList.map (fn (_, t) => t) fields) else NONE
     end
 
   (* Replaces TGen i by the i-th argument. *)
   val rec substGen = fn (args, t) =>
     case t of
-      TGen i => Num.List.nth (args, i)
+      TGen i => let val SubsetResult.Ok t = SubsetList.at (args, i) in t end
     | TCon (n, ts) => TCon (n, SmlList.map (fn a => substGen (args, a)) ts)
     | TArrow (a, b) => TArrow (substGen (args, a), substGen (args, b))
     | TRecord fields => TRecord (SmlList.map (fn (l, a) => (l, substGen (args, a))) fields)

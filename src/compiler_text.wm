@@ -3,7 +3,9 @@
 
 from "./subset_result.wm" import * as SubsetResult;
 from "./subset_string.wm" import * as SubsetString;
+from "./subset_natural.wm" import * as SubsetNatural;
 from "./subset_bytes.wm" import * as SubsetBytes;
+from "./subset_order.wm" import * as SubsetOrder;
 from "./subset_list.wm" import * as SubsetList;
 from "./subset_sml_escape.wm" import * as SubsetSmlEscape;
 from "./subset_source.wm" import * as SubsetSource;
@@ -16,13 +18,49 @@ let stringOf = (bytes) => {
   let SubsetResult.Ok(value) = SubsetString.toNative(bytes);
   value
 };
+let natural = (value) => {
+  let SubsetResult.Ok(text) = SubsetNatural.toString(value);
+  text
+};
 let size = (value) => { SubsetBytes.length(characters(value)) };
+let less = (left, right) => {
+  let SubsetResult.Ok(order) = SubsetString.compare(left, right);
+  match(order) {
+    SubsetOrder.Less => { true },
+    Var(other) => { false }
+  }
+};
 let str = (c) => { stringOf([c]) };
 let explode = characters;
 let implode = stringOf;
 let map = (f) => (value) => { stringOf(SubsetList.map(characters(value), f)) };
 let translate = (f) => (value) => {
   SubsetList.foldLeft(SubsetList.map(characters(value), f), "", (part, acc) => { acc ++ part })
+};
+let fields = (value, delimiter) => {
+  SubsetList.map(SubsetBytes.fields(characters(value), delimiter), stringOf)
+};
+let isSuffix = (value, suffix) => {
+  let rec prefix = match {
+    (Var(xs), []) => { true },
+    ([], Var(ys)) => { false },
+    ([x, ..xs], [y, ..ys]) => { if (x == y) { prefix(xs, ys) } else { false } }
+  };
+  prefix(SubsetList.reverse(characters(value)), SubsetList.reverse(characters(suffix)))
+};
+let slice = (value, start, count) => {
+  let SubsetResult.Ok(bytes) = SubsetBytes.slice(characters(value), start, count);
+  stringOf(bytes)
+};
+let drop = (value, count) => {
+  let SubsetResult.Ok(bytes) = SubsetList.drop(characters(value), count);
+  stringOf(bytes)
+};
+let firstIs = (value, predicate) => {
+  match(characters(value)) {
+    [] => { false },
+    [c, ..rest] => { predicate(c) }
+  }
 };
 let escapeSmlChar = (c) => {
   let SubsetResult.Ok(text) = SubsetSmlEscape.escapeByte(c);

@@ -49,7 +49,7 @@ val typed = (fn (x : real) => x) (3.0 : real)
 val listPat = case ["a", "b"] of [a, b] => a ^ b | x :: _ => x | [] => ""
 val _ = 1.0 before ()
 val q = Num.div (7.0, 2.0) + Num.mod (7.0, 2.0) + 7.0 / 2.0
-val s = "a" ^ "b" < "c"
+val s = "a" ^ "b" = "ab"
 val 'a ident = fn (x : 'a) => x
 val nested = fn x => fn y => x andalso (if y then x else false)
 val size = Num.String.size "four" + Num.List.length [1.0, 2.0]

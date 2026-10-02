@@ -153,8 +153,10 @@ These have no clear Workman form and are emitted as SML. WmParse reads them back
 - Existing mappings and unchanged names such as `List.rev` describe the bootstrap compatibility
   layer, not SML Basis Library support. The custom Basis may use different names, argument order
   and Result-based failures. Workman's separate Basis implementation is also transitional and
-  should eventually give way to the shared custom library. This API migration is not implemented;
-  generated compiler files remain primarily for inspection.
+  should eventually give way to the shared custom library. The compiler now uses the source
+  custom Basis and runs in Workman with the staged text and file/process adapters. Compatibility
+  names retained in its bootstrap environment are declarations for checked programs, rather
+  than additional host requirements.
 - Positions inside an SML fallback declaration are relative to the fallback, so comments next
   to it may move when translating back.
 
@@ -170,3 +172,23 @@ SML `andalso` and `orelse` translate to `if` branches: Workman's `&&` and `||` a
 eager operators. In the reverse direction, those eager operators become a case on both
 operands, preserving their evaluation. Round-trip normalization treats the source short-circuit
 forms and their conditional expansions as equivalent.
+
+The Workman printer's own text operations use the portable byte layer. One-character strings
+come from `CompilerText.str` and its source literal table, not a host `String.str` mapping.
+Names and numeric literal spelling are processed as byte lists. Its hexadecimal helper checks
+a byte code, splits it with at most fifteen subtractions and selects source digit literals;
+`Num.div`/`Num.mod` are unnecessary. `tests/wm-printer.sh` checks all 256 character spellings,
+a combined byte string, lexer decoding, names, numeric spelling, comments and formatting with
+original SML, round-tripped SML and generated Workman. Bootstrap name mappings remain available
+for other callers during migration; they are separate from the printer's own dependencies.
+
+Text ordering uses explicit custom Basis comparisons. SubsetML rejects string and character
+operands to `<`, `>`, `<=`, and `>=`; numeric ordering translates directly to Workman.
+The source byte comparator orders unsigned codes and does not depend on target string ordering.
+
+The CLI host adapter follows the same staging rule: `src/subset_host.sml` provides typed
+checker/round-trip declarations; native builds select `lib/subset_host.sml` after SubsetResult,
+and `make wm` stages `lib/subset_host.wm` plus its local JavaScript adapter. The six operations
+are shared through the source SubsetIo/SubsetProcess wrappers. Reverse translation and
+bootstrap checks use the generated declarations before staging either foreign adapter.
+The generated CLI accepts arguments through `wm run src/main.wm -- COMMAND ...`.

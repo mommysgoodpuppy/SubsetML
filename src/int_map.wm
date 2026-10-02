@@ -1,13 +1,23 @@
 /* Persistent maps from non-negative integers (held in reals: SubsetML omits int for now), as
    a binary trie on the key's bits, lowest bit first. SubsetML has no references, so the type
    checker threads its substitution through one of these. Lookup and insertion take time
-   proportional to the number of key bits. */
+   proportional to the number of key bits, with bounded source arithmetic per step.
+   Keys must be exact natural numbers below 2^53. */
+
+from "./subset_natural.wm" import * as SubsetNatural;
 
 type Map<a> = Empty | Leaf<Number, a> | Branch<Map<a>, Map<a>>;
 
 let empty = Empty;
 
-let even = (n) => { (Number.mod(n, 2): Number) == 0 };
+let quotient = (value, base) => {
+  let (whole, residue) = SubsetNatural.split(value, base);
+  whole
+};
+let even = (n) => {
+  let (whole, residue) = SubsetNatural.split(n, 2);
+  residue <= 0
+};
 
 // `rest` is the key shifted right by the current depth.
 let rec lookup = (m, key, rest) => {
@@ -15,7 +25,7 @@ let rec lookup = (m, key, rest) => {
     Empty => { None },
     Leaf(k, v) => { if ((k: Number) == key) { Some(v) } else { None } },
     Branch(l, r) => {
-      lookup(if (even(rest)) { l } else { r }, key, Number.div(rest, 2))
+      lookup(if (even(rest)) { l } else { r }, key, quotient(rest, 2))
     }
   }
 };
@@ -29,7 +39,7 @@ let rec insertAt = (m, key, rest, scale, v) => {
     Leaf(k, old) => {
       if ((k: Number) == key) { Leaf(key, v) } else {
         insertAt(
-          if (even(Number.div(k, scale))) { Branch(Leaf(k, old), Empty) } else { Branch(Empty, Leaf(k, old)) },
+          if (even(quotient(k, scale))) { Branch(Leaf(k, old), Empty) } else { Branch(Empty, Leaf(k, old)) },
           key,
           rest,
           scale,
@@ -38,11 +48,7 @@ let rec insertAt = (m, key, rest, scale, v) => {
       }
     },
     Branch(l, r) => {
-      if (even(rest)) {
-        Branch(insertAt(l, key, Number.div(rest, 2), scale * 2, v), r)
-      } else {
-        Branch(l, insertAt(r, key, Number.div(rest, 2), scale * 2, v))
-      }
+      if (even(rest)) { Branch(insertAt(l, key, quotient(rest, 2), scale * 2, v), r) } else { Branch(l, insertAt(r, key, quotient(rest, 2), scale * 2, v)) }
     }
   }
 };

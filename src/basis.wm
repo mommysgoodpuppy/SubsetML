@@ -6,6 +6,8 @@
 
 from "./types.wm" import * as Types;
 from "./env.wm" import * as Env;
+from "./subset_result.wm" import * as SubsetResult;
+from "./subset_list.wm" import * as SubsetList;
 from "./lexer.wm" import * as Lexer;
 from "./unify.wm" import * as Unify;
 from "./parser.wm" import * as Parser;
@@ -18,9 +20,11 @@ from "./env.wm" import *;
 // ---------------------------------------------------------------------------------------
 // Types
 
-let tyStr = (tn) => {
-  TyStr(arityOf(tn), TCon(tn, List.tabulate(arityOf(tn), TGen)), [])
+let arguments = (tn) => {
+  let SubsetResult.Ok(args) = SubsetList.tabulate(arityOf(tn), TGen);
+  args
 };
+let tyStr = (tn) => { TyStr(arityOf(tn), TCon(tn, arguments(tn)), []) };
 
 let conEntry = (name, scheme) => { (name, (scheme, SCon)) };
 
@@ -39,9 +43,7 @@ let optionCons = [
 let orderTy = TCon(orderName, []);
 let orderCons = [("LESS", ([], orderTy)), ("EQUAL", ([], orderTy)), ("GREATER", ([], orderTy))];
 
-let withCons = (tn, cons) => {
-  TyStr(arityOf(tn), TCon(tn, List.tabulate(arityOf(tn), TGen)), cons)
-};
+let withCons = (tn, cons) => { TyStr(arityOf(tn), TCon(tn, arguments(tn)), cons) };
 
 let topTypes = [
   ("unit", TyStr(0, unitTy, [])),
@@ -270,7 +272,6 @@ let structures = [
    operation SML would default to int is reported instead of silently typed (spec §9.3). `/`
    has one type here and appears among the values above. */
 let numClass = KClass([intName, realName]);
-let textClass = KClass([intName, realName, stringName, charName]);
 let binary = (result) => { TArrow(tupleTy([alpha, alpha]), result) };
 
 let special = [
@@ -279,10 +280,10 @@ let special = [
   ("+", (([numClass], binary(alpha)), SValue)),
   ("-", (([numClass], binary(alpha)), SValue)),
   ("*", (([numClass], binary(alpha)), SValue)),
-  ("<", (([textClass], binary(boolTy)), SValue)),
-  (">", (([textClass], binary(boolTy)), SValue)),
-  ("<=", (([textClass], binary(boolTy)), SValue)),
-  (">=", (([textClass], binary(boolTy)), SValue)),
+  ("<", (([numClass], binary(boolTy)), SValue)),
+  (">", (([numClass], binary(boolTy)), SValue)),
+  ("<=", (([numClass], binary(boolTy)), SValue)),
+  (">=", (([numClass], binary(boolTy)), SValue)),
   ("~", (([numClass], TArrow(alpha, alpha)), SValue)),
   ("abs", (([numClass], TArrow(alpha, alpha)), SValue))
 ];
@@ -293,17 +294,19 @@ let special = [
 // The scheme of a type written in SubsetML syntax, or the reason it is malformed.
 let scheme = (env, text) => {
   match(Lexer.lex(text)) {
-    Lexer.LexError(msg, _) => { Unify.Err(msg, 0) },
-    Lexer.Tokens(ts, _) => {
+    Lexer.LexError(msg, ignored1) => { Unify.Err(msg, 0) },
+    Lexer.Tokens(ts, ignored2) => {
       match(Parser.parseTy(ts)) {
-        Parser.Fail(e) => { Unify.Err(e) },
-        Parser.Done(t, _) => {
+        Parser.Fail(message, pos) => { Unify.Err(message, pos) },
+        Parser.Done(t, ignored3) => {
           let vars = Elab.distinct(Elab.tyVarsOf(t));
           let rec index = match {
-            (_, [], _) => { None },
+            (Var(ignored4), [], Var(ignored5)) => { None },
             (Var(v), [w, ..rest], Var(i)) => { if (v == w) { Some(TGen(i)) } else { index(v, rest, i + 1) } }
           };
-          Unify.bind(Elab.elabTy(env, (v) => { index(v, vars, 0) }, 0, t, Unify.initial))((body) => (st) => { Unify.Ok((SmlList.map((_) => { KPlain })(vars), body), st) })
+          Unify.bind(Elab.elabTy(env, (v) => { index(v, vars, 0) }, 0, t, Unify.initial))((body) => (st) => {
+            Unify.Ok((SmlList.map((ignored6) => { KPlain })(vars), body), st)
+          })
         }
       }
     }
@@ -315,15 +318,18 @@ let rec nest = (outer, path, inner) => {
   match(path) {
     [] => { plus(outer, inner) },
     [name, ..rest] => {
-      let Env(strs, tys, vals) = outer;
+      let Env.Env(strs, tys, vals) = outer;
       let existing = match(assoc(name, strs)) {
-        Some(e, _) => { e },
+        Some(entry) => {
+          let (e, basis) = entry;
+          e
+        },
         None => { empty }
       };
-      Env(
+      Env.Env(
         [
           (name, (nest(existing, rest, inner), true)),
-          ..SmlList.filter((n, _) => { n != name })(strs)
+          ..SmlList.filter((n, ignored7) => { n != name })(strs)
         ],
         tys,
         vals
@@ -334,7 +340,7 @@ let rec nest = (outer, path, inner) => {
 
 // The initial environment, or the first malformed entry.
 let initial = {
-  let topEnv = Env(
+  let topEnv = Env.Env(
     [],
     topTypes,
     List.append(
@@ -343,17 +349,17 @@ let initial = {
     )
   );
   // The structures' types, so that value types can name them (TextIO.instream).
-  let typesEnv = SmlList.foldl(((path, tys, _), env) => {
+  let typesEnv = SmlList.foldl(((path, tys, ignored8), env) => {
     nest(env, path, withTypes(SmlList.map((n, tn) => { (n, tyStr(tn)) })(tys)))
   })(topEnv)(structures);
   let values = (scope, entries) => {
     SmlList.foldl(((name, text), acc) => {
       match(acc) {
-        Unify.Err(e) => { Unify.Err(e) },
+        Unify.Err(message, pos) => { Unify.Err(message, pos) },
         Unify.Ok(vals, st) => {
           match(scheme(scope, text)) {
-            Unify.Ok(s, _) => { Unify.Ok(List.append(vals, [(name, (s, SValue))]), st) },
-            Unify.Err(msg, _) => { Unify.Err("basis entry " ++ name ++ ": " ++ msg, 0) }
+            Unify.Ok(s, ignored9) => { Unify.Ok(List.append(vals, [(name, (s, SValue))]), st) },
+            Unify.Err(msg, ignored10) => { Unify.Err("basis entry " ++ name ++ ": " ++ msg, 0) }
           }
         }
       }
@@ -362,20 +368,23 @@ let initial = {
   // Values are elaborated where their structure's types are in scope.
   let scopeOf = (path) => {
     match(structureAt(typesEnv, path)) {
-      Some(inner, _) => { plus(typesEnv, inner) },
+      Some(entry) => {
+        let (inner, ignored11) = entry;
+        plus(typesEnv, inner)
+      },
       None => { typesEnv }
     }
   };
   match(values(typesEnv, topValues)) {
-    Unify.Err(e) => { Unify.Err(e) },
-    Unify.Ok(tops, _) => {
-      SmlList.foldl(((path, _, entries), acc) => {
+    Unify.Err(message, pos) => { Unify.Err(message, pos) },
+    Unify.Ok(tops, ignored12) => {
+      SmlList.foldl(((path, ignored13, entries), acc) => {
         match(acc) {
-          Unify.Err(e) => { Unify.Err(e) },
+          Unify.Err(message, pos) => { Unify.Err(message, pos) },
           Unify.Ok(env, st) => {
             match(values(scopeOf(path), entries)) {
-              Unify.Ok(vals, _) => { Unify.Ok(nest(env, path, withValues(vals)), st) },
-              Unify.Err(e) => { Unify.Err(e) }
+              Unify.Ok(vals, ignored14) => { Unify.Ok(nest(env, path, withValues(vals)), st) },
+              Unify.Err(message, pos) => { Unify.Err(message, pos) }
             }
           }
         }

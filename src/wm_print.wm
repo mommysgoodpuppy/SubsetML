@@ -7,7 +7,10 @@
 
 from "./syntax.wm" import * as Syntax;
 from "./doc.wm" import * as Doc;
+from "./compiler_text.wm" import * as CompilerText;
 from "./subset_char.wm" import * as SubsetChar;
+from "./subset_string.wm" import * as SubsetString;
+from "./subset_list.wm" import * as SubsetList;
 from "./sml_list.wm" import * as SmlList;
 from "./subset_result.wm" import * as SubsetResult;
 from "./parser.wm" import * as Parser;
@@ -20,12 +23,25 @@ from "./doc.wm" import *;
 // Names
 
 let capitalize = (s) => {
-  if (s == "") { s } else {
-    String.str(SubsetChar.toUpper(String.sub(s, 0))) ++ String.extract(s, 1, None)
+  match(CompilerText.characters(s)) {
+    [] => { "" },
+    [first, ..rest] => { CompilerText.stringOf([SubsetChar.toUpper(first), ..rest]) }
   }
 };
 
-let dotted = (qs, s) => { String.concatWith(".")(List.append(qs, [s])) };
+let startsUpper = (s) => {
+  match(CompilerText.characters(s)) {
+    [] => { false },
+    [first, ..rest] => { SubsetChar.isUpper(first) }
+  }
+};
+let startsAlpha = (s) => {
+  match(CompilerText.characters(s)) {
+    [] => { false },
+    [first, ..rest] => { SubsetChar.isAlpha(first) }
+  }
+};
+let dotted = (qs, s) => { SubsetString.concatWith(SubsetList.append(qs, [s]), ".") };
 
 /* Type constructors are capitalized; the Definition's `unit` and the Basis `real` take
    Workman's names. */
@@ -52,7 +68,10 @@ let valueName = match {
   ([], "SOME") => { "Some" },
   Var(id) => {
     match(SmlList.find((sml, _) => { sml == id })(numNames)) {
-      Some(_, wm) => { dotted(wm) },
+      Some(entry) => {
+        let (sml, wm) = entry;
+        dotted(wm)
+      },
       None => { dotted(id) }
     }
   }
@@ -61,20 +80,38 @@ let valueName = match {
 /* Workman tells constructors from variables by case; SubsetML code follows the same
    convention, with the Definition's lowercase constructors as exceptions. */
 let isConName = (qs, s) => {
-  if (if (if (if (!SmlList.null(qs)) { true } else { SubsetChar.isUpper(String.sub(s, 0)) }) { true } else { s == "true" }) { true } else { s == "false" }) { true } else { s == "nil" }
+  if (if (if (if (!SmlList.null(qs)) { true } else { startsUpper(s) }) { true } else { s == "true" }) { true } else { s == "false" }) { true } else { s == "nil" }
 };
 
 // `'a` is written `a`: Workman type variables are lowercase type names.
-let tyVarName = (v) => { String.extract(v, 1, None) };
+let tyVarName = (v) => {
+  match(CompilerText.characters(v)) {
+    [] => { "" },
+    [first, ..rest] => { CompilerText.stringOf(rest) }
+  }
+};
 
 // ---------------------------------------------------------------------------------------
 // Constants
 
-let minus = (s) => { String.map((c) => { if (c == '~') { '-' } else { c } })(s) };
+let minus = (s) => {
+  CompilerText.map((c) => { if (c == '~') { '-' } else { c } })(s)
+};
 
+// Compiler-internal byte code: subtraction splits at most fifteen hexadecimal groups.
 let hex2 = (n) => {
-  let digits = "0123456789abcdef";
-  String.implode([String.sub(digits, Number.div(n, 16)), String.sub(digits, Number.mod(n, 16))])
+  let SubsetResult.Ok(byte) = SubsetChar.fromCode(n);
+  let digits = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"];
+  let rec digit = (index, values) => {
+    match(values) {
+      [first, ..rest] => { if (index <= 0) { first } else { digit(index - 1, rest) } }
+    }
+  };
+  let rec split = (low, high) => {
+    if (low >= 16) { split(low - 16, high + 1) } else { (high, low) }
+  };
+  let (high, low) = split(n, 0);
+  digit(high, digits) ++ digit(low, digits)
 };
 
 let escapeChar = (quote, c) => {
@@ -84,8 +121,8 @@ let escapeChar = (quote, c) => {
     '\r' => { "\\r" },
     '\\' => { "\\\\" },
     _ => {
-      if (c == quote) { "\\" ++ String.str(c) } else {
-        if (SubsetChar.isPrint(c)) { String.str(c) } else {
+      if (c == quote) { "\\" ++ CompilerText.str(c) } else {
+        if (SubsetChar.isPrint(c)) { CompilerText.str(c) } else {
           "\\u00" ++ hex2({
             let SubsetResult.Ok(code) = SubsetChar.toCode(c);
             code
@@ -96,20 +133,35 @@ let escapeChar = (quote, c) => {
   }
 };
 
+let withoutRealSuffix = (s) => {
+  match(SubsetList.reverse(CompilerText.characters(s))) {
+    ['0', '.', ..rest] => { CompilerText.stringOf(SubsetList.reverse(rest)) },
+    Var(bytes) => { CompilerText.stringOf(SubsetList.reverse(bytes)) }
+  }
+};
+
 let scon = match {
   SInt(s) => { minus(s) },
-  SReal(s) => {
-    minus(if (String.isSuffix(".0")(s)) { String.substring(s, 0, String.size(s) - 2) } else { s })
-  },
+  SReal(s) => { minus(withoutRealSuffix(s)) },
   SString(s) => {
-    "\"" ++ String.concat(SmlList.map((c) => { escapeChar('"', c) })(String.explode(s))) ++ "\""
+    "\"" ++ SubsetString.concat(SubsetList.map(CompilerText.characters(s), (c) => { escapeChar('"', c) })) ++ "\""
   },
   SChar(c) => { "'" ++ escapeChar('\'', c) ++ "'" }
 };
 
 let isNegative = match {
-  SInt(s) => { String.sub(s, 0) == '~' },
-  SReal(s) => { String.sub(s, 0) == '~' },
+  SInt(s) => {
+    match(CompilerText.characters(s)) {
+      ['~', ..rest] => { true },
+      Var(bytes) => { false }
+    }
+  },
+  SReal(s) => {
+    match(CompilerText.characters(s)) {
+      ['~', ..rest] => { true },
+      Var(bytes) => { false }
+    }
+  },
   _ => { false }
 };
 
@@ -140,7 +192,7 @@ let rec ty = match {
 let typeParams = match {
   [] => { "" },
   Var(vs) => {
-    "<" ++ String.concatWith(", ")(SmlList.map(tyVarName)(vs)) ++ ">"
+    "<" ++ SubsetString.concatWith(SubsetList.map(vs, tyVarName), ", ") ++ ">"
   }
 };
 
@@ -260,9 +312,7 @@ let parenAt = (need: Number, (level, d)) => {
 // An expression usable as `e.lab`: a variable or a chain of such selections.
 let rec selectable = match {
   EId(_, id) => { !isConName(id) },
-  EApp(ESelect(_, l), e) => {
-    if (SubsetChar.isAlpha(String.sub(l, 0))) { selectable(e) } else { false }
-  },
+  EApp(ESelect(_, l), e) => { if (startsAlpha(l)) { selectable(e) } else { false } },
   _ => { false }
 };
 
@@ -361,7 +411,8 @@ let rec expL = match {
           )
         }
       },
-      (Some(spelling, level), _) => {
+      (Some(entry), _) => {
+        let (spelling, level) = entry;
         (
           level,
           cats([
@@ -383,7 +434,7 @@ let rec expL = match {
       cat(
         atom(p, "-"),
         match(e, level >= 9) {
-          (EScon(_), _) => { cats([text("("), d, text(")")]) },
+          (EScon(ignoredPos, ignoredConstant), Var(ignoredLevel)) => { cats([text("("), d, text(")")]) },
           (_, true) => { d },
           (_, false) => { cats([text("("), d, text(")")]) }
         }
@@ -391,7 +442,7 @@ let rec expL = match {
     )
   },
   EApp(ESelect(p, l), e) => {
-    if (if (selectable(e)) { SubsetChar.isAlpha(String.sub(l, 0)) } else { false }) { (10, cats([exp(e), atom(p, "." ++ l)])) } else { call(ESelect(p, l), e) }
+    if (if (selectable(e)) { startsAlpha(l) } else { false }) { (10, cats([exp(e), atom(p, "." ++ l)])) } else { call(ESelect(p, l), e) }
   },
   EApp(f, a) => { call(f, a) },
   ETyped(e, t) => {
@@ -452,7 +503,7 @@ and arms = (rules) => {
   let arm = (p, e) => {
     cats([pat(true, false, p), text(" => "), block(blockParts(e))])
   };
-  let count = List.length(rules);
+  let count = SubsetList.length(rules);
   let rec go = match {
     (_, []) => { [] },
     (Var(i), [r, ..rest]) => {
@@ -467,7 +518,7 @@ and arms = (rules) => {
 
 // `{ decs; e1; ...; en }`, on one line when it is a single short expression.
 and block = (ds, es) => {
-  let count = List.length(es);
+  let count = SubsetList.length(es);
   let rec exps = match {
     (_, []) => { [] },
     (Var(i), [e, ..rest]) => {
@@ -480,7 +531,12 @@ and block = (ds, es) => {
   let items = List.append(SmlList.map((d) => { dec([], d) })(ds), exps(0, es));
   match(items) {
     [single] => {
-      if (if (if (SmlList.null(ds)) { fits(single) } else { false }) { String.size(valOf(flat(single))) <= 60 } else { false }) { cats([text("{ "), single, text(" }")]) } else { stack([text("{"), indent(2, single), text("}")]) }
+      if (if (SmlList.null(ds)) {
+        match(flat(single)) {
+          Some(text) => { CompilerText.size(text) <= 60 },
+          None => { false }
+        }
+      } else { false }) { cats([text("{ "), single, text(" }")]) } else { stack([text("{"), indent(2, single), text("}")]) }
     },
     _ => { stack([text("{"), indent(2, stack(items)), text("}")]) }
   }
@@ -510,7 +566,7 @@ and dec = (structures, d) => {
   match(d) {
     DVal(p, [], plain, []) => { andGroup(atom(p, "let "), SmlList.map(binding)(plain)) },
     DVal(p, [], [], recs) => { andGroup(atom(p, "let rec "), SmlList.map(binding)(recs)) },
-    DVal(_) => { fallback(d) },
+    DVal(ignoredPos, ignoredVariables, ignoredPlain, ignoredRecursive) => { fallback(d) },
     DType(p, [(Var(vs), Var(tycon), TyRecord(fields))]) => {
       cats([
         atom(p, "record "),
@@ -525,7 +581,7 @@ and dec = (structures, d) => {
       ])
     },
     DType(p, binds) => {
-      if (SmlList.exists((_, _, t) => {
+      if (SmlList.exists((ignoredVariables, ignoredName, t) => {
         match(t) {
           TyRecord(_) => { true },
           _ => { false }
@@ -563,7 +619,8 @@ and dec = (structures, d) => {
     DOpen(p, ids) => {
       if (SmlList.all((id) => { SmlList.exists((s) => { [s] == id })(structures) })(ids)) {
         stack(SmlList.map((id) => {
-          atom(p, "from \"./" ++ fileName(dotted([], List.last(id))) ++ "\" import *;")
+          let SubsetResult.Ok(name) = SubsetList.last(id);
+          atom(p, "from \"./" ++ fileName(dotted([], name)) ++ "\" import *;")
         })(ids))
       } else { fallback(d) }
     }
@@ -582,7 +639,7 @@ and fileName = (name) => {
       if (if (SubsetChar.isUpper(c)) { !first } else { false }) { ['_', SubsetChar.toLower(c), ..go(rest, false)] } else { [SubsetChar.toLower(c), ..go(rest, false)] }
     }
   };
-  String.implode(go(String.explode(name), true)) ++ ".wm"
+  CompilerText.stringOf(go(CompilerText.characters(name), true)) ++ ".wm"
 };
 
 let topdec = (structures, td) => {
@@ -603,12 +660,19 @@ let topdec = (structures, td) => {
 let commentStyle = match {
   [single] => { ["// " ++ trim(single)] },
   Var(lines) => {
-    let n = List.length(lines);
-    List.tabulate(
-      n,
-      (i) => {
-        (if ((i: Number) == 0) { "/*" } else { "" }) ++ List.nth(lines, i) ++ (if ((i: Number) == n - 1) { "*/" } else { "" })
+    let rec decorate = match {
+      ([], Var(isFirst), Var(acc)) => { SubsetList.reverse(acc) },
+      ([line, ..rest], Var(isFirst), Var(acc)) => {
+        decorate(
+          rest,
+          false,
+          [
+            (if (isFirst) { "/*" } else { "" }) ++ line ++ (if (SubsetList.isEmpty(rest)) { "*/" } else { "" }),
+            ..acc
+          ]
+        )
       }
-    )
+    };
+    decorate(lines, true, [])
   }
 };
