@@ -1,0 +1,50 @@
+/* Persistent maps from non-negative integers (held in reals: SubsetML omits int for now), as
+   a binary trie on the key's bits, lowest bit first. SubsetML has no references, so the type
+   checker threads its substitution through one of these. Lookup and insertion take time
+   proportional to the number of key bits. */
+
+type Map<a> = Empty | Leaf<Number, a> | Branch<Map<a>, Map<a>>;
+
+let empty = Empty;
+
+let even = (n) => { (Number.mod(n, 2): Number) == 0 };
+
+// `rest` is the key shifted right by the current depth.
+let rec lookup = (m, key, rest) => {
+  match(m) {
+    Empty => { None },
+    Leaf(k, v) => { if ((k: Number) == key) { Some(v) } else { None } },
+    Branch(l, r) => {
+      lookup(if (even(rest)) { l } else { r }, key, Number.div(rest, 2))
+    }
+  }
+};
+
+let find = (m, key) => { lookup(m, key, key) };
+
+// `scale` is 2 to the power of the current depth, to shift a displaced leaf's key.
+let rec insertAt = (m, key, rest, scale, v) => {
+  match(m) {
+    Empty => { Leaf(key, v) },
+    Leaf(k, old) => {
+      if ((k: Number) == key) { Leaf(key, v) } else {
+        insertAt(
+          if (even(Number.div(k, scale))) { Branch(Leaf(k, old), Empty) } else { Branch(Empty, Leaf(k, old)) },
+          key,
+          rest,
+          scale,
+          v
+        )
+      }
+    },
+    Branch(l, r) => {
+      if (even(rest)) {
+        Branch(insertAt(l, key, Number.div(rest, 2), scale * 2, v), r)
+      } else {
+        Branch(l, insertAt(r, key, Number.div(rest, 2), scale * 2, v))
+      }
+    }
+  }
+};
+
+let insert = (m, key, v) => { insertAt(m, key, key, 1, v) };

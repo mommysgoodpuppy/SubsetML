@@ -1,0 +1,370 @@
+/* Prints abstract syntax as SubsetML source. Used for the wm-to-SML direction and for the
+   constructs that have no Workman form. Parentheses follow the precedence of the parser. */
+
+from "./syntax.wm" import * as Syntax;
+from "./doc.wm" import * as Doc;
+from "./subset_string.wm" import * as SubsetString;
+from "./compiler_text.wm" import * as CompilerText;
+from "./sml_list.wm" import * as SmlList;
+from "./parser.wm" import * as Parser;
+from "./subset_list.wm" import * as SubsetList;
+
+from "./syntax.wm" import *;
+from "./doc.wm" import *;
+
+let longid = (qs, s) => { SubsetString.concatWith(List.append(qs, [s]), ".") };
+
+let scon = match {
+  SInt(s) => { s },
+  SReal(s) => { s },
+  SString(s) => { "\"" ++ CompilerText.escapeSmlString(s) ++ "\"" },
+  SChar(c) => { "#\"" ++ CompilerText.escapeSmlChar(c) ++ "\"" }
+};
+
+// ---------------------------------------------------------------------------------------
+// Types: arrow 0, tuple 1, application 2, atom 3
+
+let parenAt = (need: Number, (level, d)) => {
+  if (level >= need) { d } else { cats([text("("), d, text(")")]) }
+};
+
+let rec tyL = match {
+  TyVar(v) => { (3, text(v)) },
+  TyCon([], id) => { (3, text(longid(id))) },
+  TyCon([arg], id) => {
+    (2, cats([parenAt(2, tyL(arg)), text(" "), text(longid(id))]))
+  },
+  TyCon(args, id) => {
+    (
+      2,
+      cats([
+        text("("),
+        join(", ", SmlList.map((t) => { parenAt(0, tyL(t)) })(args)),
+        text(") "),
+        text(longid(id))
+      ])
+    )
+  },
+  TyTuple(ts) => {
+    (1, join(" * ", SmlList.map((t) => { parenAt(2, tyL(t)) })(ts)))
+  },
+  TyArrow(a, b) => {
+    (0, cats([parenAt(1, tyL(a)), text(" -> "), parenAt(0, tyL(b))]))
+  },
+  TyRecord(fields) => {
+    (
+      3,
+      group(
+        "{",
+        ",",
+        "}",
+        SmlList.map((l, t) => { cats([text(l ++ " : "), ty(t)]) })(fields)
+      )
+    )
+  }
+}
+
+and ty = (t) => {
+  let (_, d) = tyL(t);
+  d
+};
+
+// ---------------------------------------------------------------------------------------
+// Patterns: typed 0, infix 1, constructor application 2, atom 3
+
+let rec patL = match {
+  PWild => { (3, text("_")) },
+  PScon(p, c) => { (3, atom(p, scon(c))) },
+  PId(p, id) => { (3, atom(p, longid(id))) },
+  PRecord(p, fields) => {
+    (
+      3,
+      cats([
+        atom(p, ""),
+        group(
+          "{",
+          ",",
+          "}",
+          SmlList.map((l, q) => { cats([text(l ++ " = "), pat(q)]) })(fields)
+        )
+      ])
+    )
+  },
+  PTuple(ps) => { (3, group("(", ",", ")", SmlList.map(pat)(ps))) },
+  PList(ps) => { (3, group("[", ",", "]", SmlList.map(pat)(ps))) },
+  PApp(p, ([], "::"), PTuple([h, t])) => {
+    (1, cats([parenAt(2, patL(h)), atom(p, " :: "), parenAt(1, patL(t))]))
+  },
+  PApp(p, id, arg) => {
+    (2, cats([atom(p, longid(id)), text(" "), parenAt(3, patL(arg))]))
+  },
+  PTyped(q, t) => { (0, cats([parenAt(1, patL(q)), text(" : "), ty(t)])) }
+}
+
+and pat = (p) => {
+  let (_, d) = patL(p);
+  d
+};
+
+// ---------------------------------------------------------------------------------------
+// Expressions
+
+/* Levels: fn/case/if 0, orelse 1, andalso 2, typed 3, infix 10 + precedence, application 20,
+   atom 30. */
+let infixLevel = (s) => { 10 + Parser.precedence(s) };
+
+// An expression whose last part is a match, which would capture a following `|`.
+let rec endsInMatch = match {
+  ECase(ignoredExpression, ignoredRules) => { true },
+  EFn(_) => { true },
+  EIf(ignoredCondition, ignoredThen, b) => { endsInMatch(b) },
+  _ => { false }
+};
+
+let tyvarseq = match {
+  [] => { empty },
+  [v] => { text(v ++ " ") },
+  Var(vs) => { text("(" ++ SubsetString.concatWith(vs, ", ") ++ ") ") }
+};
+
+let rec expL = match {
+  EScon(p, c) => { (30, atom(p, scon(c))) },
+  EId(p, id) => { (30, atom(p, longid(id))) },
+  ERecord(p, fields) => {
+    (
+      30,
+      cats([
+        atom(p, ""),
+        group(
+          "{",
+          ",",
+          "}",
+          SmlList.map((l, e) => { cats([text(l ++ " = "), exp(e)]) })(fields)
+        )
+      ])
+    )
+  },
+  ESelect(p, l) => { (30, atom(p, "#" ++ l)) },
+  ETuple(es) => { (30, group("(", ",", ")", SmlList.map(exp)(es))) },
+  EList(es) => { (30, group("[", ",", "]", SmlList.map(exp)(es))) },
+  ESeq(es) => { (30, group("(", ";", ")", SmlList.map(exp)(es))) },
+  ELet(ds, es) => {
+    (
+      30,
+      stack([
+        text("let"),
+        indent(2, stack(SmlList.map(dec)(ds))),
+        text("in"),
+        indent(2, join("; ", SmlList.map(exp)(es))),
+        text("end")
+      ])
+    )
+  },
+  EApp(EId(p, ([], Var(opr))), ETuple([l, r])) => {
+    if (Parser.isInfix(opr)) {
+      let level = infixLevel(opr);
+      let (leftNeed, rightNeed) = if (Parser.rightAssoc(opr)) { (level + 1, level) } else { (level, level + 1) };
+      (
+        level,
+        cats([
+          parenAt(leftNeed, expL(l)),
+          atom(p, " " ++ opr ++ " "),
+          parenAt(rightNeed, expL(r))
+        ])
+      )
+    } else { application(EId(p, ([], opr)), ETuple([l, r])) }
+  },
+  EApp(f, a) => { application(f, a) },
+  ETyped(e, t) => { (3, cats([parenAt(3, expL(e)), text(" : "), ty(t)])) },
+  EAndalso(a, b) => {
+    (2, cats([parenAt(2, expL(a)), text(" andalso "), parenAt(3, expL(b))]))
+  },
+  EOrelse(a, b) => {
+    (1, cats([parenAt(1, expL(a)), text(" orelse "), parenAt(2, expL(b))]))
+  },
+  EIf(c, a, b) => {
+    // A nested `if` in the else branch keeps its parentheses (spec C1).
+    let elseDoc = match(b) {
+      EIf(ignoredCondition, ignoredThen, ignoredElse) => { parenAt(1, expL(b)) },
+      _ => { exp(b) }
+    };
+    let oneLine = cats([text("if "), exp(c), text(" then "), exp(a), text(" else "), elseDoc]);
+    if (fits(oneLine)) { (0, oneLine) } else {
+      (
+        0,
+        stack([
+          cats([text("if "), exp(c), text(" then")]),
+          indent(2, exp(a)),
+          text("else"),
+          indent(2, elseDoc)
+        ])
+      )
+    }
+  },
+  ECase(e, rules) => {
+    (
+      0,
+      stack([cats([text("case "), exp(e), text(" of")]), indent(2, matchRules(true, rules))])
+    )
+  },
+  EFn([(Var(p), Var(body))]) => {
+    // A body that does not fit goes on the next lines: `f (fn x =>` then the body.
+    let head = cats([text("fn "), pat(p), text(" =>")]);
+    let bodyDoc = match(body) {
+      EFn([_]) => { exp(body) },
+      _ => {
+        if (endsInMatch(body)) { parenAt(1, expL(body)) } else { exp(body) }
+      }
+    };
+    let oneLine = cats([head, text(" "), bodyDoc]);
+    match(fits(oneLine), body) {
+      (true, _) => { (0, oneLine) },
+      (false, EFn([_])) => { (0, cats([head, text(" "), bodyDoc])) },
+      (false, _) => { (0, stack([head, indent(2, bodyDoc)])) }
+    }
+  },
+  EFn(rules) => { (0, stack([text("fn"), indent(2, matchRules(true, rules))])) }
+}
+
+and application = (f, a) => {
+  (20, cats([parenAt(20, expL(f)), text(" "), parenAt(30, expL(a))]))
+}
+
+and exp = (e) => {
+  let (_, d) = expL(e);
+  d
+}
+
+/* Match rules one per line; `aligned` indents the first so that its pattern lines up with
+   the others after their `| `. */
+and matchRules = (aligned, rules) => {
+  let count = SubsetList.length(rules);
+  let rule = (i, (p, e)) => {
+    let body = if (if (i < count - 1) { endsInMatch(e) } else { false }) { parenAt(1, expL(e)) } else { exp(e) };
+    let head = cats([
+      text(if (i > 0) { "| " } else { if (aligned) { "  " } else { "" } }),
+      pat(p),
+      text(" =>")
+    ]);
+    let oneLine = cats([head, text(" "), body]);
+    if (fits(oneLine)) { oneLine } else { stack([head, indent(4, body)]) }
+  };
+  let rec number = (i, rs) => {
+    match(rs) {
+      [] => { [] },
+      [r, ..rest] => { [rule(i, r), ..number(i + 1, rest)] }
+    }
+  };
+  stack(number(0, rules))
+}
+
+and binding = (p, e) => { cats([pat(p), text(" = "), exp(e)]) }
+
+and dec = match {
+  DVal(p, vs, plain, recs) => {
+    let bindings = List.append(
+      SmlList.map(binding)(plain),
+      match(recs) {
+        [] => { [] },
+        [first, ..rest] => {
+          [cat(text("rec "), binding(first)), ..SmlList.map(binding)(rest)]
+        }
+      }
+    );
+    andGroup(cats([atom(p, "val "), tyvarseq(vs)]), bindings)
+  },
+  DType(p, binds) => {
+    andGroup(
+      atom(p, "type "),
+      SmlList.map((vs, tycon, t) => { cats([tyvarseq(vs), text(tycon ++ " = "), ty(t)]) })(binds)
+    )
+  },
+  DDatatype(p, binds) => {
+    let con = match {
+      (Var(cp), Var(c), None) => { atom(cp, c) },
+      (Var(cp), Var(c), Some(t)) => { cats([atom(cp, c ++ " of "), ty(t)]) }
+    };
+    let bind = (vs, tycon, cons) => {
+      let oneLine = cats([tyvarseq(vs), text(tycon ++ " = "), join(" | ", SmlList.map(con)(cons))]);
+      if (fits(oneLine)) { oneLine } else {
+        stack([
+          cats([tyvarseq(vs), text(tycon ++ " =")]),
+          indent(
+            4,
+            stack(match(SmlList.map(con)(cons)) {
+              [] => { [] },
+              [first, ..rest] => { [first, ..SmlList.map((c) => { cat(text("| "), c) })(rest)] }
+            })
+          )
+        ])
+      }
+    };
+    andGroup(atom(p, "datatype "), SmlList.map(bind)(binds))
+  },
+  DOpen(p, ids) => {
+    atom(
+      p,
+      "open " ++ SubsetString.concatWith(SubsetList.map(ids, (id) => { SubsetString.concatWith(id, ".") }), " ")
+    )
+  }
+}
+
+// `keyword b1 and b2 ...` with each binding on its own line.
+and andGroup = (keyword, bindings) => {
+  match(bindings) {
+    [] => { keyword },
+    [first, ..rest] => {
+      stack([cat(keyword, first), ..SmlList.map((b) => { cat(text("and "), b) })(rest)])
+    }
+  }
+};
+
+let strdec = match {
+  SDec(d) => { dec(d) },
+  SStructure(p, binds) => {
+    let bind = (i, (name, ds)) => {
+      stack([
+        cats([
+          if ((i: Number) == 0) { atom(p, "structure ") } else { text("and ") },
+          text(name ++ " = struct")
+        ]),
+        indent(2, stack(SmlList.map(dec)(ds))),
+        text("end")
+      ])
+    };
+    let rec number = (i, bs) => {
+      match(bs) {
+        [] => { [] },
+        [b, ..rest] => { [bind(i, b), ..number(i + 1, rest)] }
+      }
+    };
+    stack(number(0, binds))
+  }
+};
+
+let topdec = match {
+  TopDecs(sds) => { stack(SmlList.map(strdec)(sds)) },
+  TopExp(_, e) => { cat(exp(e), text(";")) }
+};
+
+// Comment lines in SML syntax.
+let commentStyle = match {
+  [] => { ["(**)"] },
+  [single] => { ["(* " ++ trim(single) ++ " *)"] },
+  Var(lines) => {
+    let rec decorate = match {
+      ([], Var(isFirst), Var(acc)) => { SubsetList.reverse(acc) },
+      ([line, ..rest], Var(isFirst), Var(acc)) => {
+        decorate(
+          rest,
+          false,
+          [
+            (if (isFirst) { "(*" } else { "" }) ++ line ++ (if (SubsetList.isEmpty(rest)) { "*)" } else { "" }),
+            ..acc
+          ]
+        )
+      }
+    };
+    decorate(lines, true, [])
+  }
+};

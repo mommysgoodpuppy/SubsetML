@@ -1,0 +1,385 @@
+/* Bootstrap compatibility environment used to check and build the compiler today.
+   This table still contains SML-shaped host interfaces; it is not the custom SubsetML Basis
+   API and does not imply support for the SML Basis Library. The custom library will choose
+   its own names, argument order and Result-based failures (docs/basis.md, spec section 9).
+   Current interface types are parsed with the SubsetML parser. */
+
+from "./types.wm" import * as Types;
+from "./env.wm" import * as Env;
+from "./lexer.wm" import * as Lexer;
+from "./unify.wm" import * as Unify;
+from "./parser.wm" import * as Parser;
+from "./elab.wm" import * as Elab;
+from "./sml_list.wm" import * as SmlList;
+
+from "./types.wm" import *;
+from "./env.wm" import *;
+
+// ---------------------------------------------------------------------------------------
+// Types
+
+let tyStr = (tn) => {
+  TyStr(arityOf(tn), TCon(tn, List.tabulate(arityOf(tn), TGen)), [])
+};
+
+let conEntry = (name, scheme) => { (name, (scheme, SCon)) };
+
+let alpha = TGen(0);
+
+let boolCons = [("true", ([], boolTy)), ("false", ([], boolTy))];
+let listCons = [
+  ("nil", ([KPlain], listTy(alpha))),
+  ("::", ([KPlain], TArrow(tupleTy([alpha, listTy(alpha)]), listTy(alpha))))
+];
+let optionTy = (t) => { TCon(optionName, [t]) };
+let optionCons = [
+  ("NONE", ([KPlain], optionTy(alpha))),
+  ("SOME", ([KPlain], TArrow(alpha, optionTy(alpha))))
+];
+let orderTy = TCon(orderName, []);
+let orderCons = [("LESS", ([], orderTy)), ("EQUAL", ([], orderTy)), ("GREATER", ([], orderTy))];
+
+let withCons = (tn, cons) => {
+  TyStr(arityOf(tn), TCon(tn, List.tabulate(arityOf(tn), TGen)), cons)
+};
+
+let topTypes = [
+  ("unit", TyStr(0, unitTy, [])),
+  ("bool", withCons(boolName, boolCons)),
+  ("real", tyStr(realName)),
+  ("string", tyStr(stringName)),
+  ("char", tyStr(charName)),
+  ("list", withCons(listName, listCons)),
+  ("option", withCons(optionName, optionCons)),
+  ("order", withCons(orderName, orderCons))
+];
+
+/* Abstract Basis types. None is declared to admit equality: claiming equality the Basis
+   does not grant would accept programs SML rejects. */
+let instreamName = (9, "instream", 0, false);
+let outstreamName = (10, "outstream", 0, false);
+let statusName = (11, "status", 0, false);
+let substringName = (12, "substring", 0, false);
+
+// ---------------------------------------------------------------------------------------
+// Values, as (structure path, types the structure declares, values)
+
+let topValues = [
+  ("print", "string -> unit"),
+  ("not", "bool -> bool"),
+  ("str", "char -> string"),
+  ("concat", "string list -> string"),
+  ("implode", "char list -> string"),
+  ("explode", "string -> char list"),
+  ("^", "string * string -> string"),
+  ("@", "'a list * 'a list -> 'a list"),
+  ("o", "('b -> 'c) * ('a -> 'b) -> 'a -> 'c"),
+  ("before", "'a * unit -> 'a"),
+  ("ignore", "'a -> unit"),
+  ("rev", "'a list -> 'a list"),
+  ("map", "('a -> 'b) -> 'a list -> 'b list"),
+  ("app", "('a -> unit) -> 'a list -> unit"),
+  ("foldl", "('a * 'b -> 'b) -> 'b -> 'a list -> 'b"),
+  ("foldr", "('a * 'b -> 'b) -> 'b -> 'a list -> 'b"),
+  ("hd", "'a list -> 'a"),
+  ("tl", "'a list -> 'a list"),
+  ("null", "'a list -> bool"),
+  ("valOf", "'a option -> 'a"),
+  ("isSome", "'a option -> bool"),
+  ("/", "real * real -> real")
+];
+
+let structures = [
+  (
+    ["List"],
+    [],
+    [
+      ("null", "'a list -> bool"),
+      ("hd", "'a list -> 'a"),
+      ("tl", "'a list -> 'a list"),
+      ("last", "'a list -> 'a"),
+      ("rev", "'a list -> 'a list"),
+      ("revAppend", "'a list * 'a list -> 'a list"),
+      ("concat", "'a list list -> 'a list"),
+      ("app", "('a -> unit) -> 'a list -> unit"),
+      ("map", "('a -> 'b) -> 'a list -> 'b list"),
+      ("mapPartial", "('a -> 'b option) -> 'a list -> 'b list"),
+      ("find", "('a -> bool) -> 'a list -> 'a option"),
+      ("filter", "('a -> bool) -> 'a list -> 'a list"),
+      ("partition", "('a -> bool) -> 'a list -> 'a list * 'a list"),
+      ("foldl", "('a * 'b -> 'b) -> 'b -> 'a list -> 'b"),
+      ("foldr", "('a * 'b -> 'b) -> 'b -> 'a list -> 'b"),
+      ("exists", "('a -> bool) -> 'a list -> bool"),
+      ("all", "('a -> bool) -> 'a list -> bool")
+    ]
+  ),
+  (
+    ["ListPair"],
+    [],
+    [
+      ("zip", "'a list * 'b list -> ('a * 'b) list"),
+      ("unzip", "('a * 'b) list -> 'a list * 'b list"),
+      ("map", "('a * 'b -> 'c) -> 'a list * 'b list -> 'c list"),
+      ("app", "('a * 'b -> unit) -> 'a list * 'b list -> unit"),
+      ("all", "('a * 'b -> bool) -> 'a list * 'b list -> bool"),
+      ("exists", "('a * 'b -> bool) -> 'a list * 'b list -> bool")
+    ]
+  ),
+  (
+    ["String"],
+    [],
+    [
+      ("concat", "string list -> string"),
+      ("concatWith", "string -> string list -> string"),
+      ("str", "char -> string"),
+      ("implode", "char list -> string"),
+      ("explode", "string -> char list"),
+      ("map", "(char -> char) -> string -> string"),
+      ("translate", "(char -> string) -> string -> string"),
+      ("tokens", "(char -> bool) -> string -> string list"),
+      ("fields", "(char -> bool) -> string -> string list"),
+      ("isPrefix", "string -> string -> bool"),
+      ("isSuffix", "string -> string -> bool"),
+      ("isSubstring", "string -> string -> bool"),
+      ("compare", "string * string -> order"),
+      ("toString", "string -> string")
+    ]
+  ),
+  (
+    ["Char"],
+    [],
+    [
+      ("isAlpha", "char -> bool"),
+      ("isAlphaNum", "char -> bool"),
+      ("isDigit", "char -> bool"),
+      ("isHexDigit", "char -> bool"),
+      ("isSpace", "char -> bool"),
+      ("isUpper", "char -> bool"),
+      ("isLower", "char -> bool"),
+      ("isPrint", "char -> bool"),
+      ("isPunct", "char -> bool"),
+      ("toUpper", "char -> char"),
+      ("toLower", "char -> char"),
+      ("contains", "string -> char -> bool"),
+      ("notContains", "string -> char -> bool"),
+      ("toString", "char -> string"),
+      ("compare", "char * char -> order")
+    ]
+  ),
+  (
+    ["Real"],
+    [],
+    [
+      ("==", "real * real -> bool"),
+      ("!=", "real * real -> bool"),
+      ("compare", "real * real -> order"),
+      ("min", "real * real -> real"),
+      ("max", "real * real -> real"),
+      ("abs", "real -> real"),
+      ("realFloor", "real -> real"),
+      ("realCeil", "real -> real"),
+      ("isFinite", "real -> bool"),
+      ("toString", "real -> string")
+    ]
+  ),
+  (
+    ["Option"],
+    [],
+    [
+      ("map", "('a -> 'b) -> 'a option -> 'b option"),
+      ("getOpt", "'a option * 'a -> 'a"),
+      ("isSome", "'a option -> bool"),
+      ("valOf", "'a option -> 'a")
+    ]
+  ),
+  (
+    ["TextIO"],
+    [("instream", instreamName), ("outstream", outstreamName)],
+    [
+      ("print", "string -> unit"),
+      ("openIn", "string -> instream"),
+      ("inputAll", "instream -> string"),
+      ("closeIn", "instream -> unit"),
+      ("openOut", "string -> outstream"),
+      ("output", "outstream * string -> unit"),
+      ("flushOut", "outstream -> unit"),
+      ("closeOut", "outstream -> unit"),
+      ("stdOut", "outstream"),
+      ("stdErr", "outstream")
+    ]
+  ),
+  (
+    ["CommandLine"],
+    [],
+    [("name", "unit -> string"), ("arguments", "unit -> string list")]
+  ),
+  (
+    ["OS", "Process"],
+    [("status", statusName)],
+    [("success", "status"), ("failure", "status"), ("exit", "status -> 'a")]
+  ),
+  (
+    ["Substring"],
+    [("substring", substringName)],
+    [
+      ("full", "string -> substring"),
+      ("string", "substring -> string"),
+      ("dropl", "(char -> bool) -> substring -> substring"),
+      ("dropr", "(char -> bool) -> substring -> substring"),
+      ("takel", "(char -> bool) -> substring -> substring"),
+      ("taker", "(char -> bool) -> substring -> substring")
+    ]
+  ),
+  (
+    // lib/num.sml: real-typed counterparts of the Basis functions that mention int.
+    ["Num"],
+    [],
+    [
+      ("div", "real * real -> real"),
+      ("mod", "real * real -> real"),
+      ("toString", "real -> string"),
+      ("fromString", "string -> real option")
+    ]
+  ),
+  (
+    ["Num", "String"],
+    [],
+    [
+      ("size", "string -> real"),
+      ("sub", "string * real -> char"),
+      ("substring", "string * real * real -> string"),
+      ("extract", "string * real * real option -> string")
+    ]
+  ),
+  (
+    ["Num", "List"],
+    [],
+    [
+      ("length", "'a list -> real"),
+      ("nth", "'a list * real -> 'a"),
+      ("take", "'a list * real -> 'a list"),
+      ("drop", "'a list * real -> 'a list"),
+      ("tabulate", "real * (real -> 'a) -> 'a list")
+    ]
+  ),
+  (["Num", "Char"], [], [("ord", "char -> real"), ("chr", "real -> char")]),
+  (["Num", "CharVector"], [], [("tabulate", "real * (real -> char) -> string")])
+];
+
+/* Overloaded identifiers (Appendix E). The classes keep int, which SubsetML omits, so that an
+   operation SML would default to int is reported instead of silently typed (spec §9.3). `/`
+   has one type here and appears among the values above. */
+let numClass = KClass([intName, realName]);
+let textClass = KClass([intName, realName, stringName, charName]);
+let binary = (result) => { TArrow(tupleTy([alpha, alpha]), result) };
+
+let special = [
+  ("=", (([KEq], binary(boolTy)), SValue)),
+  ("<>", (([KEq], binary(boolTy)), SValue)),
+  ("+", (([numClass], binary(alpha)), SValue)),
+  ("-", (([numClass], binary(alpha)), SValue)),
+  ("*", (([numClass], binary(alpha)), SValue)),
+  ("<", (([textClass], binary(boolTy)), SValue)),
+  (">", (([textClass], binary(boolTy)), SValue)),
+  ("<=", (([textClass], binary(boolTy)), SValue)),
+  (">=", (([textClass], binary(boolTy)), SValue)),
+  ("~", (([numClass], TArrow(alpha, alpha)), SValue)),
+  ("abs", (([numClass], TArrow(alpha, alpha)), SValue))
+];
+
+// ---------------------------------------------------------------------------------------
+// Building the environment
+
+// The scheme of a type written in SubsetML syntax, or the reason it is malformed.
+let scheme = (env, text) => {
+  match(Lexer.lex(text)) {
+    Lexer.LexError(msg, _) => { Unify.Err(msg, 0) },
+    Lexer.Tokens(ts, _) => {
+      match(Parser.parseTy(ts)) {
+        Parser.Fail(e) => { Unify.Err(e) },
+        Parser.Done(t, _) => {
+          let vars = Elab.distinct(Elab.tyVarsOf(t));
+          let rec index = match {
+            (_, [], _) => { None },
+            (Var(v), [w, ..rest], Var(i)) => { if (v == w) { Some(TGen(i)) } else { index(v, rest, i + 1) } }
+          };
+          Unify.bind(Elab.elabTy(env, (v) => { index(v, vars, 0) }, 0, t, Unify.initial))((body) => (st) => { Unify.Ok((SmlList.map((_) => { KPlain })(vars), body), st) })
+        }
+      }
+    }
+  }
+};
+
+// Puts `inner` at `path` inside `outer`, creating structures on the way.
+let rec nest = (outer, path, inner) => {
+  match(path) {
+    [] => { plus(outer, inner) },
+    [name, ..rest] => {
+      let Env(strs, tys, vals) = outer;
+      let existing = match(assoc(name, strs)) {
+        Some(e, _) => { e },
+        None => { empty }
+      };
+      Env(
+        [
+          (name, (nest(existing, rest, inner), true)),
+          ..SmlList.filter((n, _) => { n != name })(strs)
+        ],
+        tys,
+        vals
+      )
+    }
+  }
+};
+
+// The initial environment, or the first malformed entry.
+let initial = {
+  let topEnv = Env(
+    [],
+    topTypes,
+    List.append(
+      SmlList.map(conEntry)(List.append(boolCons, List.append(listCons, List.append(optionCons, orderCons)))),
+      special
+    )
+  );
+  // The structures' types, so that value types can name them (TextIO.instream).
+  let typesEnv = SmlList.foldl(((path, tys, _), env) => {
+    nest(env, path, withTypes(SmlList.map((n, tn) => { (n, tyStr(tn)) })(tys)))
+  })(topEnv)(structures);
+  let values = (scope, entries) => {
+    SmlList.foldl(((name, text), acc) => {
+      match(acc) {
+        Unify.Err(e) => { Unify.Err(e) },
+        Unify.Ok(vals, st) => {
+          match(scheme(scope, text)) {
+            Unify.Ok(s, _) => { Unify.Ok(List.append(vals, [(name, (s, SValue))]), st) },
+            Unify.Err(msg, _) => { Unify.Err("basis entry " ++ name ++ ": " ++ msg, 0) }
+          }
+        }
+      }
+    })(Unify.Ok([], Unify.initial))(entries)
+  };
+  // Values are elaborated where their structure's types are in scope.
+  let scopeOf = (path) => {
+    match(structureAt(typesEnv, path)) {
+      Some(inner, _) => { plus(typesEnv, inner) },
+      None => { typesEnv }
+    }
+  };
+  match(values(typesEnv, topValues)) {
+    Unify.Err(e) => { Unify.Err(e) },
+    Unify.Ok(tops, _) => {
+      SmlList.foldl(((path, _, entries), acc) => {
+        match(acc) {
+          Unify.Err(e) => { Unify.Err(e) },
+          Unify.Ok(env, st) => {
+            match(values(scopeOf(path), entries)) {
+              Unify.Ok(vals, _) => { Unify.Ok(nest(env, path, withValues(vals)), st) },
+              Unify.Err(e) => { Unify.Err(e) }
+            }
+          }
+        }
+      })(Unify.Ok(plus(typesEnv, withValues(tops)), Unify.initial))(structures)
+    }
+  }
+};

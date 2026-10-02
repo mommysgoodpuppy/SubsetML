@@ -1,0 +1,63 @@
+/* Abstract syntax of SubsetML (docs/spec.md §4, §7, §8).
+
+   Derived forms are kept as written so diagnostics can talk about the source; the elaborator
+   expands them as in Appendix A of the Definition. Infix applications are already resolved:
+   `a + b` is EApp (EId "+", ETuple [a, b]) and `x :: xs` is PApp ("::", PTuple [x, xs]). */
+
+// Byte offset into the source text.
+
+type Pos = Number;
+
+/* A comment's position, its text without the delimiters, and whether code precedes it on its
+   line (a trailing comment). Comments are kept beside the syntax tree for translation. */
+type Comment = (Pos, String, Bool);
+
+// Structure qualifiers and the final identifier.
+type Longid = (List<String>, String);
+
+type Scon = SInt<String> | SReal<String> | SString<String> | SChar<Char>; // source text, e.g. "~0x1F" // source text // decoded contents
+
+type Ty =
+  | TyVar<String>
+  | TyCon<List<Ty>, Longid>
+  | TyTuple<List<Ty>> // two or more components
+  | TyArrow<Ty, Ty>
+  | TyRecord<List<(String, Ty)>>; // only as the right side of a type binding
+
+type Pat =
+  | PWild
+  | PScon<Pos, Scon>
+  | PId<Pos, Longid> // variable or constructor
+  | PRecord<Pos, List<(String, Pat)>>
+  | PTuple<List<Pat>> // [] is (); never one component
+  | PList<List<Pat>>
+  | PApp<Pos, Longid, Pat> // constructor application
+  | PTyped<Pat, Ty>;
+
+type Exp =
+  | EScon<Pos, Scon>
+  | EId<Pos, Longid>
+  | ERecord<Pos, List<(String, Exp)>>
+  | ESelect<Pos, String> // # lab
+  | ETuple<List<Exp>> // [] is (); never one component
+  | EList<List<Exp>>
+  | ESeq<List<Exp>> // (e1; ...; en), two or more
+  | ELet<List<Dec>, List<Exp>> // let dec in e1; ...; en end
+  | EApp<Exp, Exp>
+  | ETyped<Exp, Ty>
+  | EAndalso<Exp, Exp>
+  | EOrelse<Exp, Exp>
+  | EIf<Exp, Exp, Exp>
+  | ECase<Exp, List<(Pat, Exp)>>
+  | EFn<List<(Pat, Exp)>>
+and Dec =
+  // val tyvarseq valbind: the bindings before and after `rec`
+  | DVal<Pos, List<String>, List<(Pat, Exp)>, List<(Pat, Exp)>>
+  | DType<Pos, List<(List<String>, String, Ty)>>
+  | DDatatype<Pos, List<(List<String>, String, List<(Pos, String, Option<Ty>)>)>>
+  | DOpen<Pos, List<List<String>>>;
+
+type Strdec = SDec<Dec> | SStructure<Pos, List<(String, List<Dec>)>>;
+
+// One program phrase, terminated by `;` (§8).
+type Topdec = TopDecs<List<Strdec>> | TopExp<Pos, Exp>;

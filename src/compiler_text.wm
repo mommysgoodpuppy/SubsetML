@@ -1,0 +1,46 @@
+/* Compiler-only compatibility helpers while callers migrate to checked Basis APIs.
+   Assertions below rely on validated byte strings and checked/generated lexical bounds. */
+
+from "./subset_result.wm" import * as SubsetResult;
+from "./subset_string.wm" import * as SubsetString;
+from "./subset_bytes.wm" import * as SubsetBytes;
+from "./subset_list.wm" import * as SubsetList;
+from "./subset_sml_escape.wm" import * as SubsetSmlEscape;
+from "./subset_source.wm" import * as SubsetSource;
+
+let characters = (value) => {
+  let SubsetResult.Ok(bytes) = SubsetString.fromNative(value);
+  bytes
+};
+let stringOf = (bytes) => {
+  let SubsetResult.Ok(value) = SubsetString.toNative(bytes);
+  value
+};
+let size = (value) => { SubsetBytes.length(characters(value)) };
+let str = (c) => { stringOf([c]) };
+let explode = characters;
+let implode = stringOf;
+let map = (f) => (value) => { stringOf(SubsetList.map(characters(value), f)) };
+let translate = (f) => (value) => {
+  SubsetList.foldLeft(SubsetList.map(characters(value), f), "", (part, acc) => { acc ++ part })
+};
+let escapeSmlChar = (c) => {
+  let SubsetResult.Ok(text) = SubsetSmlEscape.escapeByte(c);
+  text
+};
+let escapeSmlString = (value) => {
+  let SubsetResult.Ok(text) = SubsetSmlEscape.escapeString(value);
+  text
+};
+let source = (value) => {
+  let SubsetResult.Ok(source) = SubsetSource.fromNative(value);
+  source
+};
+let sub = (source, index) => {
+  let SubsetResult.Ok(c) = SubsetSource.at(source, index);
+  c
+};
+let substring = (source, start, count) => {
+  let SubsetResult.Ok(bytes) = SubsetSource.slice(source, start, count);
+  stringOf(bytes)
+};

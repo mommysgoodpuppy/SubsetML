@@ -1,0 +1,122 @@
+// Semantic types (Definition §4.2), as the type checker represents them.
+
+from "./sml_list.wm" import * as SmlList;
+from "./subset_char.wm" import * as SubsetChar;
+
+/* A type name (Definition §4.1): its stamp, its printed name, its arity, and whether it
+   admits equality, given type arguments that do. */
+type Tyname = (Number, String, Number, Bool);
+
+type Ty =
+  | TVar<Number> // unification variable; see Unify
+  | TGen<Number> // the i-th bound variable of a type scheme
+  | TRigid<String> // an explicit type variable 'a in scope
+  | TCon<Tyname, List<Ty>>
+  | TArrow<Ty, Ty>
+  | TRecord<List<(String, Ty)>>; // labels in canonical order; tuples use 1, 2, ...
+
+/* What a type variable may stand for: any type, a type admitting equality, or one of the
+   type names of an overloading class (Appendix E). */
+type Kind = KPlain | KEq | KClass<List<Tyname>>;
+
+/* A type scheme: the kinds of its bound variables, and its body, which refers to them with
+   TGen. */
+type Scheme = (List<Kind>, Ty);
+
+let stampOf = (s, _, _, _) => { s };
+let nameOf = (_, n, _, _) => { n };
+let arityOf = (_, _, a, _) => { a };
+
+// ---------------------------------------------------------------------------------------
+// The type names of the initial basis. Program type names get stamps from `firstStamp`.
+
+let boolName = (1, "bool", 0, true);
+let intName = (2, "int", 0, true);
+let realName = (3, "real", 0, false);
+let stringName = (4, "string", 0, true);
+let charName = (5, "char", 0, true);
+let listName = (6, "list", 1, true);
+let optionName = (7, "option", 1, true);
+let orderName = (8, "order", 0, true);
+let firstStamp = 100;
+
+let boolTy = TCon(boolName, []);
+let intTy = TCon(intName, []);
+let realTy = TCon(realName, []);
+let stringTy = TCon(stringName, []);
+let charTy = TCon(charName, []);
+let unitTy = TRecord([]);
+let listTy = (t) => { TCon(listName, [t]) };
+
+// ---------------------------------------------------------------------------------------
+// Records. Numeric labels come first, in numeric order, then the others alphabetically.
+
+let isNumeric = (l) => { SmlList.all(SubsetChar.isDigit)(String.explode(l)) };
+
+let labelLess = (a, b) => {
+  match(isNumeric(a), isNumeric(b)) {
+    (true, true) => {
+      if (String.size(a) < String.size(b)) { true } else {
+        if ((String.size(a): Number) == String.size(b)) { a < b } else { false }
+      }
+    },
+    (true, false) => { true },
+    (false, true) => { false },
+    (false, false) => { a < b }
+  }
+};
+
+// Insertion sort: records are small.
+let sortFields = (fields) => {
+  let rec insert = match {
+    (Var(f), []) => { [f] },
+    ((Var(l), Var(t)), [(Var(l'), Var(t')), ..rest]) => {
+      if (labelLess(l, l')) { [(l, t), (l', t'), ..rest] } else { [(l', t'), ..insert((l, t), rest)] }
+    }
+  };
+  SmlList.foldl(insert)([])(fields)
+};
+
+let tupleTy = (ts) => {
+  let rec number = match {
+    (_, []) => { [] },
+    (Var(i), [t, ..rest]) => { [(Number.toString(i), t), ..number(i + 1, rest)] }
+  };
+  TRecord(number(1, ts))
+};
+
+// The components of a tuple type, if the labels are exactly 1, ..., n with n >= 2.
+let tupleComponents = (fields) => {
+  let rec check = match {
+    (_, []) => { true },
+    (Var(i), [(Var(l), _), ..rest]) => {
+      if (l == Number.toString(i)) { check(i + 1, rest) } else { false }
+    }
+  };
+  if (if (List.length(fields) >= 2) { check(1, fields) } else { false }) { Some(SmlList.map((_, t) => { t })(fields)) } else { None }
+};
+
+// Replaces TGen i by the i-th argument.
+let rec substGen = (args, t) => {
+  match(t) {
+    TGen(i) => { List.nth(args, i) },
+    TCon(n, ts) => { TCon(n, SmlList.map((a) => { substGen(args, a) })(ts)) },
+    TArrow(a, b) => { TArrow(substGen(args, a), substGen(args, b)) },
+    TRecord(fields) => {
+      TRecord(SmlList.map((l, a) => { (l, substGen(args, a)) })(fields))
+    },
+    _ => { t }
+  }
+};
+
+// The stamps of the type names a type mentions.
+let rec tynames = (t) => {
+  match(t) {
+    TCon(n, ts) => { [stampOf(n), ..SmlList.concat(SmlList.map(tynames)(ts))] },
+    TArrow(a, b) => { List.append(tynames(a), tynames(b)) },
+    TRecord(fields) => {
+      SmlList.concat(SmlList.map((_, a) => { tynames(a) })(fields))
+    },
+    _ => { [] }
+  }
+};

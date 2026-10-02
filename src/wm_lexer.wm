@@ -1,0 +1,434 @@
+/* Lexical analysis of Workman source, following frontend-v3's lexical design
+   (../wm-mini/tooling/frontend-v3/lexical-design.md), for the fragment that corresponds to
+   SubsetML. Identifiers may also contain primes, which only SML fallbacks produce. */
+
+from "./syntax.wm" import * as Syntax;
+from "./sml_list.wm" import * as SmlList;
+from "./subset_char.wm" import * as SubsetChar;
+from "./subset_source.wm" import * as SubsetSource;
+from "./subset_result.wm" import * as SubsetResult;
+from "./subset_string.wm" import * as SubsetString;
+from "./compiler_text.wm" import * as CompilerText;
+from "./lexer.wm" import * as Lexer;
+
+from "./syntax.wm" import *;
+
+type Token =
+  | WKey<String> // keyword, punctuation or operator
+  | WName<List<String>> // a dotted path such as Lexer.lex or r.x
+  | WSelect<String> // SML fallback `#lab`
+  | WScon<Scon> // literal; the parser forms negative numbers
+  | WSml<String> // an SML fallback declaration, up to its `;`
+  | WEOF;
+
+type Step<a> = Ok<a, Number> | Err<String, Pos>;
+
+type Result = Tokens<List<(Token, Pos)>, List<Comment>> | LexError<String, Pos>;
+
+let keywords = [
+  "let",
+  "rec",
+  "and",
+  "type",
+  "record",
+  "if",
+  "else",
+  "match",
+  "from",
+  "import",
+  "as",
+  "true",
+  "false",
+  "void"
+];
+
+// Longest first, so that a prefix never shadows a longer operator.
+let symbols = [
+  "..",
+  ".{",
+  "=>",
+  "->",
+  "==",
+  "!=",
+  "<=",
+  ">=",
+  "&&",
+  "||",
+  "++",
+  "(",
+  ")",
+  "[",
+  "]",
+  "{",
+  "}",
+  ",",
+  ";",
+  ":",
+  ".",
+  "<",
+  ">",
+  "=",
+  "+",
+  "-",
+  "*",
+  "/",
+  "%",
+  "!",
+  "|",
+  "@",
+  "~"
+];
+
+let member = (x, xs) => { SmlList.exists((y) => { y == x })(xs) };
+
+let isIdentChar = (c) => {
+  if (if (SubsetChar.isAlphaNum(c)) { true } else { c == '_' }) { true } else { c == '\'' }
+};
+
+let isSpace = (c) => {
+  if (if (if (if (c == ' ') { true } else { c == '\t' }) { true } else { c == '\n' }) { true } else { c == '\r' }) { true } else { c == '\u000c' }
+};
+
+let lex = (src) => {
+  match(SubsetSource.fromNative(src)) {
+    SubsetResult.Err(SubsetString.NonByte(offset)) => { LexError("source contains a non-byte character", offset) },
+    SubsetResult.Ok(source) => {
+      let n = SubsetSource.length(source);
+
+      let at = (i) => { CompilerText.sub(source, i) };
+      let has = (i, c) => { if (i < n) { at(i) == c } else { false } };
+      let digitAt = (i) => { if (i < n) { SubsetChar.isDigit(at(i)) } else { false } };
+
+      let rec skipWhile = (p, i) => {
+        if (if (i < n) { p(at(i)) } else { false }) { skipWhile(p, i + 1) } else { i }
+      };
+
+      let startsWith = (i, s) => {
+        if (i + CompilerText.size(s) <= n) { CompilerText.substring(source, i, CompilerText.size(s)) == s } else { false }
+      };
+
+      // Whether code precedes offset i on its line.
+      let trailing = (i) => {
+        let rec back = (k) => {
+          if (k < 0) { false } else {
+            match(at(k)) {
+              '\n' => { false },
+              Var(c) => { if (isSpace(c)) { back(k - 1) } else { true } }
+            }
+          }
+        };
+        back(i - 1)
+      };
+
+      // A nested block comment; i is after the opening `/*`.
+      let rec blockComment = (start, i, depth) => {
+        match((depth: Number) == 0, i + 1 >= n) {
+          (true, _) => { Ok(void, i) },
+          (false, true) => { Err("unterminated comment", start) },
+          (false, false) => {
+            match(at(i), at(i + 1)) {
+              ('/', '*') => { blockComment(start, i + 2, depth + 1) },
+              ('*', '/') => { blockComment(start, i + 2, depth - 1) },
+              _ => { blockComment(start, i + 1, depth) }
+            }
+          }
+        }
+      };
+
+      let hexValue = (i, j) => {
+        SmlList.foldl((c, acc) => { acc * 16 + Lexer.digitValue(c) })(0)(CompilerText.explode(CompilerText.substring(source, i, j - i)))
+      };
+
+      let charFromCode = (code, pos, next) => {
+        match(SubsetChar.fromCode(code)) {
+          SubsetResult.Ok(c) => { Ok(Some(c), next) },
+          SubsetResult.Err(error) => {
+            Err("SubsetML characters are 8-bit; the code exceeds 255", pos)
+          }
+        }
+      };
+
+      // An escape; i is just after the backslash. NONE is a gap.
+      let escape = (i) => {
+        if (i >= n) { Err("unterminated escape sequence", i - 1) } else {
+          match(at(i)) {
+            'a' => { Ok(Some('\u0007'), i + 1) },
+            'b' => { Ok(Some('\u0008'), i + 1) },
+            't' => { Ok(Some('\t'), i + 1) },
+            'n' => { Ok(Some('\n'), i + 1) },
+            'v' => { Ok(Some('\u000b'), i + 1) },
+            'f' => { Ok(Some('\u000c'), i + 1) },
+            'r' => { Ok(Some('\r'), i + 1) },
+            '"' => { Ok(Some('"'), i + 1) },
+            '\'' => { Ok(Some('\''), i + 1) },
+            '\\' => { Ok(Some('\\'), i + 1) },
+            '^' => {
+              if (if (if (i + 1 < n) { Lexer.byteCode(at(i + 1)) >= 64 } else { false }) { Lexer.byteCode(at(i + 1)) <= 95 } else { false }) { charFromCode(Lexer.byteCode(at(i + 1)) - 64, i - 1, i + 2) } else { Err("illegal control escape sequence", i - 1) }
+            },
+            'u' => {
+              if (has(i + 1, '{')) {
+                let j = skipWhile(SubsetChar.isHexDigit, i + 2);
+                if (if (if (has(j, '}')) { j > i + 2 } else { false }) { j <= i + 8 } else { false }) { charFromCode(hexValue(i + 2, j), i - 1, j + 1) } else { Err("malformed \\u{...} escape", i - 1) }
+              } else {
+                let j = skipWhile(SubsetChar.isHexDigit, i + 1);
+                if (j - (i + 1) >= 4) { charFromCode(hexValue(i + 1, i + 5), i - 1, i + 5) } else {
+                  Err("\\u must be followed by four hexadecimal digits", i - 1)
+                }
+              }
+            },
+            Var(c) => {
+              match(SubsetChar.isDigit(c), isSpace(c)) {
+                (true, _) => {
+                  if (if (digitAt(i + 1)) { digitAt(i + 2) } else { false }) {
+                    charFromCode(
+                      Lexer.digitValue(c) * 100 + Lexer.digitValue(at(i + 1)) * 10 + Lexer.digitValue(at(i + 2)),
+                      i - 1,
+                      i + 3
+                    )
+                  } else { Err("decimal escape needs exactly three digits", i - 1) }
+                },
+                (false, true) => {
+                  let j = skipWhile(isSpace, i);
+                  if (has(j, '\\')) { Ok(None, j + 1) } else { Err("unterminated string gap", i - 1) }
+                },
+                (false, false) => { Err("illegal escape sequence", i - 1) }
+              }
+            }
+          }
+        }
+      };
+
+      // A quoted literal body; i is just after the opening quote.
+      let rec quoted = (quote, start, i, acc) => {
+        if (i >= n) { Err("unterminated literal", start) } else {
+          match(at(i)) {
+            '\\' => {
+              match(escape(i + 1)) {
+                Ok(None, j) => { quoted(quote, start, j, acc) },
+                Ok(Some(c), j) => { quoted(quote, start, j, [c, ..acc]) },
+                Err(message, offset) => { Err(message, offset) }
+              }
+            },
+            '\n' => { Err("unterminated literal", start) },
+            Var(c) => {
+              if (c == quote) { Ok(CompilerText.implode(SmlList.rev(acc)), i + 1) } else {
+                if (Lexer.byteCode(c) < 32) { Err("control character in a literal", i) } else { quoted(quote, start, i + 1, [c, ..acc]) }
+              }
+            }
+          }
+        }
+      };
+
+      // A number; SML spells the exponent sign `~` and has no `+`.
+      let lexNumber = (start) => {
+        let text = (j) => {
+          CompilerText.translate(match {
+            '-' => { "~" },
+            '+' => { "" },
+            Var(c) => { CompilerText.str(c) }
+          })(CompilerText.substring(source, start, j - start))
+        };
+        let hexAt = (j) => { if (j < n) { SubsetChar.isHexDigit(at(j)) } else { false } };
+        match(if (at(start) == '0') { has(start + 1, 'w') } else { false }, if (if (at(start) == '0') { has(start + 1, 'x') } else { false }) { hexAt(start + 2) } else { false }) {
+          (true, _) => { Err("word constants are not part of SubsetML", start) },
+          (false, true) => {
+            let j = skipWhile(SubsetChar.isHexDigit, start + 2);
+            Ok(WScon(SInt(text(j))), j)
+          },
+          (false, false) => {
+            let j = skipWhile(SubsetChar.isDigit, start);
+            let k = if (if (has(j, '.')) { digitAt(j + 1) } else { false }) { skipWhile(SubsetChar.isDigit, j + 1) } else { j };
+            let signed = if (if (has(k + 1, '-')) { true } else { has(k + 1, '+') }) { k + 2 } else { k + 1 };
+            let m = if (if (if (has(k, 'e')) { true } else { has(k, 'E') }) { digitAt(signed) } else { false }) { skipWhile(SubsetChar.isDigit, signed) } else { k };
+            if ((m: Number) == j) { Ok(WScon(SInt(text(j))), j) } else { Ok(WScon(SReal(text(m))), m) }
+          }
+        }
+      };
+
+      // A name or dotted path: Lexer.lex, r.x, Syntax.TyCon.
+      let lexPath = (start) => {
+        let rec parts = (i, acc) => {
+          let j = skipWhile(isIdentChar, i);
+          let acc' = [CompilerText.substring(source, i, j - i), ..acc];
+          if (if (if (has(j, '.')) { j + 1 < n } else { false }) { SubsetChar.isAlpha(at(j + 1)) } else { false }) { parts(j + 1, acc') } else { (SmlList.rev(acc'), j) }
+        };
+        let (path, j) = parts(start, []);
+        match(path, startsWith(j, ".=="), startsWith(j, ".!=")) {
+          (["Real"], true, _) => { Ok(WName(["Real", "=="]), j + 3) },
+          (["Real"], _, true) => { Ok(WName(["Real", "!="]), j + 3) },
+          ([word], _, _) => {
+            if (member(word, keywords)) { Ok(WKey(word), j) } else { Ok(WName(path), j) }
+          },
+          _ => { Ok(WName(path), j) }
+        }
+      };
+
+      let lexSymbol = (i) => {
+        match(SmlList.find((s) => { startsWith(i, s) })(symbols)) {
+          Some(s) => { Ok(WKey(s), i + CompilerText.size(s)) },
+          None => { Err("unexpected character", i) }
+        }
+      };
+
+      /* SML fallback declarations start a line with one of these words and end at the first
+         `;` outside brackets, let ... end, strings and comments. */
+      let smlStart = (i) => {
+        let j = skipWhile(isIdentChar, i);
+        let word = CompilerText.substring(source, i, j - i);
+        if (if (if (word == "val") { true } else { word == "datatype" }) { true } else { word == "open" }) { !trailing(i) } else { false }
+      };
+
+      let rec skipSmlString = (i) => {
+        if (i >= n) { n } else {
+          match(at(i)) {
+            '\\' => { skipSmlString(i + 2) },
+            '"' => { i + 1 },
+            _ => { skipSmlString(i + 1) }
+          }
+        }
+      };
+
+      let rec skipSmlComment = (i, depth) => {
+        match((depth: Number) == 0, i + 1 >= n) {
+          (true, _) => { i },
+          (false, true) => { n },
+          (false, false) => {
+            match(at(i), at(i + 1)) {
+              ('(', '*') => { skipSmlComment(i + 2, depth + 1) },
+              ('*', ')') => { skipSmlComment(i + 2, depth - 1) },
+              _ => { skipSmlComment(i + 1, depth) }
+            }
+          }
+        }
+      };
+
+      let smlPhraseEnd = (start) => {
+        let rec go = (i, depth) => {
+          if (i >= n) { Err("unterminated SML declaration (expected `;`)", start) } else {
+            match(at(i)) {
+              '"' => { go(skipSmlString(i + 1), depth) },
+              '#' => {
+                if (has(i + 1, '"')) { go(skipSmlString(i + 2), depth) } else { go(i + 1, depth) }
+              },
+              '(' => {
+                if (has(i + 1, '*')) { go(skipSmlComment(i + 2, 1), depth) } else { go(i + 1, depth + 1) }
+              },
+              '[' => { go(i + 1, depth + 1) },
+              '{' => { go(i + 1, depth + 1) },
+              ')' => { go(i + 1, depth - 1) },
+              ']' => { go(i + 1, depth - 1) },
+              '}' => { go(i + 1, depth - 1) },
+              ';' => {
+                if ((depth: Number) == 0) { Ok(void, i) } else { go(i + 1, depth) }
+              },
+              Var(c) => {
+                if (SubsetChar.isAlpha(c)) {
+                  let j = skipWhile(isIdentChar, i);
+                  match(CompilerText.substring(source, i, j - i)) {
+                    "let" => { go(j, depth + 1) },
+                    "end" => { go(j, depth - 1) },
+                    _ => { go(j, depth) }
+                  }
+                } else { go(i + 1, depth) }
+              }
+            }
+          }
+        };
+        go(start, 0)
+      };
+
+      let rec push = (r, start, acc, cs) => {
+        match(r) {
+          Ok(tok, j) => { loop(j, [(tok, start), ..acc], cs) },
+          Err(message, offset) => { LexError(message, offset) }
+        }
+      }
+
+      and comment = (start, j, acc, cs) => {
+        let body = CompilerText.substring(source, start + 2, j - start - 2);
+        loop(j, acc, [(start, body, trailing(start)), ..cs])
+      }
+
+      and loop = (i, acc, cs) => {
+        if (i >= n) { Tokens(SmlList.rev([(WEOF, n), ..acc]), SmlList.rev(cs)) } else {
+          match(at(i), if (startsWith(i, "//")) { true } else { startsWith(i, "--") }, startsWith(i, "/*")) {
+            (_, true, _) => { comment(i, skipWhile((d) => { d != '\n' }, i), acc, cs) },
+            (_, _, true) => {
+              match(blockComment(i, i + 2, 1)) {
+                Ok(_, j) => {
+                  loop(
+                    j,
+                    acc,
+                    [(i, CompilerText.substring(source, i + 2, j - i - 4), trailing(i)), ..cs]
+                  )
+                },
+                Err(message, offset) => { LexError(message, offset) }
+              }
+            },
+            ('"', _, _) => {
+              match(quoted('"', i, i + 1, [])) {
+                Ok(s, j) => { loop(j, [(WScon(SString(s)), i), ..acc], cs) },
+                Err(message, offset) => { LexError(message, offset) }
+              }
+            },
+            ('\'', _, _) => {
+              match(quoted('\'', i, i + 1, [])) {
+                Ok(s, j) => {
+                  if ((CompilerText.size(s): Number) == 1) {
+                    loop(
+                      j,
+                      [
+                        (
+                          WScon(SChar({
+                            let SubsetResult.Ok(decoded) = SubsetSource.fromNative(s);
+                            CompilerText.sub(decoded, 0)
+                          })),
+                          i
+                        ),
+                        ..acc
+                      ],
+                      cs
+                    )
+                  } else {
+                    LexError("a character literal must contain exactly one character", i)
+                  }
+                },
+                Err(message, offset) => { LexError(message, offset) }
+              }
+            },
+            ('`', _, _) => { LexError("backtick strings have no SubsetML counterpart", i) },
+            ('#', _, _) => {
+              let j = skipWhile(SubsetChar.isAlphaNum, i + 1);
+              if (j > i + 1) {
+                loop(j, [(WSelect(CompilerText.substring(source, i + 1, j - i - 1)), i), ..acc], cs)
+              } else { LexError("expected a label after `#`", i) }
+            },
+            ('_', _, _) => {
+              if (if (i + 1 < n) { isIdentChar(at(i + 1)) } else { false }) {
+                LexError("identifiers starting with `_` are not SubsetML", i)
+              } else { loop(i + 1, [(WKey("_"), i), ..acc], cs) }
+            },
+            (Var(c), _, _) => {
+              match(isSpace(c), SubsetChar.isDigit(c), SubsetChar.isAlpha(c)) {
+                (true, _, _) => { loop(i + 1, acc, cs) },
+                (_, true, _) => { push(lexNumber(i), i, acc, cs) },
+                (_, _, true) => {
+                  if (smlStart(i)) {
+                    match(smlPhraseEnd(i)) {
+                      Ok(_, j) => {
+                        loop(j + 1, [(WSml(CompilerText.substring(source, i, j - i)), i), ..acc], cs)
+                      },
+                      Err(message, offset) => { LexError(message, offset) }
+                    }
+                  } else { push(lexPath(i), i, acc, cs) }
+                },
+                _ => { push(lexSymbol(i), i, acc, cs) }
+              }
+            }
+          }
+        }
+      };
+      loop(0, [], [])
+    }
+  }
+};

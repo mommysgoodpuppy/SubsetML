@@ -1,0 +1,96 @@
+/* Canonical forms for comparing syntax trees across a translation round trip. Some SML
+   spellings share one Workman spelling, so they come back as the canonical one:
+
+     nil, x :: [y]         become  [], [x, y]
+     let in e end          becomes e
+     open A B              becomes open A; open B */
+
+from "./syntax.wm" import * as Syntax;
+from "./sml_list.wm" import * as SmlList;
+
+from "./syntax.wm" import *;
+
+let rec pat = (p) => {
+  match(p) {
+    PId(_, ([], "nil")) => { PList([]) },
+    PRecord(pos, fields) => { PRecord(pos, SmlList.map((l, q) => { (l, pat(q)) })(fields)) },
+    PTuple(ps) => { PTuple(SmlList.map(pat)(ps)) },
+    PList(ps) => { PList(SmlList.map(pat)(ps)) },
+    PApp(pos, ([], "::"), PTuple([h, t])) => {
+      match(pat(h), pat(t)) {
+        (Var(h'), PList(items)) => { PList([h', ..items]) },
+        (Var(h'), Var(t')) => { PApp(pos, ([], "::"), PTuple([h', t'])) }
+      }
+    },
+    PApp(pos, id, q) => { PApp(pos, id, pat(q)) },
+    PTyped(q, t) => { PTyped(pat(q), t) },
+    _ => { p }
+  }
+};
+
+let rules = (f, g, rs) => { SmlList.map((p, e) => { (f(p), g(e)) })(rs) };
+
+let rec exp = (e) => {
+  match(e) {
+    EId(_, ([], "nil")) => { EList([]) },
+    ERecord(pos, fields) => { ERecord(pos, SmlList.map((l, x) => { (l, exp(x)) })(fields)) },
+    ETuple(es) => { ETuple(SmlList.map(exp)(es)) },
+    EList(es) => { EList(SmlList.map(exp)(es)) },
+    ESeq(es) => { ESeq(SmlList.map(exp)(es)) },
+    ELet([], [single]) => { exp(single) },
+    ELet(ds, es) => { ELet(decs(ds), SmlList.map(exp)(es)) },
+    EApp(EId(pos, ([], "::")), ETuple([h, t])) => {
+      match(exp(h), exp(t)) {
+        (Var(h'), EList(items)) => { EList([h', ..items]) },
+        (Var(h'), Var(t')) => { EApp(EId(pos, ([], "::")), ETuple([h', t'])) }
+      }
+    },
+    EApp(EId(p, (["Real"], Var(opr))), ETuple([ETyped(x, TyCon([], ([], "real"))), y])) => {
+      if (if (opr == "==") { true } else { opr == "!=" }) { EApp(EId(p, (["Real"], opr)), ETuple([exp(x), exp(y)])) } else {
+        EApp(
+          EId(p, (["Real"], opr)),
+          ETuple([exp(ETyped(x, TyCon([], ([], "real")))), exp(y)])
+        )
+      }
+    },
+    EApp(f, a) => { EApp(exp(f), exp(a)) },
+    ETyped(x, t) => { ETyped(exp(x), t) },
+    EAndalso(a, b) => { EIf(exp(a), exp(b), EId(0, ([], "false"))) },
+    EOrelse(a, b) => { EIf(exp(a), EId(0, ([], "true")), exp(b)) },
+    EIf(c, a, b) => { EIf(exp(c), exp(a), exp(b)) },
+    ECase(x, rs) => { ECase(exp(x), rules(pat, exp, rs)) },
+    /* First-class real comparisons are expanded to typed Workman lambdas. Contract
+       their exact eta expansion for comparison; both operands must be the bound names. */
+    EFn([
+      (
+        PTuple([
+          PTyped(PId(_, ([], Var(x))), TyCon([], ([], "real"))),
+          PTyped(PId(_, ([], Var(y))), TyCon([], ([], "real")))
+        ]),
+        EApp(
+          EId(p, (["Real"], Var(opr))),
+          ETuple([EId(_, ([], Var(a))), EId(_, ([], Var(b)))])
+        )
+      )
+    ]) => {
+      if (if (if (if (if (opr == "==") { true } else { opr == "!=" }) { x == a } else { false }) { y == b } else { false }) { x != y } else { false }) { EId(p, (["Real"], opr)) } else {
+        match(e) {
+          EFn(rs) => { EFn(rules(pat, exp, rs)) },
+          _ => { e }
+        }
+      }
+    },
+    EFn(rs) => { EFn(rules(pat, exp, rs)) },
+    _ => { e }
+  }
+}
+
+and decs = (ds) => {
+  SmlList.concat(SmlList.map(match {
+    DVal(pos, vs, plain, recs) => {
+      [DVal(pos, vs, rules(pat, exp, plain), rules(pat, exp, recs))]
+    },
+    DOpen(pos, ids) => { SmlList.map((id) => { DOpen(pos, [id]) })(ids) },
+    Var(d) => { [d] }
+  })(ds))
+};

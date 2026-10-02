@@ -1,0 +1,157 @@
+{
+  "status": "source byte/text operations and codecs implemented; lexers, parser and document renderer migrated",
+  "modules": {
+    "SubsetResult": {
+      "source": "src/subset_result.sml",
+      "sourceDependencies": [],
+      "primitives": []
+    },
+    "SubsetOption": {
+      "source": "src/subset_option.sml",
+      "sourceDependencies": [
+        "SubsetResult"
+      ],
+      "primitives": []
+    },
+    "SubsetList": {
+      "source": "src/subset_list.sml",
+      "sourceDependencies": [
+        "SubsetResult"
+      ],
+      "primitives": []
+    },
+    "SubsetListPair": {
+      "source": "src/subset_list_pair.sml",
+      "sourceDependencies": [
+        "SubsetList",
+        "SubsetResult"
+      ],
+      "primitives": []
+    },
+    "SubsetOrder": {
+      "source": "src/subset_order.sml",
+      "sourceDependencies": [
+        "SubsetResult"
+      ],
+      "primitives": []
+    },
+    "SubsetChar": {
+      "source": "src/subset_char.sml",
+      "sourceDependencies": [
+        "SubsetOrder",
+        "SubsetResult"
+      ],
+      "primitives": []
+    },
+    "SubsetBytes": {
+      "source": "src/subset_bytes.sml",
+      "sourceDependencies": [
+        "SubsetChar",
+        "SubsetList",
+        "SubsetResult"
+      ],
+      "primitives": []
+    },
+    "SubsetUnicode": {
+      "source": "src/subset_unicode.sml",
+      "sourceDependencies": [
+        "SubsetChar",
+        "SubsetList",
+        "SubsetResult"
+      ],
+      "primitives": []
+    },
+    "SubsetUtf8": {
+      "source": "src/subset_utf8.sml",
+      "sourceDependencies": [
+        "SubsetChar",
+        "SubsetList",
+        "SubsetResult",
+        "SubsetUnicode"
+      ],
+      "primitives": []
+    },
+    "SubsetUtf16": {
+      "source": "src/subset_utf16.sml",
+      "sourceDependencies": [
+        "SubsetChar",
+        "SubsetList",
+        "SubsetResult",
+        "SubsetUnicode"
+      ],
+      "primitives": []
+    },
+    "SubsetString": {
+      "source": "src/subset_string.sml",
+      "sourceDependencies": [
+        "SubsetChar",
+        "SubsetList",
+        "SubsetResult"
+      ],
+      "primitives": [
+        "SubsetTextHost.codes"
+      ]
+    },
+    "SubsetSource": {
+      "source": "src/subset_source.sml",
+      "sourceDependencies": [
+        "SubsetBytes",
+        "SubsetList",
+        "SubsetResult",
+        "SubsetString"
+      ],
+      "primitives": []
+    },
+    "SubsetSmlEscape": {
+      "source": "src/subset_sml_escape.sml",
+      "sourceDependencies": [
+        "SubsetList",
+        "SubsetResult",
+        "SubsetString"
+      ],
+      "primitives": []
+    }
+  },
+  "languageRequirements": [
+    "datatypes",
+    "options",
+    "lists",
+    "tuples",
+    "booleans",
+    "unit",
+    "functions",
+    "pattern matching",
+    "recursion",
+    "character literals",
+    "character equality",
+    "real literals",
+    "real comparison operators",
+    "real arithmetic operators",
+    "string literals",
+    "string concatenation"
+  ],
+  "legacyObservations": {
+    "SmlChar": [
+      "Num.String.size",
+      "Num.String.sub",
+      "Num.Char.ord",
+      "Num.Char.chr"
+    ],
+    "output": "MLton print writes supplied text; current Workman print appends a newline"
+  },
+  "pending": [
+    "broader collection indexing contracts",
+    "target byte I/O contracts",
+    "remaining compiler bootstrap text migration"
+  ],
+  "hostAdapters": {
+    "SubsetTextHost": {
+      "sml": "lib/subset_text_host.sml",
+      "checkerStub": "src/subset_text_host.sml",
+      "workman": "lib/subset_text_host.wm",
+      "operations": [
+        "codes"
+      ]
+    }
+  }
+}

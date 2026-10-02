@@ -1,0 +1,79 @@
+/* Portable list algorithms for the custom SubsetML Basis.
+   Current signatures follow their SML origins; API migration is pending (docs/basis.md).
+   This module needs no host List functions or numeric primitives. */
+
+let null = match {
+  [] => { true },
+  [x, ..xs] => { false }
+};
+
+let rec revAppend = (xs, ys) => {
+  match(xs) {
+    [] => { ys },
+    [x, ..rest] => { revAppend(rest, [x, ..ys]) }
+  }
+};
+
+let rev = (xs) => { revAppend(xs, []) };
+
+let rec foldl = (f) => (acc) => (xs) => {
+  match(xs) {
+    [] => { acc },
+    [x, ..rest] => { foldl(f)(f(x, acc))(rest) }
+  }
+};
+
+let foldr = (f) => (acc) => (xs) => { foldl(f)(acc)(rev(xs)) };
+
+let concat = (lists) => { rev(foldl((xs, acc) => { revAppend(xs, acc) })([])(lists)) };
+
+let rec app = (f) => (xs) => {
+  match(xs) {
+    [] => { void },
+    [x, ..rest] => {
+      let void = f(x);
+      app(f)(rest)
+    }
+  }
+};
+
+let map = (f) => (xs) => { rev(foldl((x, acc) => { [f(x), ..acc] })([])(xs)) };
+
+let mapPartial = (f) => (xs) => {
+  rev(foldl((x, acc) => {
+    match(f(x)) {
+      None => { acc },
+      Some(y) => { [y, ..acc] }
+    }
+  })([])(xs))
+};
+
+let rec find = (p) => (xs) => {
+  match(xs) {
+    [] => { None },
+    [x, ..rest] => { if (p(x)) { Some(x) } else { find(p)(rest) } }
+  }
+};
+
+let filter = (p) => (xs) => {
+  rev(foldl((x, acc) => { if (p(x)) { [x, ..acc] } else { acc } })([])(xs))
+};
+
+let partition = (p) => (xs) => {
+  let (yes, no) = foldl((x, (yes, no)) => { if (p(x)) { ([x, ..yes], no) } else { (yes, [x, ..no]) } })([], [])(xs);
+  (rev(yes), rev(no))
+};
+
+let rec exists = (p) => (xs) => {
+  match(xs) {
+    [] => { false },
+    [x, ..rest] => { if (p(x)) { true } else { exists(p)(rest) } }
+  }
+};
+
+let rec all = (p) => (xs) => {
+  match(xs) {
+    [] => { true },
+    [x, ..rest] => { if (p(x)) { all(p)(rest) } else { false } }
+  }
+};

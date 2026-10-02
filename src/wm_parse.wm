@@ -1,0 +1,938 @@
+/* Parsing Workman source into SubsetML abstract syntax: the reverse of WmPrint.
+
+   It accepts the Workman fragment that corresponds to SubsetML, plus the SML fallbacks that
+   WmPrint emits (`div`, `mod`, `@`, `o`, `before`, `#lab`, `~`). Workman features outside
+   SubsetML (pinned match names, `%`, pipes, JSON, FFI imports, ...) are reported as errors. */
+
+from "./syntax.wm" import * as Syntax;
+from "./wm_lexer.wm" import * as WmLexer;
+from "./subset_char.wm" import * as SubsetChar;
+from "./sml_list.wm" import * as SmlList;
+from "./wm_print.wm" import * as WmPrint;
+from "./parser.wm" import * as Parser;
+from "./sml_option.wm" import * as SmlOption;
+
+from "./syntax.wm" import *;
+from "./wm_lexer.wm" import *;
+
+type Toks = List<(Token, Pos)>;
+
+type Res<a> = Done<a, Toks> | Fail<String, Pos>;
+
+let bind = (r) => (k) => {
+  match(r) {
+    Done(x, ts) => { k(x)(ts) },
+    Fail(e) => { Fail(e) }
+  }
+};
+
+let peek = match {
+  [t, .._] => { t },
+  [] => { (WEOF, 0) }
+};
+
+let advance = match {
+  [_, ..rest] => { rest },
+  [] => { [] }
+};
+
+let posOf = (ts) => {
+  let (_, p) = peek(ts);
+  p
+};
+
+let isKey = (k, ts) => {
+  match(peek(ts)) {
+    (WKey(k'), _) => { k == k' },
+    _ => { false }
+  }
+};
+
+let describe = match {
+  WKey(k) => { "`" ++ k ++ "`" },
+  WName(path) => { "`" ++ String.concatWith(".")(path) ++ "`" },
+  WSelect(l) => { "`#" ++ l ++ "`" },
+  WScon(_) => { "a literal" },
+  WSml(_) => { "an SML declaration" },
+  WEOF => { "end of input" }
+};
+
+let expected = (what, ts) => {
+  let (t, p) = peek(ts);
+  Fail("expected " ++ what ++ ", found " ++ describe(t), p)
+};
+
+let expect = (k, ts) => {
+  if (isKey(k, ts)) { Done(void, advance(ts)) } else { expected("`" ++ k ++ "`", ts) }
+};
+
+// `item (sep item)*`, allowing a trailing separator before `close`.
+let rec separated = (item, sep, close, ts) => {
+  if (isKey(close, ts)) { Done([], ts) } else {
+    bind(item(ts))((x) => (ts) => {
+      if (isKey(sep, ts)) {
+        bind(separated(item, sep, close, advance(ts)))((xs) => (ts) => { Done([x, ..xs], ts) })
+      } else { Done([x], ts) }
+    })
+  }
+};
+
+// `open items close`
+let delimited = (openK, item, sep, close, ts) => {
+  bind(expect(openK, ts))((_) => (ts) => {
+    bind(separated(item, sep, close, ts))((xs) => (ts) => { bind(expect(close, ts))((_) => (ts) => { Done(xs, ts) }) })
+  })
+};
+
+// ---------------------------------------------------------------------------------------
+// Names (the inverse of WmPrint's)
+
+let isUpperName = (s) => { SubsetChar.isUpper(String.sub(s, 0)) };
+
+let decapitalize = (s) => {
+  if (s == "") { s } else {
+    String.str(SubsetChar.toLower(String.sub(s, 0))) ++ String.extract(s, 1, None)
+  }
+};
+
+let valueName = match {
+  ([], "None") => { ([], "NONE") },
+  ([], "Some") => { ([], "SOME") },
+  Var(id) => {
+    match(SmlList.find((_, wm) => { wm == id })(WmPrint.numNames)) {
+      Some(sml, _) => { sml },
+      None => { id }
+    }
+  }
+};
+
+let tyConName = match {
+  ([], "Void") => { ([], "unit") },
+  ([], "Number") => { ([], "real") },
+  (Var(qs), Var(s)) => { (qs, decapitalize(s)) }
+};
+
+// Splits a path into structure qualifiers, the named value, and record field selections.
+let splitPath = (path) => {
+  let rec go = match {
+    (Var(quals), [last]) => { (SmlList.rev(quals), last, []) },
+    (Var(quals), [c, ..rest]) => {
+      if (isUpperName(c)) { go([c, ..quals], rest) } else { (SmlList.rev(quals), c, rest) }
+    },
+    (Var(quals), []) => { (SmlList.rev(quals), "", []) }
+  };
+  go([], path)
+};
+
+let pathExp = (p, path) => {
+  let (quals, base, fields) = splitPath(path);
+  SmlList.foldl((l, e) => { EApp(ESelect(p, l), e) })(EId(p, valueName(quals, base)))(fields)
+};
+
+// "./sml_print.wm" names the structure SmlPrint.
+let structureName = (file) => {
+  let base = match(SmlList.rev(String.fields((c) => { c == '/' })(file))) {
+    [last, .._] => { last },
+    [] => { file }
+  };
+  let stem = if (String.isSuffix(".wm")(base)) { String.substring(base, 0, String.size(base) - 3) } else { base };
+  String.concat(SmlList.map((w) => {
+    String.str(SubsetChar.toUpper(String.sub(w, 0))) ++ String.extract(w, 1, None)
+  })(SmlList.filter((w) => { w != "" })(String.fields((c) => { c == '_' })(stem))))
+};
+
+// ---------------------------------------------------------------------------------------
+// Types
+
+let rec parseType = (ts) => {
+  bind(parseTypeAtom(ts))((t) => (ts) => {
+    if (isKey("->", ts)) {
+      bind(parseType(advance(ts)))((r) => (ts) => { Done(TyArrow(t, r), ts) })
+    } else { Done(t, ts) }
+  })
+}
+
+and parseTypeAtom = (ts) => {
+  match(peek(ts)) {
+    (WKey("("), _) => {
+      bind(delimited("(", parseType, ",", ")", ts))((types) => (ts) => {
+        match(types) {
+          [single] => { Done(single, ts) },
+          [] => { expected("a type", ts) },
+          _ => { Done(TyTuple(types), ts) }
+        }
+      })
+    },
+    (WName([v]), _) => {
+      if (isUpperName(v)) { typeName([], v, advance(ts)) } else { Done(TyVar("'" ++ v), advance(ts)) }
+    },
+    (WName(path), _) => {
+      match(SmlList.rev(path)) {
+        [last, ..rest] => { typeName(SmlList.rev(rest), last, advance(ts)) },
+        [] => { expected("a type", ts) }
+      }
+    },
+    _ => { expected("a type", ts) }
+  }
+}
+
+and typeName = (quals, name, ts) => {
+  if (isKey("<", ts)) {
+    bind(delimited("<", parseType, ",", ">", ts))((args) => (ts) => { Done(TyCon(args, tyConName(quals, name)), ts) })
+  } else { Done(TyCon([], tyConName(quals, name)), ts) }
+};
+
+// ---------------------------------------------------------------------------------------
+/* Patterns. As in WmPrint, `inMatch` marks a match arm and `binds` whether a bare name binds
+   at this position. */
+
+let number = (c) => {
+  match(c) {
+    SInt(s) => { SReal(s ++ ".0") },
+    _ => { c }
+  }
+};
+
+let negativeLiteral = (minusPos, ts) => {
+  match(peek(ts)) {
+    (WScon(SInt(s)), Var(p)) => {
+      if ((p: Number) == minusPos + 1) { Some(SReal("~" ++ s ++ ".0")) } else { None }
+    },
+    (WScon(SReal(s)), Var(p)) => {
+      if ((p: Number) == minusPos + 1) { Some(SReal("~" ++ s)) } else { None }
+    },
+    _ => { None }
+  }
+};
+
+// Builds `h1 :: ... :: tail`.
+let consPat = (p, items, tail) => {
+  SmlList.foldr((h, t) => { PApp(p, ([], "::"), PTuple([h, t])) })(tail)(items)
+};
+
+// `[a, b, ..tail]` after the `[`: the items and the optional spread tail.
+let listItems = (item, ts) => {
+  let rec go = (acc, ts) => {
+    match(peek(ts)) {
+      (WKey("]"), _) => { Done((SmlList.rev(acc), None), advance(ts)) },
+      (WKey(".."), _) => {
+        bind(item(advance(ts)))((t) => (ts) => {
+          bind(expect("]", if (isKey(",", ts)) { advance(ts) } else { ts }))((_) => (ts) => { Done((SmlList.rev(acc), Some(t)), ts) })
+        })
+      },
+      _ => {
+        bind(item(ts))((x) => (ts) => {
+          if (isKey(",", ts)) { go([x, ..acc], advance(ts)) } else {
+            bind(expect("]", ts))((_) => (ts) => { Done((SmlList.rev([x, ..acc]), None), ts) })
+          }
+        })
+      }
+    }
+  };
+  go([], ts)
+};
+
+let rec parsePat = (inMatch, binds, ts) => {
+  let child = (b) => (ts) => {
+    parseAnnotated(inMatch, if (b) { true } else { !inMatch }, ts)
+  };
+  match(peek(ts)) {
+    (WKey("_"), _) => { Done(PWild, advance(ts)) },
+    (WKey("void"), _) => { Done(PTuple([]), advance(ts)) },
+    (WKey("true"), Var(p)) => { Done(PId(p, ([], "true")), advance(ts)) },
+    (WKey("false"), Var(p)) => { Done(PId(p, ([], "false")), advance(ts)) },
+    (WScon(SInt(_)), Var(p)) => { Fail("real constants may not occur in patterns", p) },
+    (WScon(SReal(_)), Var(p)) => { Fail("real constants may not occur in patterns", p) },
+    (WScon(c), Var(p)) => { Done(PScon(p, c), advance(ts)) },
+    (WKey("-"), Var(p)) => {
+      match(negativeLiteral(p, advance(ts))) {
+        Some(SInt(s)) => { Done(PScon(p, SInt(s)), advance(advance(ts))) },
+        _ => { expected("a pattern", ts) }
+      }
+    },
+    (WKey(".{"), Var(p)) => {
+      let field = (ts) => {
+        match(peek(ts)) {
+          (WName([l]), Var(lp)) => {
+            if (isKey("=", advance(ts))) {
+              bind(child(false)(advance(advance(ts))))((q) => (ts) => { Done((l, q), ts) })
+            } else { Done((l, PId(lp, ([], l))), advance(ts)) }
+          },
+          _ => { expected("a record field", ts) }
+        }
+      };
+      bind(separated(field, ",", "}", advance(ts)))((fields) => (ts) => {
+        bind(expect("}", ts))((_) => (ts) => { Done(PRecord(p, fields), ts) })
+      })
+    },
+    (WKey("["), Var(p)) => {
+      bind(listItems(child(true), advance(ts)))((items, tail) => (ts) => {
+        match(tail) {
+          None => { Done(PList(items), ts) },
+          Some(t) => { Done(consPat(p, items, t), ts) }
+        }
+      })
+    },
+    (WKey("("), _) => {
+      bind(delimited("(", child(false), ",", ")", ts))((ps) => (ts) => {
+        match(ps) {
+          [single] => { Done(single, ts) },
+          _ => { Done(PTuple(ps), ts) }
+        }
+      })
+    },
+    (WName(["Var"]), _) => {
+      match(peek(advance(ts)), peek(advance(advance(ts))), peek(advance(advance(advance(ts))))) {
+        ((WKey("("), _), (WName([x]), Var(p)), (WKey(")"), _)) => {
+          Done(PId(p, ([], x)), advance(advance(advance(advance(ts)))))
+        },
+        _ => { expected("`Var(name)`", ts) }
+      }
+    },
+    (WName(path), Var(p)) => {
+      let name = List.last(path);
+      let quals = List.take(path, List.length(path) - 1);
+      match(isUpperName(name), binds, SmlList.null(quals)) {
+        (true, _, _) => {
+          if (isKey("(", advance(ts))) {
+            bind(delimited("(", child(true), ",", ")", advance(ts)))((args) => (ts) => {
+              match(args) {
+                [single] => { Done(PApp(p, valueName(quals, name), single), ts) },
+                _ => { Done(PApp(p, valueName(quals, name), PTuple(args)), ts) }
+              }
+            })
+          } else { Done(PId(p, valueName(quals, name)), advance(ts)) }
+        },
+        (false, true, true) => { Done(PId(p, ([], name)), advance(ts)) },
+        (false, _, _) => {
+          Fail(
+            "`" ++ String.concatWith(".")(path) ++ "` here is a pinned value in Workman, " ++ "which SubsetML patterns cannot express; write Var(" ++ name ++ ") to bind",
+            p
+          )
+        }
+      }
+    },
+    _ => { expected("a pattern", ts) }
+  }
+}
+
+// A pattern that may carry a type annotation, as inside parentheses.
+and parseAnnotated = (inMatch, binds, ts) => {
+  bind(parsePat(inMatch, binds, ts))((p) => (ts) => {
+    if (isKey(":", ts)) {
+      bind(parseType(advance(ts)))((t) => (ts) => { Done(PTyped(p, t), ts) })
+    } else { Done(p, ts) }
+  })
+};
+
+// ---------------------------------------------------------------------------------------
+// Expressions
+
+// Whether the `(` at the head of ts begins a lambda, i.e. its matching `)` is followed by `=>`.
+let lambdaAhead = (ts) => {
+  let rec scan = (depth, ts) => {
+    match(peek(ts)) {
+      (WEOF, _) => { false },
+      (WKey(k), _) => {
+        if (if (if (if (k == "(") { true } else { k == "[" }) { true } else { k == "{" }) { true } else { k == ".{" }) { scan(depth + 1, advance(ts)) } else {
+          if (if (if (k == ")") { true } else { k == "]" }) { true } else { k == "}" }) {
+            if ((depth: Number) == 1) { isKey("=>", advance(ts)) } else { scan(depth - 1, advance(ts)) }
+          } else { scan(depth, advance(ts)) }
+        }
+      },
+      _ => { scan(depth, advance(ts)) }
+    }
+  };
+  if (isKey("(", ts)) { scan(0, ts) } else { false }
+};
+
+let binLevel = match {
+  "||" => { Some(1) },
+  "&&" => { Some(2) },
+  "==" => { Some(3) },
+  "!=" => { Some(3) },
+  "<" => { Some(4) },
+  ">" => { Some(4) },
+  "<=" => { Some(4) },
+  ">=" => { Some(4) },
+  "++" => { Some(5) },
+  "+" => { Some(5) },
+  "-" => { Some(5) },
+  "*" => { Some(6) },
+  "/" => { Some(6) },
+  "%" => { Some(6) },
+  _ => { None }
+};
+
+let smlOperator = match {
+  "==" => { "=" },
+  "!=" => { "<>" },
+  "++" => { "^" },
+  Var(s) => { s }
+};
+
+// The SML operators WmPrint keeps where Workman has none.
+let fallbackOperator = (ts) => {
+  match(peek(ts)) {
+    (WKey("@"), _) => { Some("@") },
+    (WName([s]), _) => {
+      if (if (if (if (s == "div") { true } else { s == "mod" }) { true } else { s == "o" }) { true } else { s == "before" }) { Some(s) } else { None }
+    },
+    _ => { None }
+  }
+};
+
+let infixApp = (opr, p, l, r) => { EApp(EId(p, ([], opr)), ETuple([l, r])) };
+
+let consExp = (p, items, tail) => {
+  SmlList.foldr((h, t) => { infixApp("::", p, h, t) })(tail)(items)
+};
+
+let startsDecl = (ts) => {
+  if (if (if (isKey("let", ts)) { true } else { isKey("type", ts) }) { true } else { isKey("record", ts) }) { true } else {
+    match(peek(ts)) {
+      (WSml(_), _) => { true },
+      _ => { false }
+    }
+  }
+};
+
+type Item = IDec<Dec> | IExp<Exp>;
+
+// A block's items as an expression: declarations become `let`, a trailing `;` gives ().
+let rec blockExp = (items, terminated) => {
+  let rec decs = match {
+    ([IDec(d), ..rest], Var(acc)) => { decs(rest, [d, ..acc]) },
+    (Var(rest), Var(acc)) => { (SmlList.rev(acc), rest) }
+  };
+  let rec exps = match {
+    ([IExp(e), ..rest], Var(acc)) => { exps(rest, [e, ..acc]) },
+    (Var(rest), Var(acc)) => { (SmlList.rev(acc), rest) }
+  };
+  let (ds, rest) = decs(items, []);
+  let (es, after) = exps(rest, []);
+  let body = match(after, terminated) {
+    ([], true) => { List.append(es, [ETuple([])]) },
+    ([], false) => { es },
+    (_, _) => { List.append(es, [blockExp(after, terminated)]) }
+  };
+  match(ds, body) {
+    ([], [single]) => { single },
+    _ => { ELet(ds, body) }
+  }
+};
+
+let rec parseExp = (ts) => {
+  match(peek(ts)) {
+    (WKey("if"), _) => {
+      bind(expect("(", advance(ts)))((_) => (ts) => {
+        bind(parseExp(ts))((c) => (ts) => {
+          bind(expect(")", ts))((_) => (ts) => {
+            bind(parseBlock(ts))((a) => (ts) => {
+              bind(expect("else", ts))((_) => (ts) => {
+                bind(parseBlock(ts))((b) => (ts) => { Done(EIf(c, a, b), ts) })
+              })
+            })
+          })
+        })
+      })
+    },
+    (WKey("match"), _) => {
+      if (isKey("{", advance(ts))) {
+        bind(parseArms(advance(ts)))((rules) => (ts) => { Done(EFn(rules), ts) })
+      } else {
+        if (lambdaAhead(advance(ts))) { parseMatchFunction(advance(ts)) } else {
+          bind(delimited("(", parseExp, ",", ")", advance(ts)))((values) => (ts) => {
+            bind(parseArms(ts))((rules) => (ts) => {
+              match(values) {
+                [single] => { Done(ECase(single, rules), ts) },
+                _ => { Done(ECase(ETuple(values), rules), ts) }
+              }
+            })
+          })
+        }
+      }
+    },
+    (WKey("("), _) => {
+      if (lambdaAhead(ts)) { parseLambda(ts) } else { parseFallback(ts) }
+    },
+    _ => { parseFallback(ts) }
+  }
+}
+
+// `match(x, y) => { arms }`: a function of its named parameters.
+and parseMatchFunction = (ts) => {
+  let name = (ts) => {
+    match(peek(ts)) {
+      (WName([x]), Var(p)) => { Done((p, x), advance(ts)) },
+      _ => { expected("a parameter name", ts) }
+    }
+  };
+  bind(delimited("(", name, ",", ")", ts))((names) => (ts) => {
+    bind(expect("=>", ts))((_) => (ts) => {
+      bind(parseArms(ts))((rules) => (ts) => {
+        let param = match(names) {
+          [(Var(p), Var(x))] => { PId(p, ([], x)) },
+          _ => { PTuple(SmlList.map((p, x) => { PId(p, ([], x)) })(names)) }
+        };
+        let value = match(names) {
+          [(Var(p), Var(x))] => { EId(p, ([], x)) },
+          _ => { ETuple(SmlList.map((p, x) => { EId(p, ([], x)) })(names)) }
+        };
+        Done(EFn([(param, ECase(value, rules))]), ts)
+      })
+    })
+  })
+}
+
+// `(params) => body`, where the body is a block or another lambda.
+and parseLambda = (ts) => {
+  let param = (ts) => {
+    bind(parsePat(false, true, ts))((p) => (ts) => {
+      if (isKey(":", ts)) {
+        bind(parseType(advance(ts)))((t) => (ts) => { Done(PTyped(p, t), ts) })
+      } else { Done(p, ts) }
+    })
+  };
+  bind(delimited("(", param, ",", ")", ts))((ps) => (ts) => {
+    bind(expect("=>", ts))((_) => (ts) => {
+      bind(if (lambdaAhead(ts)) { parseLambda(ts) } else { parseBlock(ts) })((body) => (ts) => {
+        let p = match(ps) {
+          [single] => { single },
+          _ => { PTuple(ps) }
+        };
+        Done(EFn([(p, body)]), ts)
+      })
+    })
+  })
+}
+
+and parseArms = (ts) => {
+  let arm = (ts) => {
+    bind(parseAnnotated(true, false, ts))((p) => (ts) => {
+      bind(expect("=>", ts))((_) => (ts) => { bind(parseBlock(ts))((e) => (ts) => { Done((p, e), ts) }) })
+    })
+  };
+  delimited("{", arm, ",", "}", ts)
+}
+
+and parseBlock = (ts) => {
+  let rec items = (acc, ts) => {
+    match(peek(ts)) {
+      (WKey("}"), _) => { Done((SmlList.rev(acc), true), advance(ts)) },
+      _ => {
+        if (startsDecl(ts)) {
+          bind(parseDecl(ts))((ds) => (ts) => { items(List.append(SmlList.map(IDec)(ds), acc), ts) })
+        } else {
+          bind(parseExp(ts))((e) => (ts) => {
+            if (isKey(";", ts)) { items([IExp(e), ..acc], advance(ts)) } else {
+              bind(expect("}", ts))((_) => (ts) => { Done((SmlList.rev([IExp(e), ..acc]), false), ts) })
+            }
+          })
+        }
+      }
+    }
+  };
+  bind(expect("{", ts))((_) => (ts) => {
+    bind(items([], ts))((parts, terminated) => (ts) => {
+      Done(blockExp(parts, if (terminated) { true } else { SmlList.null(parts) }), ts)
+    })
+  })
+}
+// An empty block or one ending in `;` yields void.
+
+// The SML operators kept by WmPrint bind loosest.
+and parseFallback = (ts) => {
+  let rec more = (l, ts) => {
+    match(fallbackOperator(ts)) {
+      Some(opr) => {
+        bind(parseBinary(1, advance(ts)))((r) => (ts') => { more(infixApp(opr, posOf(ts), l, r), ts') })
+      },
+      None => { Done(l, ts) }
+    }
+  };
+  bind(parseBinary(1, ts))((l) => (ts) => { more(l, ts) })
+}
+
+and parseBinary = (minLevel, ts) => {
+  let rec more = (l, ts) => {
+    match(peek(ts)) {
+      (WKey(opr), Var(p)) => {
+        match(binLevel(opr)) {
+          Some(level) => {
+            if (level < minLevel) { Done(l, ts) } else {
+              if (opr == "%") {
+                Fail("`%` has no SubsetML counterpart (SML `mod` differs)", p)
+              } else {
+                bind(parseBinary(level + 1, advance(ts)))((r) => (ts) => {
+                  more(
+                    match(opr) {
+                      "&&" => {
+                        ECase(
+                          ETuple([l, r]),
+                          [
+                            (PTuple([PId(p, ([], "true")), PId(p, ([], "true"))]), EId(p, ([], "true"))),
+                            (PWild, EId(p, ([], "false")))
+                          ]
+                        )
+                      },
+                      "||" => {
+                        ECase(
+                          ETuple([l, r]),
+                          [
+                            (PTuple([PId(p, ([], "false")), PId(p, ([], "false"))]), EId(p, ([], "false"))),
+                            (PWild, EId(p, ([], "true")))
+                          ]
+                        )
+                      },
+                      _ => {
+                        match(opr, l) {
+                          ("==", ETyped(x, TyCon([], ([], "real")))) => { EApp(EId(p, (["Real"], "==")), ETuple([x, r])) },
+                          ("!=", ETyped(x, TyCon([], ([], "real")))) => { EApp(EId(p, (["Real"], "!=")), ETuple([x, r])) },
+                          _ => { infixApp(smlOperator(opr), p, l, r) }
+                        }
+                      }
+                    },
+                    ts
+                  )
+                })
+              }
+            }
+          },
+          None => { Done(l, ts) }
+        }
+      },
+      _ => { Done(l, ts) }
+    }
+  };
+  bind(parseUnary(ts))((l) => (ts) => { more(l, ts) })
+}
+
+and parseUnary = (ts) => {
+  match(peek(ts)) {
+    (WKey("!"), Var(p)) => {
+      bind(parseUnary(advance(ts)))((e) => (ts) => { Done(EApp(EId(p, ([], "not")), e), ts) })
+    },
+    (WKey("-"), Var(p)) => {
+      match(negativeLiteral(p, advance(ts))) {
+        Some(c) => { Done(EScon(p, c), advance(advance(ts))) },
+        None => {
+          bind(parseUnary(advance(ts)))((e) => (ts) => { Done(EApp(EId(p, ([], "~")), e), ts) })
+        }
+      }
+    },
+    _ => { parsePostfix(ts) }
+  }
+}
+
+// A primary expression followed by calls.
+and parsePostfix = (ts) => {
+  let rec calls = (f, ts) => {
+    if (if (isKey("(", ts)) { !lambdaAhead(ts) } else { false }) {
+      bind(delimited("(", parseExp, ",", ")", ts))((args) => (ts) => {
+        match(f, args) {
+          // WmPrint's spelling of SML `@`; the SML Basis has no List.append.
+          (EId(p, (["List"], "append")), [l, r]) => { calls(infixApp("@", p, l, r), ts) },
+          (_, [single]) => { calls(EApp(f, single), ts) },
+          _ => { calls(EApp(f, ETuple(args)), ts) }
+        }
+      })
+    } else { Done(f, ts) }
+  };
+  bind(parsePrimary(ts))((e) => (ts) => { calls(e, ts) })
+}
+
+and parsePrimary = (ts) => {
+  match(peek(ts)) {
+    (WScon(c), Var(p)) => { Done(EScon(p, number(c)), advance(ts)) },
+    (WKey("true"), Var(p)) => { Done(EId(p, ([], "true")), advance(ts)) },
+    (WKey("false"), Var(p)) => { Done(EId(p, ([], "false")), advance(ts)) },
+    (WKey("void"), _) => { Done(ETuple([]), advance(ts)) },
+    (WKey("~"), Var(p)) => { Done(EId(p, ([], "~")), advance(ts)) },
+    (WName(path), Var(p)) => { Done(pathExp(p, path), advance(ts)) },
+    (WSelect(l), Var(p)) => {
+      if (SubsetChar.isDigit(String.sub(l, 0))) {
+        Fail("tuple selectors are not part of SubsetML; use a pattern such as (_, x)", p)
+      } else { Done(ESelect(p, l), advance(ts)) }
+    },
+    (WKey("["), Var(p)) => {
+      bind(listItems(parseExp, advance(ts)))((items, tail) => (ts) => {
+        match(tail) {
+          None => { Done(EList(items), ts) },
+          Some(t) => { Done(consExp(p, items, t), ts) }
+        }
+      })
+    },
+    (WKey(".{"), Var(p)) => {
+      let field = (ts) => {
+        match(peek(ts)) {
+          (WName([l]), Var(lp)) => {
+            if (isKey("=", advance(ts))) {
+              bind(parseExp(advance(advance(ts))))((e) => (ts) => { Done((l, e), ts) })
+            } else { Done((l, EId(lp, ([], l))), advance(ts)) }
+          },
+          _ => { expected("a record field", ts) }
+        }
+      };
+      bind(separated(field, ",", "}", advance(ts)))((fields) => (ts) => {
+        bind(expect("}", ts))((_) => (ts) => { Done(ERecord(p, fields), ts) })
+      })
+    },
+    (WKey("{"), _) => { parseBlock(ts) },
+    (WKey("("), _) => {
+      bind(parseExp(advance(ts)))((first) => (ts) => {
+        match(peek(ts)) {
+          (WKey(":"), _) => {
+            bind(parseType(advance(ts)))((t) => (ts) => {
+              bind(expect(")", ts))((_) => (ts) => { Done(ETyped(first, t), ts) })
+            })
+          },
+          (WKey(","), _) => {
+            bind(separated(parseExp, ",", ")", advance(ts)))((rest) => (ts) => {
+              bind(expect(")", ts))((_) => (ts) => { Done(ETuple([first, ..rest]), ts) })
+            })
+          },
+          (WKey(";"), _) => {
+            bind(separated(parseExp, ";", ")", advance(ts)))((rest) => (ts) => {
+              bind(expect(")", ts))((_) => (ts) => { Done(ESeq([first, ..rest]), ts) })
+            })
+          },
+          _ => { bind(expect(")", ts))((_) => (ts) => { Done(first, ts) }) }
+        }
+      })
+    },
+    (WKey("if"), _) => { parseExp(ts) },
+    (WKey("match"), _) => { parseExp(ts) },
+    _ => { expected("an expression", ts) }
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+/* Declarations. A namespace import (`import * as X`) yields no declaration: SML refers to
+   structures by name without importing them. */
+
+and parseDecl = (ts) => {
+  let p = posOf(ts);
+  match(peek(ts)) {
+    (WSml(text), _) => {
+      match(Parser.parse(text)) {
+        Parser.Program(prog, _) => {
+          Done(
+            SmlList.concat(SmlList.map(match {
+              TopDecs(sds) => {
+                SmlList.concat(SmlList.map(match {
+                  SDec(d) => { [d] },
+                  SStructure(_) => { [] }
+                })(sds))
+              },
+              TopExp(_) => { [] }
+            })(prog)),
+            advance(ts)
+          )
+        },
+        Parser.ParseError(msg, q) => { Fail("in an SML declaration: " ++ msg, p + q) }
+      }
+    },
+    (WKey("let"), _) => {
+      let isRec = isKey("rec", advance(ts));
+      let binding = (ts) => {
+        bind(parsePat(false, true, ts))((pat) => (ts) => {
+          let rhs = (pat, ts) => {
+            bind(expect("=", ts))((_) => (ts) => { bind(parseExp(ts))((e) => (ts) => { Done((pat, e), ts) }) })
+          };
+          if (isKey(":", ts)) {
+            bind(parseType(advance(ts)))((t) => (ts) => { rhs(PTyped(pat, t), ts) })
+          } else { rhs(pat, ts) }
+        })
+      };
+      let rec bindings = (ts) => {
+        bind(binding(ts))((b) => (ts) => {
+          if (isKey("and", ts)) {
+            bind(bindings(advance(ts)))((bs) => (ts) => { Done([b, ..bs], ts) })
+          } else { Done([b], ts) }
+        })
+      };
+      bind(bindings(if (isRec) { advance(advance(ts)) } else { advance(ts) }))((bs) => (ts) => {
+        bind(expect(";", ts))((_) => (ts) => {
+          if (isRec) {
+            if (SmlList.all((_, e) => {
+              match(e) {
+                EFn(_) => { true },
+                _ => { false }
+              }
+            })(bs)) { Done([DVal(p, [], [], bs)], ts) } else {
+              Fail("the right side of a `let rec` binding must be a function", p)
+            }
+          } else { Done([DVal(p, [], bs, [])], ts) }
+        })
+      })
+    },
+    (WKey("type"), _) => { parseTypeDecl(p, advance(ts)) },
+    (WKey("record"), _) => {
+      match(peek(advance(ts))) {
+        (WName([name]), _) => {
+          bind(typeParams(advance(advance(ts))))((vs) => (ts) => {
+            bind(expect("=", ts))((_) => (ts) => {
+              let field = (ts) => {
+                match(peek(ts)) {
+                  (WName([l]), _) => {
+                    bind(expect(":", advance(ts)))((_) => (ts) => { bind(parseType(ts))((t) => (ts) => { Done((l, t), ts) }) })
+                  },
+                  _ => { expected("a record field", ts) }
+                }
+              };
+              bind(delimited("{", field, ",", "}", ts))((fields) => (ts) => {
+                bind(expect(";", ts))((_) => (ts) => {
+                  Done([DType(p, [(vs, decapitalize(name), TyRecord(fields))])], ts)
+                })
+              })
+            })
+          })
+        },
+        _ => { expected("a record name", advance(ts)) }
+      }
+    },
+    (WKey("from"), _) => {
+      match(peek(advance(ts)), peek(advance(advance(ts))), peek(advance(advance(advance(ts))))) {
+        ((WScon(SString(file)), _), (WKey("import"), _), (WKey("*"), _)) => {
+          let rest = advance(advance(advance(advance(ts))));
+          if (isKey("as", rest)) {
+            bind(expect(";", advance(advance(rest))))((_) => (ts) => { Done([], ts) })
+          } else {
+            bind(expect(";", rest))((_) => (ts) => { Done([DOpen(p, [[structureName(file)]])], ts) })
+          }
+        },
+        _ => {
+          Fail("only `from \"./file.wm\" import *` imports have a SubsetML counterpart", p)
+        }
+      }
+    },
+    _ => { expected("a declaration", ts) }
+  }
+}
+
+// `<a, b>` after a type name.
+and typeParams = (ts) => {
+  if (isKey("<", ts)) {
+    delimited(
+      "<",
+      (ts) => {
+        match(peek(ts)) {
+          (WName([v]), _) => { Done("'" ++ v, advance(ts)) },
+          _ => { expected("a type parameter", ts) }
+        }
+      },
+      ",",
+      ">",
+      ts
+    )
+  } else { Done([], ts) }
+}
+
+// `type` bindings: aliases, or datatypes when the body has `|`.
+and parseTypeDecl = (p, ts) => {
+  // `C` or `C<T1, ..., Tn>`; several arguments are one tuple payload.
+  let constructor = (ts) => {
+    match(peek(ts)) {
+      (WName([c]), Var(cp)) => {
+        if (!isUpperName(c)) { expected("a constructor", ts) } else {
+          if (isKey("<", advance(ts))) {
+            bind(delimited("<", parseType, ",", ">", advance(ts)))((args) => (ts) => {
+              match(args) {
+                [single] => { Done((cp, c, Some(single)), ts) },
+                _ => { Done((cp, c, Some(TyTuple(args))), ts) }
+              }
+            })
+          } else { Done((cp, c, None), advance(ts)) }
+        }
+      },
+      _ => { expected("a constructor", ts) }
+    }
+  };
+  let rec members = (acc, ts) => {
+    if (isKey("|", ts)) {
+      bind(constructor(advance(ts)))((c) => (ts) => { members([c, ..acc], ts) })
+    } else { Done(SmlList.rev(acc), ts) }
+  };
+  let binding = (ts) => {
+    match(peek(ts)) {
+      (WName([name]), _) => {
+        bind(typeParams(advance(ts)))((vs) => (ts) => {
+          bind(expect("=", ts))((_) => (body) => {
+            if (isKey("|", body)) {
+              bind(members([], body))((cons) => (ts) => { Done((vs, decapitalize(name), None, cons), ts) })
+            } else {
+              // Without a leading `|`, a body with no `|` is an alias.
+              bind(parseType(body))((t) => (ts) => {
+                if (isKey("|", ts)) {
+                  bind(constructor(body))((first) => (ts) => {
+                    bind(members([first], ts))((cons) => (ts) => { Done((vs, decapitalize(name), None, cons), ts) })
+                  })
+                } else { Done((vs, decapitalize(name), Some(t), []), ts) }
+              })
+            }
+          })
+        })
+      },
+      _ => { expected("a type name", ts) }
+    }
+  };
+  let rec bindings = (ts) => {
+    bind(binding(ts))((b) => (ts) => {
+      if (isKey("and", ts)) {
+        bind(bindings(advance(ts)))((bs) => (ts) => { Done([b, ..bs], ts) })
+      } else { Done([b], ts) }
+    })
+  };
+  bind(bindings(ts))((bs) => (ts) => {
+    bind(expect(";", ts))((_) => (ts) => {
+      match(SmlList.all((_, _, alias, _) => { SmlOption.isSome(alias) })(bs), SmlList.all((_, _, alias, _) => { !SmlOption.isSome(alias) })(bs)) {
+        (true, _) => {
+          Done(
+            [DType(p, SmlList.map((vs, n, alias, _) => { (vs, n, valOf(alias)) })(bs))],
+            ts
+          )
+        },
+        (_, true) => {
+          Done([DDatatype(p, SmlList.map((vs, n, _, cons) => { (vs, n, cons) })(bs))], ts)
+        },
+        _ => {
+          Fail("SubsetML cannot mix type aliases and datatypes in one group", p)
+        }
+      }
+    })
+  })
+};
+
+// ---------------------------------------------------------------------------------------
+// Modules
+
+type Result = Module<List<Dec>, List<Exp>, List<Comment>> | ParseError<String, Pos>;
+
+let parseModule = (src) => {
+  match(WmLexer.lex(src)) {
+    LexError(e) => { ParseError(e) },
+    Tokens(ts, comments) => {
+      let rec items = (decs, exps, ts) => {
+        match(peek(ts)) {
+          (WEOF, _) => { Done((SmlList.rev(decs), SmlList.rev(exps)), ts) },
+          _ => {
+            if (if (startsDecl(ts)) { true } else { isKey("from", ts) }) {
+              bind(parseDecl(ts))((ds) => (ts) => { items(SmlList.revAppend(ds, decs), exps, ts) })
+            } else {
+              bind(parseExp(ts))((e) => (ts) => {
+                bind(expect(";", ts))((_) => (ts) => {
+                  items([DVal(0, [], [(PId(0, ([], "it")), e)], []), ..decs], exps, ts)
+                })
+              })
+            }
+          }
+        }
+      };
+      match(items([], [], ts)) {
+        Done((Var(decs), Var(exps)), _) => { Module(decs, exps, comments) },
+        Fail(e) => { ParseError(e) }
+      }
+    }
+  }
+};

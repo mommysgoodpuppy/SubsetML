@@ -1,0 +1,635 @@
+/* Whole-file translation. By spec M1 a file has at most one structure, so each SubsetML file
+   becomes one Workman module: `structure FooBar` in foo_bar.sml becomes foo_bar.wm, and the
+   file's other top-level declarations join the module. */
+
+from "./syntax.wm" import * as Syntax;
+from "./sml_list.wm" import * as SmlList;
+from "./subset_char.wm" import * as SubsetChar;
+from "./doc.wm" import * as Doc;
+from "./wm_print.wm" import * as WmPrint;
+from "./unify.wm" import * as Unify;
+from "./types.wm" import * as Types;
+from "./elab.wm" import * as Elab;
+from "./basis.wm" import * as Basis;
+from "./wm_parse.wm" import * as WmParse;
+from "./wm_lexer.wm" import * as WmLexer;
+from "./sml_print.wm" import * as SmlPrint;
+
+from "./syntax.wm" import *;
+
+// ---------------------------------------------------------------------------------------
+// The structures a phrase refers to: the first qualifier of each long identifier.
+
+let head = match {
+  [] => { [] },
+  [q, .._] => { [q] }
+};
+
+let concatMap = (f, xs) => { SmlList.concat(SmlList.map(f)(xs)) };
+
+let rec tyQuals = match {
+  TyVar(_) => { [] },
+  TyCon(args, (Var(qs), _)) => { List.append(head(qs), concatMap(tyQuals, args)) },
+  TyTuple(ts) => { concatMap(tyQuals, ts) },
+  TyArrow(a, b) => { List.append(tyQuals(a), tyQuals(b)) },
+  TyRecord(fields) => { concatMap((_, t) => { tyQuals(t) }, fields) }
+};
+
+let rec patQuals = match {
+  PWild => { [] },
+  PScon(_) => { [] },
+  PId(_, (Var(qs), _)) => { head(qs) },
+  PRecord(_, fields) => { concatMap((_, p) => { patQuals(p) }, fields) },
+  PTuple(ps) => { concatMap(patQuals, ps) },
+  PList(ps) => { concatMap(patQuals, ps) },
+  PApp(_, (Var(qs), _), p) => { List.append(head(qs), patQuals(p)) },
+  PTyped(p, t) => { List.append(patQuals(p), tyQuals(t)) }
+};
+
+let rec expQuals = match {
+  EScon(_) => { [] },
+  EId(_, (Var(qs), _)) => { head(qs) },
+  ERecord(_, fields) => { concatMap((_, e) => { expQuals(e) }, fields) },
+  ESelect(_) => { [] },
+  ETuple(es) => { concatMap(expQuals, es) },
+  EList(es) => { concatMap(expQuals, es) },
+  ESeq(es) => { concatMap(expQuals, es) },
+  ELet(ds, es) => {
+    List.append(concatMap(decQuals, ds), concatMap(expQuals, es))
+  },
+  EApp(f, a) => { List.append(expQuals(f), expQuals(a)) },
+  ETyped(e, t) => { List.append(expQuals(e), tyQuals(t)) },
+  EAndalso(a, b) => { List.append(expQuals(a), expQuals(b)) },
+  EOrelse(a, b) => { List.append(expQuals(a), expQuals(b)) },
+  EIf(c, a, b) => {
+    List.append(expQuals(c), List.append(expQuals(a), expQuals(b)))
+  },
+  ECase(e, rules) => { List.append(expQuals(e), ruleQuals(rules)) },
+  EFn(rules) => { ruleQuals(rules) }
+}
+
+and ruleQuals = (rules) => {
+  concatMap((p, e) => { List.append(patQuals(p), expQuals(e)) }, rules)
+}
+
+and decQuals = match {
+  DVal(_, _, plain, recs) => { ruleQuals(List.append(plain, recs)) },
+  DType(_, binds) => { concatMap((_, _, t) => { tyQuals(t) }, binds) },
+  DDatatype(_, binds) => {
+    concatMap(
+      (_, _, cons) => {
+        concatMap(
+          match {
+            (_, _, None) => { [] },
+            (_, _, Some(t)) => { tyQuals(t) }
+          },
+          cons
+        )
+      },
+      binds
+    )
+  },
+  DOpen(_, ids) => { concatMap(head, ids) }
+};
+
+let decPos = match {
+  DVal(p, _, _, _) => { p },
+  DType(p, _) => { p },
+  DDatatype(p, _) => { p },
+  DOpen(p, _) => { p }
+};
+
+// ---------------------------------------------------------------------------------------
+/* Dropping a qualifier. Outside its structure, `Main.main` refers to a binding of the same
+   Workman module, where it is plain `main`. */
+
+let unqualify = (self, id) => {
+  match(id) {
+    ([q, ..rest], Var(x)) => { if (q == self) { (rest, x) } else { id } },
+    _ => { id }
+  }
+};
+
+let rec tyStrip = (self, t) => {
+  match(t) {
+    TyVar(_) => { t },
+    TyCon(args, id) => {
+      TyCon(SmlList.map((a) => { tyStrip(self, a) })(args), unqualify(self, id))
+    },
+    TyTuple(ts) => { TyTuple(SmlList.map((a) => { tyStrip(self, a) })(ts)) },
+    TyArrow(a, b) => { TyArrow(tyStrip(self, a), tyStrip(self, b)) },
+    TyRecord(fields) => {
+      TyRecord(SmlList.map((l, a) => { (l, tyStrip(self, a)) })(fields))
+    }
+  }
+};
+
+let rec patStrip = (self, p) => {
+  let go = (q) => { patStrip(self, q) };
+  match(p) {
+    PId(pos, id) => { PId(pos, unqualify(self, id)) },
+    PRecord(pos, fields) => { PRecord(pos, SmlList.map((l, q) => { (l, go(q)) })(fields)) },
+    PTuple(ps) => { PTuple(SmlList.map(go)(ps)) },
+    PList(ps) => { PList(SmlList.map(go)(ps)) },
+    PApp(pos, id, q) => { PApp(pos, unqualify(self, id), go(q)) },
+    PTyped(q, t) => { PTyped(go(q), tyStrip(self, t)) },
+    _ => { p }
+  }
+};
+
+let rec expStrip = (self, e) => {
+  let go = (x) => { expStrip(self, x) };
+  let rules = (rs) => { SmlList.map((p, x) => { (patStrip(self, p), go(x)) })(rs) };
+  match(e) {
+    EId(pos, id) => { EId(pos, unqualify(self, id)) },
+    ERecord(pos, fields) => { ERecord(pos, SmlList.map((l, x) => { (l, go(x)) })(fields)) },
+    ETuple(es) => { ETuple(SmlList.map(go)(es)) },
+    EList(es) => { EList(SmlList.map(go)(es)) },
+    ESeq(es) => { ESeq(SmlList.map(go)(es)) },
+    ELet(ds, es) => {
+      ELet(SmlList.map((d) => { decStrip(self, d) })(ds), SmlList.map(go)(es))
+    },
+    EApp(f, a) => { EApp(go(f), go(a)) },
+    ETyped(x, t) => { ETyped(go(x), tyStrip(self, t)) },
+    EAndalso(a, b) => { EAndalso(go(a), go(b)) },
+    EOrelse(a, b) => { EOrelse(go(a), go(b)) },
+    EIf(c, a, b) => { EIf(go(c), go(a), go(b)) },
+    ECase(x, rs) => { ECase(go(x), rules(rs)) },
+    EFn(rs) => { EFn(rules(rs)) },
+    _ => { e }
+  }
+}
+
+and decStrip = (self, d) => {
+  let rules = (rs) => {
+    SmlList.map((p, x) => { (patStrip(self, p), expStrip(self, x)) })(rs)
+  };
+  match(d) {
+    DVal(pos, vs, plain, recs) => { DVal(pos, vs, rules(plain), rules(recs)) },
+    DType(pos, binds) => {
+      DType(pos, SmlList.map((vs, n, t) => { (vs, n, tyStrip(self, t)) })(binds))
+    },
+    DDatatype(pos, binds) => {
+      DDatatype(
+        pos,
+        SmlList.map((vs, n, cons) => {
+          (
+            vs,
+            n,
+            SmlList.map(match {
+              (Var(cp), Var(c), None) => { (cp, c, None) },
+              (Var(cp), Var(c), Some(t)) => { (cp, c, Some(tyStrip(self, t))) }
+            })(cons)
+          )
+        })(binds)
+      )
+    },
+    DOpen(_) => { d }
+  }
+};
+
+// ---------------------------------------------------------------------------------------
+/* Coding conventions (docs/conventions.md). Breaking one gives a warning, because the
+   Workman output would be invalid or mean something else. */
+
+// Workman keywords that SML treats as ordinary identifiers.
+let wmKeywords = ["match", "record", "from", "import", "void"];
+
+let isUpper = (s) => {
+  if (s != "") { SubsetChar.isUpper(String.sub(s, 0)) } else { false }
+};
+
+// Every identifier written in a phrase, with the nearest known position.
+let rec patNames = (pos, p) => {
+  match(p) {
+    PId(q, (_, Var(x))) => { [(q, x)] },
+    PRecord(q, fields) => { concatMap((l, f) => { [(q, l), ..patNames(q, f)] }, fields) },
+    PTuple(ps) => { concatMap((f) => { patNames(pos, f) }, ps) },
+    PList(ps) => { concatMap((f) => { patNames(pos, f) }, ps) },
+    PApp(q, (_, Var(c)), f) => { [(q, c), ..patNames(q, f)] },
+    PTyped(f, _) => { patNames(pos, f) },
+    _ => { [] }
+  }
+};
+
+let rec expNames = (pos, e) => {
+  let go = (x) => { expNames(pos, x) };
+  match(e) {
+    EId(q, (_, Var(x))) => { [(q, x)] },
+    ERecord(q, fields) => { concatMap((l, x) => { [(q, l), ..expNames(q, x)] }, fields) },
+    ESelect(q, l) => { [(q, l)] },
+    ETuple(es) => { concatMap(go, es) },
+    EList(es) => { concatMap(go, es) },
+    ESeq(es) => { concatMap(go, es) },
+    ELet(ds, es) => { List.append(concatMap(decNames, ds), concatMap(go, es)) },
+    EApp(f, a) => { List.append(go(f), go(a)) },
+    ETyped(x, _) => { go(x) },
+    EAndalso(a, b) => { List.append(go(a), go(b)) },
+    EOrelse(a, b) => { List.append(go(a), go(b)) },
+    EIf(c, a, b) => { List.append(go(c), List.append(go(a), go(b))) },
+    ECase(x, rules) => { List.append(go(x), ruleNames(pos, rules)) },
+    EFn(rules) => { ruleNames(pos, rules) },
+    EScon(_) => { [] }
+  }
+}
+
+and ruleNames = (pos, rules) => {
+  concatMap((p, e) => { List.append(patNames(pos, p), expNames(pos, e)) }, rules)
+}
+
+and decNames = match {
+  DVal(pos, _, plain, recs) => { ruleNames(pos, List.append(plain, recs)) },
+  DType(pos, binds) => { SmlList.map((_, tycon, _) => { (pos, tycon) })(binds) },
+  DDatatype(pos, binds) => {
+    concatMap(
+      (_, tycon, cons) => {
+        [(pos, tycon), ..SmlList.map((cp, c, _) => { (cp, c) })(cons)]
+      },
+      binds
+    )
+  },
+  DOpen(_) => { [] }
+};
+
+// Warnings for one module's declarations and expressions.
+let conventionWarnings = (decs, exps) => {
+  let keyword = (pos, x) => {
+    if (SmlList.exists((k) => { k == x })(wmKeywords)) {
+      [(pos, "`" ++ x ++ "` is a Workman keyword; the translation will not parse")]
+    } else { [] }
+  };
+  let casing = match {
+    DType(pos, binds) => {
+      concatMap(
+        (_, tycon, _) => {
+          if (isUpper(tycon)) { [(pos, "type `" ++ tycon ++ "` should start lowercase")] } else { [] }
+        },
+        binds
+      )
+    },
+    DDatatype(pos, binds) => {
+      concatMap(
+        (_, tycon, cons) => {
+          List.append(
+            if (isUpper(tycon)) { [(pos, "type `" ++ tycon ++ "` should start lowercase")] } else { [] },
+            concatMap(
+              (cp, c, _) => {
+                if (isUpper(c)) { [] } else { [(cp, "constructor `" ++ c ++ "` should start uppercase")] }
+              },
+              cons
+            )
+          )
+        },
+        binds
+      )
+    },
+    _ => { [] }
+  };
+  List.append(
+    concatMap(
+      keyword,
+      List.append(concatMap(decNames, decs), concatMap((e) => { expNames(0, e) }, exps))
+    ),
+    concatMap(casing, decs)
+  )
+};
+
+let distinct = (xs) => {
+  SmlList.foldl((x, acc) => {
+    if (SmlList.exists((y) => { y == x })(acc)) { acc } else { List.append(acc, [x]) }
+  })([])(xs)
+};
+
+// ---------------------------------------------------------------------------------------
+// Files
+
+// The file name without directory and extension.
+let baseName = (path) => {
+  let file = match(SmlList.rev(String.fields((c) => { c == '/' })(path))) {
+    [last, .._] => { last },
+    [] => { path }
+  };
+  if (String.isSuffix(".sml")(file)) { String.substring(file, 0, String.size(file) - 4) } else { file }
+};
+
+// The file's structure name, or "" when it has none.
+let structureOf = (prog) => {
+  concatMap(
+    match {
+      TopDecs(sds) => {
+        concatMap(
+          match {
+            SStructure(_, binds) => { SmlList.map((name, _) => { name })(binds) },
+            SDec(_) => { [] }
+          },
+          sds
+        )
+      },
+      TopExp(_) => { [] }
+    },
+    prog
+  )
+};
+
+type Result = Output<String, String, List<(Pos, String)>> | TranslateError<String>; // file name, contents, warnings
+
+/* The file as one module: its structure's name ("" if none), and its phrases in source
+   order, with the structure's declarations in place and other phrases unqualified. */
+let module = (prog) => {
+  let self = match(structureOf(prog)) {
+    [name, .._] => { name },
+    [] => { "" }
+  };
+  let phrases = concatMap(
+    match {
+      TopDecs(sds) => {
+        concatMap(
+          match {
+            SStructure(_, binds) => {
+              concatMap((_, ds) => { SmlList.map((d) => { TopDecs([SDec(d)]) })(ds) }, binds)
+            },
+            SDec(d) => { [TopDecs([SDec(decStrip(self, d))])] }
+          },
+          sds
+        )
+      },
+      TopExp(p, e) => {
+        [TopDecs([SDec(DVal(p, [], [(PId(p, ([], "it")), expStrip(self, e))], []))])]
+      }
+    },
+    prog
+  );
+  (self, phrases)
+};
+
+// The declarations and expressions of a module's phrases.
+let parts = (phrases) => {
+  (
+    concatMap(
+      match {
+        TopDecs(sds) => {
+          concatMap(
+            match {
+              SDec(d) => { [d] },
+              SStructure(_) => { [] }
+            },
+            sds
+          )
+        },
+        TopExp(_) => { [] }
+      },
+      phrases
+    ),
+    concatMap(
+      match {
+        TopExp(_, e) => { [e] },
+        TopDecs(_) => { [] }
+      },
+      phrases
+    )
+  )
+};
+
+// Translates one parsed file. `structures` names every structure of the program.
+let toWm = (structures, path, src, prog, comments) => {
+  let (self, phrases) = module(prog);
+  let (decs, exps) = parts(phrases);
+  let used = distinct(List.append(concatMap(decQuals, decs), concatMap(expQuals, exps)));
+  let start = match(prog) {
+    [TopDecs([SStructure(p, _), .._]), .._] => { p },
+    _ => { 0 }
+  };
+  let imports = SmlList.map((q) => {
+    Doc.atom(start, "from \"./" ++ WmPrint.fileName(q) ++ "\" import * as " ++ q ++ ";")
+  })(SmlList.filter((q) => {
+    if (q != self) { SmlList.exists((s) => { s == q })(structures) } else { false }
+  })(used));
+  let doc = Doc.stack(SmlList.map((td) => { WmPrint.topdec(structures, td) })(phrases));
+  let body = match(imports) {
+    [] => { doc },
+    _ => { Doc.stack([Doc.stack(imports), Doc.text(""), doc]) }
+  };
+  let expected = WmPrint.fileName(self);
+  if (if (self != "") { expected != baseName(path) ++ ".wm" } else { false }) {
+    TranslateError(path ++ ": structure " ++ self ++ " must be in a file named " ++ String.substring(expected, 0, String.size(expected) - 3) ++ ".sml")
+  } else {
+    Output(
+      baseName(path) ++ ".wm",
+      Doc.render(src, comments, WmPrint.commentStyle, body),
+      conventionWarnings(decs, exps)
+    )
+  }
+};
+
+// Traverse expressions without changing source positions or declaration layout.
+let rec mapExp = (f, e) => {
+  let go = (x) => { mapExp(f, x) };
+  let rules = (rs) => { SmlList.map((p, x) => { (p, go(x)) })(rs) };
+  f(match(e) {
+    ERecord(p, fs) => { ERecord(p, SmlList.map((l, x) => { (l, go(x)) })(fs)) },
+    ETuple(es) => { ETuple(SmlList.map(go)(es)) },
+    EList(es) => { EList(SmlList.map(go)(es)) },
+    ESeq(es) => { ESeq(SmlList.map(go)(es)) },
+    ELet(ds, es) => {
+      ELet(SmlList.map((d) => { mapDec(f, d) })(ds), SmlList.map(go)(es))
+    },
+    EApp(a, b) => { EApp(go(a), go(b)) },
+    ETyped(x, t) => { ETyped(go(x), t) },
+    EAndalso(a, b) => { EAndalso(go(a), go(b)) },
+    EOrelse(a, b) => { EOrelse(go(a), go(b)) },
+    EIf(c, a, b) => { EIf(go(c), go(a), go(b)) },
+    ECase(x, rs) => { ECase(go(x), rules(rs)) },
+    EFn(rs) => { EFn(rules(rs)) },
+    _ => { e }
+  })
+}
+
+and mapDec = (f, d) => {
+  match(d) {
+    DVal(p, vs, plain, recs) => {
+      let rules = (rs) => { SmlList.map((pat, e) => { (pat, mapExp(f, e)) })(rs) };
+      DVal(p, vs, rules(plain), rules(recs))
+    },
+    _ => { d }
+  }
+};
+
+let mapProgram = (f, prog) => {
+  SmlList.map(match {
+    TopDecs(sds) => {
+      TopDecs(SmlList.map(match {
+        SDec(d) => { SDec(mapDec(f, d)) },
+        SStructure(p, binds) => {
+          SStructure(
+            p,
+            SmlList.map((n, ds) => { (n, SmlList.map((d) => { mapDec(f, d) })(ds)) })(binds)
+          )
+        }
+      })(sds))
+    },
+    TopExp(p, e) => { TopExp(p, mapExp(f, e)) }
+  })(prog)
+};
+
+/* Workman equality is ambiguous until elaboration. Only a scalar real comparison is
+   rewritten; a second, strict elaboration rejects every remaining invalid SML equality. */
+let realEquality = (st, prog) => {
+  let Unify.State(_, _, _, _, sites) = st;
+  let positions = SmlList.map((p, _) => { p })(SmlList.filter((_, t) => {
+    match(Unify.prune(st, t)) {
+      Types.TCon(n, []) => { Unify.sameName(n, Types.realName) },
+      _ => { false }
+    }
+  })(match(sites) {
+    Some(xs) => { xs },
+    None => { [] }
+  }));
+  let rewrite = (e) => {
+    match(e) {
+      EApp(EId(p, ([], Var(opr))), a) => {
+        if (if (if (opr == "=") { true } else { opr == "<>" }) { SmlList.exists((q) => { (p: Number) == q })(positions) } else { false }) {
+          EApp(EId(p, (["Real"], if (opr == "=") { "==" } else { "!=" })), a)
+        } else { e }
+      },
+      _ => { e }
+    }
+  };
+  mapProgram(rewrite, prog)
+};
+
+/* Check dependencies before a module, regardless of the command-line order. Every
+   recovery starts with its dependency closure, so unrelated input files remain independent. */
+let recover = (modules, target) => {
+  let nameOfModule = (_, _, prog, _) => {
+    match(structureOf(prog)) {
+      [n, .._] => { n },
+      [] => { "" }
+    }
+  };
+  let rec decDeps = (d) => {
+    match(d) {
+      DOpen(_, ids) => { concatMap(head, ids) },
+      _ => { decQuals(d) }
+    }
+  };
+  let deps = (_, _, prog, _) => {
+    distinct(concatMap(
+      match {
+        TopDecs(sds) => {
+          concatMap(
+            match {
+              SDec(d) => { decDeps(d) },
+              SStructure(_, bs) => { concatMap((_, ds) => { concatMap(decDeps, ds) }, bs) }
+            },
+            sds
+          )
+        },
+        TopExp(_, e) => { expQuals(e) }
+      },
+      prog
+    ))
+  };
+  let rec order = (item, visiting, done, acc) => {
+    let name = nameOfModule(item);
+    if (SmlList.exists((n) => { n == name })(done)) { Unify.Ok((done, acc), Unify.initial) } else {
+      if (SmlList.exists((n) => { n == name })(visiting)) { Unify.Err("cyclic module dependency involving " ++ name, 0) } else {
+        let needed = SmlList.filter((m) => {
+          if (nameOfModule(m) != name) { SmlList.exists((n) => { n == nameOfModule(m) })(deps(item)) } else { false }
+        })(modules);
+        let rec walk = match {
+          ([], Var(done), Var(acc)) => {
+            Unify.Ok(([name, ..done], List.append(acc, [item])), Unify.initial)
+          },
+          ([m, ..rest], Var(done), Var(acc)) => {
+            Unify.bind(order(m, [name, ..visiting], done, acc))((done, acc) => (_) => { walk(rest, done, acc) })
+          }
+        };
+        walk(needed, done, acc)
+      }
+    }
+  };
+  let rec elaborate = match {
+    (_, [], Var(st), Var(acc)) => { Unify.Ok(acc, st) },
+    (
+      Var(env),
+      [(Var(path), Var(src), Var(prog), Var(comments)), ..rest],
+      Var(st),
+      Var(acc)
+    ) => {
+      let Unify.State(vars, next, sels, recs, _) = st;
+      Unify.bind(Elab.program(env, prog, Unify.State(vars, next, sels, recs, Some([]))))((env) => (st) => {
+        elaborate(
+          env,
+          rest,
+          st,
+          List.append(acc, [(path, src, realEquality(st, prog), comments)])
+        )
+      })
+    }
+  };
+  let rec strict = match {
+    (_, [], Var(st)) => { Unify.Ok(void, st) },
+    (Var(env), [(_, _, Var(prog), _), ..rest], Var(st)) => {
+      Unify.bind(Elab.program(env, prog, st))((env) => (st) => { strict(env, rest, st) })
+    }
+  };
+  Unify.bind(order(target, [], [], []))((_, ordered) => (_) => {
+    Unify.bind(Basis.initial)((basis) => (_) => {
+      Unify.bind(elaborate(basis, ordered, Unify.lenient, []))((rewritten) => (_) => {
+        Unify.bind(strict(basis, rewritten, Unify.initial))((_) => (st) => {
+          match(SmlList.find((m) => { nameOfModule(m) == nameOfModule(target) })(rewritten)) {
+            Some(m) => { Unify.Ok(m, st) },
+            None => { Unify.Err("missing translated module", 0) }
+          }
+        })
+      })
+    })
+  })
+};
+
+// A Workman module as SubsetML: its declarations become the structure named by the file.
+let fromWm = (path, src, decs, exps, comments) => {
+  let name = WmParse.structureName(path);
+  /* Imports disappear from the AST. Anchor the structure before them, so comments
+     between an import and the first declaration stay inside the structure. */
+  let first = match(WmLexer.lex(src)) {
+    WmLexer.Tokens([(WmLexer.WKey("from"), Var(p)), .._], _) => { Some(p) },
+    _ => {
+      match(decs) {
+        [d, .._] => { Some(decPos(d)) },
+        [] => { None }
+      }
+    }
+  };
+  let structureLine = match(first) {
+    Some(p) => { Doc.atom(p, "structure " ++ name ++ " = struct") },
+    None => { Doc.text("structure " ++ name ++ " = struct") }
+  };
+  let structureDoc = Doc.stack([
+    structureLine,
+    Doc.indent(2, Doc.stack(SmlList.map(SmlPrint.dec)(decs))),
+    Doc.text("end")
+  ]);
+  let expDocs = SmlList.map((e) => { Doc.cat(SmlPrint.exp(e), Doc.text(";")) })(exps);
+  let doc = match(expDocs) {
+    [] => { structureDoc },
+    _ => { Doc.stack([Doc.cat(structureDoc, Doc.text(";")), ..expDocs]) }
+  };
+  Doc.render(src, comments, SmlPrint.commentStyle, doc)
+};
+
+// Reprints a parsed file as SubsetML.
+let toSml = (src, prog, comments) => {
+  // A declaration phrase needs its `;` when an expression phrase follows (Definition §8).
+  let rec phrases = match {
+    [] => { [] },
+    [TopDecs(sds), TopExp(e), ..rest] => {
+      [
+        Doc.cat(SmlPrint.topdec(TopDecs(sds)), Doc.text(";")),
+        ..phrases([TopExp(e), ..rest])
+      ]
+    },
+    [td, ..rest] => { [SmlPrint.topdec(td), ..phrases(rest)] }
+  };
+  Doc.render(src, comments, SmlPrint.commentStyle, Doc.stack(phrases(prog)))
+};

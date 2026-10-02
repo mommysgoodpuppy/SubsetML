@@ -1,0 +1,414 @@
+/* Unification over a substitution threaded as state (SubsetML has no references).
+
+   Type variables carry a kind (Types.kind) and a level. A variable created while elaborating
+   the right side of a `val` at level n has level n + 1; unification lowers levels so that a
+   variable's level is the outermost declaration it escapes to. At the end of the declaration,
+   variables still above level n are free in no enclosing context and may be generalized. */
+
+from "./types.wm" import * as Types;
+from "./syntax.wm" import * as Syntax;
+from "./int_map.wm" import * as IntMap;
+from "./sml_list.wm" import * as SmlList;
+from "./subset_char.wm" import * as SubsetChar;
+from "./subset_result.wm" import * as SubsetResult;
+
+from "./types.wm" import *;
+
+type Var = Free<Kind, Number> | Bound<Ty>; // kind, level
+
+/* A `# lab` selection waiting for its record type to be known (Definition §4.11):
+   position, level, record type, label, field type. */
+type Selection = (Syntax.Pos, Number, Ty, String, Ty);
+
+/* Variables, the next fresh number (also used for type name stamps), pending selections,
+   the label sets of the record type declarations so far (spec R2), and, when translating
+   from Workman, the equality sites seen so far (see `lenient`). */
+type State =
+  | State<IntMap.Map<Var>, Number, List<Selection>, List<List<String>>, Option<List<(Syntax.Pos, Ty)>>>;
+
+let initial = State(IntMap.empty, firstStamp, [], [], None);
+
+/* For translating Workman, whose `==` also compares numbers: `=` and `<>` accept any
+   operands, and each use is recorded with its operand type, so that the uses on real can
+   become Real.== and Real.!= (Translate.realEquality). */
+let lenient = State(IntMap.empty, firstStamp, [], [], Some([]));
+
+type Res<a> = Ok<a, State> | Err<String, Syntax.Pos>;
+
+let bind = (r) => (k) => {
+  match(r) {
+    Ok(x, st) => { k(x)(st) },
+    Err(e) => { Err(e) }
+  }
+};
+
+// The result of a unification: failures carry a reason, possibly empty.
+type Outcome = Unified<State> | Mismatch<String>;
+
+let andThen = (r, k) => {
+  match(r) {
+    Unified(st) => { k(st) },
+    Mismatch(m) => { Mismatch(m) }
+  }
+};
+
+let fresh = match {
+  (State(vars, next, sels, recs, eqs), Var(kind), Var(level)) => {
+    (
+      TVar(next),
+      State(IntMap.insert(vars, next, Free(kind, level)), next + 1, sels, recs, eqs)
+    )
+  }
+};
+
+let freshStamp = match {
+  State(vars, next, sels, recs, eqs) => { (next, State(vars, next + 1, sels, recs, eqs)) }
+};
+
+let lookup = match {
+  (State(vars, _, _, _, _), Var(v)) => {
+    match(IntMap.find(vars, v)) {
+      Some(info) => { info },
+      None => { Free(KPlain, 0) }
+    }
+  }
+};
+
+let set = match {
+  (State(vars, next, sels, recs, eqs), Var(v), Var(info)) => { State(IntMap.insert(vars, v, info), next, sels, recs, eqs) }
+};
+
+// Follows bound variables at the head of a type.
+let rec prune = (st, t) => {
+  match(t) {
+    TVar(v) => {
+      match(lookup(st, v)) {
+        Bound(t') => { prune(st, t') },
+        Free(_) => { t }
+      }
+    },
+    _ => { t }
+  }
+};
+
+// Applies the substitution throughout a type.
+let rec resolve = (st, t) => {
+  match(prune(st, t)) {
+    TCon(n, ts) => { TCon(n, SmlList.map((a) => { resolve(st, a) })(ts)) },
+    TArrow(a, b) => { TArrow(resolve(st, a), resolve(st, b)) },
+    TRecord(fields) => {
+      TRecord(SmlList.map((l, a) => { (l, resolve(st, a)) })(fields))
+    },
+    Var(t') => { t' }
+  }
+};
+
+// The free variables of a type, in order of appearance, without repeats.
+let freeVars = (st, t) => {
+  let rec go = (t, acc) => {
+    match(prune(st, t)) {
+      TVar(v) => {
+        if (SmlList.exists((w) => { (w: Number) == v })(acc)) { acc } else { List.append(acc, [v]) }
+      },
+      TCon(_, ts) => { SmlList.foldl(go)(acc)(ts) },
+      TArrow(a, b) => { go(b, go(a, acc)) },
+      TRecord(fields) => { SmlList.foldl(((_, a), acc) => { go(a, acc) })(acc)(fields) },
+      _ => { acc }
+    }
+  };
+  go(t, [])
+};
+
+// ---------------------------------------------------------------------------------------
+// Printing
+
+let varName = (i) => {
+  "'" ++ (if (i < 26) {
+    match(SubsetChar.fromCode(97 + i)) {
+      SubsetResult.Ok(c) => { String.str(c) },
+      SubsetResult.Err(error) => { "t" ++ Number.toString(i) }
+    }
+  } else { "t" ++ Number.toString(i) })
+};
+
+// Prints types, naming their free variables consistently across the list.
+let showAll = (st, ts) => {
+  let ts' = SmlList.map((t) => { resolve(st, t) })(ts);
+  let vars = SmlList.foldl((t, acc) => {
+    List.append(
+      acc,
+      SmlList.filter((v) => { !SmlList.exists((w) => { (w: Number) == v })(acc) })(freeVars(st, t))
+    )
+  })([])(ts');
+  let rec indexOf = match {
+    (_, [], _) => { 0 },
+    (Var(v), [w, ..rest], Var(i)) => { if ((v: Number) == w) { i } else { indexOf(v, rest, i + 1) } }
+  };
+  // Explicit type variables keep their names, so free variables avoid them.
+  let rec rigids = match {
+    TRigid(name) => { [name] },
+    TCon(_, ts) => { SmlList.concat(SmlList.map(rigids)(ts)) },
+    TArrow(a, b) => { List.append(rigids(a), rigids(b)) },
+    TRecord(fields) => { SmlList.concat(SmlList.map((_, a) => { rigids(a) })(fields)) },
+    _ => { [] }
+  };
+  let taken = SmlList.concat(SmlList.map(rigids)(ts'));
+  let rec nth = (i, candidate) => {
+    if (SmlList.exists((r) => { r == varName(candidate) })(taken)) { nth(i, candidate + 1) } else {
+      if ((i: Number) == 0) { varName(candidate) } else { nth(i - 1, candidate + 1) }
+    }
+  };
+  let varText = (v) => {
+    let name = nth(indexOf(v, vars, 0), 0);
+    match(lookup(st, v)) {
+      Free(KEq, _) => { "'" ++ name },
+      Free(KClass(names), _) => {
+        name ++ " (" ++ String.concatWith(" or ")(SmlList.map(nameOf)(names)) ++ ")"
+      },
+      _ => { name }
+    }
+  };
+  // Levels: arrow 0, tuple 1, application 2.
+  let rec show = (level, t) => {
+    let paren = (need, s) => { if (level > need) { "(" ++ s ++ ")" } else { s } };
+    match(t) {
+      TVar(v) => { varText(v) },
+      TGen(i) => { varName(i) },
+      TRigid(name) => { name },
+      TCon(n, []) => { nameOf(n) },
+      TCon(n, [a]) => { show(2, a) ++ " " ++ nameOf(n) },
+      TCon(n, args) => {
+        "(" ++ String.concatWith(", ")(SmlList.map((a) => { show(0, a) })(args)) ++ ") " ++ nameOf(n)
+      },
+      TArrow(a, b) => { paren(0, show(1, a) ++ " -> " ++ show(0, b)) },
+      TRecord([]) => { "unit" },
+      TRecord(fields) => {
+        match(tupleComponents(fields)) {
+          Some(parts) => {
+            paren(1, String.concatWith(" * ")(SmlList.map((a) => { show(2, a) })(parts)))
+          },
+          None => {
+            "{" ++ String.concatWith(", ")(SmlList.map((l, a) => { l ++ " : " ++ show(0, a) })(fields)) ++ "}"
+          }
+        }
+      }
+    }
+  };
+  SmlList.map((t) => { show(0, t) })(ts')
+};
+
+let show = (st, t) => {
+  match(showAll(st, [t])) {
+    [s] => { s },
+    _ => { "" }
+  }
+};
+
+// ---------------------------------------------------------------------------------------
+// Unification
+
+let sameName = (a, b) => { (stampOf(a): Number) == stampOf(b) };
+
+// The kind of a variable that must satisfy both kinds.
+let combine = match {
+  (KPlain, Var(k)) => { Some(k) },
+  (Var(k), KPlain) => { Some(k) },
+  (KEq, KEq) => { Some(KEq) },
+  (KEq, KClass(ns)) => {
+    match(SmlList.filter((_, _, _, eq) => { eq })(ns)) {
+      [] => { None },
+      Var(ns') => { Some(KClass(ns')) }
+    }
+  },
+  (KClass(ns), KEq) => {
+    match(SmlList.filter((_, _, _, eq) => { eq })(ns)) {
+      [] => { None },
+      Var(ns') => { Some(KClass(ns')) }
+    }
+  },
+  (KClass(a), KClass(b)) => {
+    match(SmlList.filter((n) => { SmlList.exists((m) => { sameName(n, m) })(b) })(a)) {
+      [] => { None },
+      Var(ns) => { Some(KClass(ns)) }
+    }
+  }
+};
+
+let kindText = match {
+  KEq => { "an equality type" },
+  KClass(ns) => {
+    "one of " ++ String.concatWith(", ")(SmlList.map(nameOf)(ns))
+  },
+  KPlain => { "a type" }
+};
+
+// Lowers the levels of the variables in t to at most `level`.
+let rec adjust = (st, level, t) => {
+  match(prune(st, t)) {
+    TVar(v) => {
+      match(lookup(st, v)) {
+        Free(k, l) => { if (l > level) { set(st, v, Free(k, level)) } else { st } },
+        Bound(_) => { st }
+      }
+    },
+    TCon(_, ts) => { SmlList.foldl((a, st) => { adjust(st, level, a) })(st)(ts) },
+    TArrow(a, b) => { adjust(adjust(st, level, a), level, b) },
+    TRecord(fields) => {
+      SmlList.foldl(((_, a), st) => { adjust(st, level, a) })(st)(fields)
+    },
+    _ => { st }
+  }
+};
+
+let rec occurs = (st, v, t) => {
+  match(prune(st, t)) {
+    TVar(w) => { (v: Number) == w },
+    TCon(_, ts) => { SmlList.exists((a) => { occurs(st, v, a) })(ts) },
+    TArrow(a, b) => { if (occurs(st, v, a)) { true } else { occurs(st, v, b) } },
+    TRecord(fields) => { SmlList.exists((_, a) => { occurs(st, v, a) })(fields) },
+    _ => { false }
+  }
+};
+
+// Makes t satisfy kind k.
+let rec require = (st, k, t) => {
+  match(k, prune(st, t)) {
+    (KPlain, _) => { Unified(st) },
+    (_, TVar(w)) => {
+      match(lookup(st, w)) {
+        Free(k2, l) => {
+          match(combine(k, k2)) {
+            Some(k') => { Unified(set(st, w, Free(k', l))) },
+            None => {
+              Mismatch("it must be " ++ kindText(k) ++ " and " ++ kindText(k2))
+            }
+          }
+        },
+        Bound(_) => { Unified(st) }
+      }
+    },
+    (KEq, TCon((_, Var(name), _, Var(eq)), args)) => {
+      if (eq) { requireAll(st, k, args) } else { Mismatch("type " ++ name ++ " does not admit equality") }
+    },
+    (KEq, TRecord(fields)) => { requireAll(st, k, SmlList.map((_, t) => { t })(fields)) },
+    (KEq, TArrow(_)) => { Mismatch("function types do not admit equality") },
+    (KEq, TRigid(name)) => {
+      Mismatch("type variable " ++ name ++ " does not admit equality")
+    },
+    (KClass(ns), TCon(n, [])) => {
+      if (SmlList.exists((m) => { sameName(n, m) })(ns)) { Unified(st) } else { Mismatch("the overloaded operation needs " ++ kindText(k)) }
+    },
+    (KClass(_), _) => { Mismatch("the overloaded operation needs " ++ kindText(k)) },
+    (_, TGen(_)) => { Unified(st) }
+  }
+}
+
+and requireAll = (st, k, ts) => {
+  match(ts) {
+    [] => { Unified(st) },
+    [t, ..rest] => {
+      andThen(require(st, k, t), (st) => { requireAll(st, k, rest) })
+    }
+  }
+};
+
+let rec unify = (st, a, b) => {
+  match(prune(st, a), prune(st, b)) {
+    (TVar(v), TVar(w)) => {
+      if ((v: Number) == w) { Unified(st) } else { bindVar(st, v, TVar(w)) }
+    },
+    (TVar(v), Var(t)) => { bindVar(st, v, t) },
+    (Var(t), TVar(v)) => { bindVar(st, v, t) },
+    (TCon(n, args), TCon(m, args')) => {
+      if (sameName(n, m)) { unifyAll(st, args, args') } else { Mismatch("") }
+    },
+    (TArrow(a1, r1), TArrow(a2, r2)) => { andThen(unify(st, a1, a2), (st) => { unify(st, r1, r2) }) },
+    (TRecord(f1), TRecord(f2)) => {
+      if (SmlList.map((l, _) => { l })(f1) == SmlList.map((l, _) => { l })(f2)) {
+        unifyAll(st, SmlList.map((_, t) => { t })(f1), SmlList.map((_, t) => { t })(f2))
+      } else { Mismatch("") }
+    },
+    (TRigid(x), TRigid(y)) => { if (x == y) { Unified(st) } else { Mismatch("") } },
+    _ => { Mismatch("") }
+  }
+}
+
+and unifyAll = (st, xs, ys) => {
+  match(xs, ys) {
+    ([x, ..xs'], [y, ..ys']) => { andThen(unify(st, x, y), (st) => { unifyAll(st, xs', ys') }) },
+    _ => { Unified(st) }
+  }
+}
+
+and bindVar = (st, v, t) => {
+  match(lookup(st, v)) {
+    Bound(t') => { unify(st, t', t) },
+    Free(k, level) => {
+      if (occurs(st, v, t)) { Mismatch("the type would be circular") } else {
+        andThen(require(st, k, t), (st) => { Unified(set(adjust(st, level, t), v, Bound(t))) })
+      }
+    }
+  }
+};
+
+// ---------------------------------------------------------------------------------------
+// Schemes
+
+let instantiate = (st, level, (kinds, body)) => {
+  let (args, st') = SmlList.foldl((k, (acc, st)) => {
+    let (t, st') = fresh(st, k, level);
+    (List.append(acc, [t]), st')
+  })([], st)(kinds);
+  (substGen(args, body), st')
+};
+
+// Generalizes the variables above `level` and the given explicit type variables.
+let generalize = (st, level, rigid, t) => {
+  let t' = resolve(st, t);
+  let vars = SmlList.filter((v) => {
+    match(lookup(st, v)) {
+      Free(_, l) => { l > level },
+      Bound(_) => { false }
+    }
+  })(freeVars(st, t'));
+  let kinds = SmlList.map((v) => {
+    match(lookup(st, v)) {
+      Free(k, _) => { k },
+      Bound(_) => { KPlain }
+    }
+  })(vars);
+  let count = List.length(vars);
+  // The position of x in a list, by the given equality.
+  let indexIn = (same, x, xs) => {
+    let rec go = match {
+      ([], _) => { None },
+      ([y, ..rest], Var(i)) => { if (same(x, y)) { Some(i) } else { go(rest, i + 1) } }
+    };
+    go(xs, 0)
+  };
+  let rec go = (t) => {
+    match(t) {
+      TVar(v) => {
+        match(indexIn(
+          (realLeft: Number, realRight: Number) => { (realLeft: Number) == realRight },
+          v,
+          vars
+        )) {
+          Some(i) => { TGen(i) },
+          None => { t }
+        }
+      },
+      TRigid(name) => {
+        match(indexIn((a, b) => { a == b }, name, rigid)) {
+          Some(i) => { TGen(count + i) },
+          None => { t }
+        }
+      },
+      TCon(n, ts) => { TCon(n, SmlList.map(go)(ts)) },
+      TArrow(a, b) => { TArrow(go(a), go(b)) },
+      TRecord(fields) => { TRecord(SmlList.map((l, a) => { (l, go(a)) })(fields)) },
+      TGen(_) => { t }
+    }
+  };
+  (List.append(kinds, SmlList.map((_) => { KPlain })(rigid)), go(t'))
+};

@@ -1,0 +1,428 @@
+// Lexical analysis (docs/spec.md §2, Definition §2).
+
+from "./syntax.wm" import * as Syntax;
+from "./sml_list.wm" import * as SmlList;
+from "./subset_char.wm" import * as SubsetChar;
+from "./subset_result.wm" import * as SubsetResult;
+from "./subset_source.wm" import * as SubsetSource;
+from "./subset_string.wm" import * as SubsetString;
+from "./compiler_text.wm" import * as CompilerText;
+
+from "./syntax.wm" import *;
+
+type Token =
+  | TKey<String> // reserved word or reserved punctuation
+  | TId<String> // unqualified identifier
+  | TLong<List<String>, String>
+  | TTyVar<String>
+  | TScon<Scon>
+  | TEOF;
+
+type Step<a> = Ok<a, Number> | Err<String, Pos>; // value and the offset after it
+
+type Result = Tokens<List<(Token, Pos)>, List<Comment>> | LexError<String, Pos>;
+
+let reservedWords = [
+  "abstype",
+  "and",
+  "andalso",
+  "as",
+  "case",
+  "datatype",
+  "do",
+  "else",
+  "end",
+  "exception",
+  "fn",
+  "fun",
+  "handle",
+  "if",
+  "in",
+  "infix",
+  "infixr",
+  "let",
+  "local",
+  "nonfix",
+  "of",
+  "op",
+  "open",
+  "orelse",
+  "raise",
+  "rec",
+  "then",
+  "type",
+  "val",
+  "with",
+  "withtype",
+  "while",
+  "eqtype",
+  "functor",
+  "include",
+  "sharing",
+  "sig",
+  "signature",
+  "struct",
+  "structure",
+  "where"
+];
+
+let reservedSymbols = ["|", "=", "=>", "->", "#", ":", ":>"];
+
+// The symbolic identifiers of the initial basis (spec §2.4).
+let basisSymbols = ["+", "-", "*", "/", "^", "::", "=", "<", ">", "<=", ">=", "<>", "@", "~"];
+
+let member = (x, xs) => { SmlList.exists((y) => { y == x })(xs) };
+
+let isSymbolic = (c) => {
+  SubsetChar.contains(
+    [
+      '!',
+      '%',
+      '&',
+      '$',
+      '#',
+      '+',
+      '-',
+      '/',
+      ':',
+      '<',
+      '=',
+      '>',
+      '?',
+      '@',
+      '\\',
+      '~',
+      '`',
+      '^',
+      '|',
+      '*'
+    ],
+    c
+  )
+};
+
+let isAlnum = (c) => {
+  if (if (SubsetChar.isAlphaNum(c)) { true } else { c == '\'' }) { true } else { c == '_' }
+};
+
+// Formatting characters that may separate tokens and appear in string gaps.
+let isFormatting = (c) => {
+  if (if (if (if (if (c == ' ') { true } else { c == '\t' }) { true } else { c == '\n' }) { true } else { c == '\u000b' }) { true } else { c == '\u000c' }) { true } else { c == '\r' }
+};
+
+let isPrintable = SubsetChar.isPrint;
+
+/* Compiler-internal assertion: language characters are bytes. The public converter
+   returns Result; a foreign non-byte character violates the supplied text contract. */
+let byteCode = (c) => {
+  let SubsetResult.Ok(code) = SubsetChar.toCode(c);
+  code
+};
+
+let digitValue = (c) => {
+  if (SubsetChar.isDigit(c)) { byteCode(c) - byteCode('0') } else { byteCode(SubsetChar.toLower(c)) - byteCode('a') + 10 }
+};
+
+let lex = (src) => {
+  match(SubsetSource.fromNative(src)) {
+    SubsetResult.Err(SubsetString.NonByte(offset)) => { LexError("source contains a non-byte character", offset) },
+    SubsetResult.Ok(source) => {
+      let n = SubsetSource.length(source);
+
+      let at = (i) => { CompilerText.sub(source, i) };
+      let has = (i, c) => { if (i < n) { at(i) == c } else { false } };
+      let digitAt = (i) => { if (i < n) { SubsetChar.isDigit(at(i)) } else { false } };
+
+      let rec skipWhile = (p, i) => {
+        if (if (i < n) { p(at(i)) } else { false }) { skipWhile(p, i + 1) } else { i }
+      };
+
+      // Value of the `count` digits starting at i, in the given radix.
+      let rec digitsValue = (i, count, radix, acc) => {
+        if ((count: Number) == 0) { acc } else {
+          digitsValue(i + 1, count - 1, radix, acc * radix + digitValue(at(i)))
+        }
+      };
+
+      let rec allDigits = (p, i, count) => {
+        if ((count: Number) == 0) { true } else {
+          if (if (i < n) { p(at(i)) } else { false }) { allDigits(p, i + 1, count - 1) } else { false }
+        }
+      };
+
+      let rec skipComment = (start, i, depth) => {
+        match((depth: Number) == 0, i + 1 >= n) {
+          (true, _) => { Ok(void, i) },
+          (false, true) => { Err("unterminated comment", start) },
+          (false, false) => {
+            match(at(i), at(i + 1)) {
+              ('(', '*') => { skipComment(start, i + 2, depth + 1) },
+              ('*', ')') => { skipComment(start, i + 2, depth - 1) },
+              _ => { skipComment(start, i + 1, depth) }
+            }
+          }
+        }
+      };
+
+      let charFromCode = (code, pos, next) => {
+        match(SubsetChar.fromCode(code)) {
+          SubsetResult.Ok(c) => { Ok(Some(c), next) },
+          SubsetResult.Err(error) => { Err("character code exceeds 255 in escape sequence", pos) }
+        }
+      };
+
+      // An escape sequence; i is just after the backslash. NONE is a \f...f\ gap.
+      let escape = (i) => {
+        if (i >= n) { Err("unterminated escape sequence", i - 1) } else {
+          match(at(i)) {
+            'a' => { Ok(Some('\u0007'), i + 1) },
+            'b' => { Ok(Some('\u0008'), i + 1) },
+            't' => { Ok(Some('\t'), i + 1) },
+            'n' => { Ok(Some('\n'), i + 1) },
+            'v' => { Ok(Some('\u000b'), i + 1) },
+            'f' => { Ok(Some('\u000c'), i + 1) },
+            'r' => { Ok(Some('\r'), i + 1) },
+            '"' => { Ok(Some('"'), i + 1) },
+            '\\' => { Ok(Some('\\'), i + 1) },
+            '^' => {
+              if (if (if (i + 1 < n) { byteCode(at(i + 1)) >= 64 } else { false }) { byteCode(at(i + 1)) <= 95 } else { false }) { charFromCode(byteCode(at(i + 1)) - 64, i - 1, i + 2) } else { Err("illegal control escape sequence", i - 1) }
+            },
+            'u' => {
+              if (allDigits(SubsetChar.isHexDigit, i + 1, 4)) { charFromCode(digitsValue(i + 1, 4, 16, 0), i - 1, i + 5) } else {
+                Err("\\u must be followed by four hexadecimal digits", i - 1)
+              }
+            },
+            Var(c) => {
+              match(SubsetChar.isDigit(c), isFormatting(c)) {
+                (true, _) => {
+                  if (allDigits(SubsetChar.isDigit, i, 3)) { charFromCode(digitsValue(i, 3, 10, 0), i - 1, i + 3) } else { Err("decimal escape needs exactly three digits", i - 1) }
+                },
+                (false, true) => {
+                  let j = skipWhile(isFormatting, i);
+                  if (has(j, '\\')) { Ok(None, j + 1) } else { Err("unterminated string gap", i - 1) }
+                },
+                (false, false) => { Err("illegal escape sequence", i - 1) }
+              }
+            }
+          }
+        }
+      };
+
+      // A string body; i is just after the opening quote.
+      let rec lexString = (start, i, acc) => {
+        if (i >= n) { Err("unterminated string constant", start) } else {
+          match(at(i)) {
+            '"' => { Ok(CompilerText.implode(SmlList.rev(acc)), i + 1) },
+            '\\' => {
+              match(escape(i + 1)) {
+                Ok(None, j) => { lexString(start, j, acc) },
+                Ok(Some(e), j) => { lexString(start, j, [e, ..acc]) },
+                Err(message, offset) => { Err(message, offset) }
+              }
+            },
+            Var(c) => {
+              if (isPrintable(c)) { lexString(start, i + 1, [c, ..acc]) } else {
+                Err("character not allowed in a string constant; use an escape sequence", i)
+              }
+            }
+          }
+        }
+      };
+
+      // An exponent starting at j, or j itself if there is none.
+      let exponent = (j) => {
+        let digits = if (has(j + 1, '~')) { j + 2 } else { j + 1 };
+        if (if (if (has(j, 'e')) { true } else { has(j, 'E') }) { digitAt(digits) } else { false }) { skipWhile(SubsetChar.isDigit, digits) } else { j }
+      };
+
+      // A numeric constant starting at a digit or at `~` followed by a digit.
+      let lexNumber = (start) => {
+        let i = if (at(start) == '~') { start + 1 } else { start };
+        let text = (j) => { CompilerText.substring(source, start, j - start) };
+        let hexAt = (j) => { if (j < n) { SubsetChar.isHexDigit(at(j)) } else { false } };
+        let isWord = if (if (at(i) == '0') { has(i + 1, 'w') } else { false }) {
+          if (digitAt(i + 2)) { true } else { if (has(i + 2, 'x')) { hexAt(i + 3) } else { false } }
+        } else { false };
+        let isHex = if (if (at(i) == '0') { has(i + 1, 'x') } else { false }) { hexAt(i + 2) } else { false };
+        match(isWord, isHex) {
+          (true, _) => { Err("word constants are not part of SubsetML", start) },
+          (false, true) => {
+            let j = skipWhile(SubsetChar.isHexDigit, i + 2);
+            Ok(TScon(SInt(text(j))), j)
+          },
+          (false, false) => {
+            let j = skipWhile(SubsetChar.isDigit, i);
+            if (if (has(j, '.')) { digitAt(j + 1) } else { false }) {
+              let k = exponent(skipWhile(SubsetChar.isDigit, j + 1));
+              Ok(TScon(SReal(text(k))), k)
+            } else {
+              let k = exponent(j);
+              if ((k: Number) == j) { Ok(TScon(SInt(text(j))), j) } else { Ok(TScon(SReal(text(k))), k) }
+            }
+          }
+        }
+      };
+
+      // An alphanumeric identifier, keyword or long identifier starting at a letter.
+      let lexAlnum = (start) => {
+        let j = skipWhile(isAlnum, start);
+        let word = CompilerText.substring(source, start, j - start);
+        let rec qualified = (quals, last, j) => {
+          let dotThen = (p) => {
+            if (if (has(j, '.')) { j + 1 < n } else { false }) { p(at(j + 1)) } else { false }
+          };
+          match(dotThen(SubsetChar.isAlpha), dotThen(isSymbolic), quals) {
+            (true, _, _) => {
+              let k = skipWhile(isAlnum, j + 1);
+              let next = CompilerText.substring(source, j + 1, k - j - 1);
+              if (member(next, reservedWords)) {
+                Err("reserved word `" ++ next ++ "` in a long identifier", j + 1)
+              } else { qualified([last, ..quals], next, k) }
+            },
+            (_, true, _) => {
+              // Only Real.== and Real.!= : real equality, since real is not an equality type.
+              let k = skipWhile(isSymbolic, j + 1);
+              let sym = CompilerText.substring(source, j + 1, k - j - 1);
+              if (if (if (if (sym == "==") { true } else { sym == "!=" }) { SmlList.null(quals) } else { false }) { last == "Real" } else { false }) { Ok(TLong(["Real"], sym), k) } else {
+                Err(
+                  "qualified symbolic identifiers are not part of SubsetML (except Real.== and Real.!=)",
+                  start
+                )
+              }
+            },
+            (_, _, []) => { Ok(TId(last), j) },
+            _ => { Ok(TLong(SmlList.rev(quals), last), j) }
+          }
+        };
+        if (member(word, reservedWords)) { Ok(TKey(word), j) } else { qualified([], word, j) }
+      };
+
+      let lexSymbolic = (start) => {
+        let j = skipWhile(isSymbolic, start);
+        let s = CompilerText.substring(source, start, j - start);
+        match(member(s, reservedSymbols), member(s, basisSymbols), if (s == "!") { true } else { s == ":=" }) {
+          (true, _, _) => { Ok(TKey(s), j) },
+          (_, true, _) => { Ok(TId(s), j) },
+          (_, _, true) => {
+            Err("`" ++ s ++ "` is not part of SubsetML (references are omitted)", start)
+          },
+          _ => {
+            Err("symbolic identifier `" ++ s ++ "` is not part of SubsetML", start)
+          }
+        }
+      };
+
+      let lexTyVar = (start) => {
+        match(has(start + 1, '\''), if (start + 1 < n) { isAlnum(at(start + 1)) } else { false }) {
+          (true, _) => {
+            Err("equality type variables are not part of SubsetML", start)
+          },
+          (false, true) => {
+            let j = skipWhile(isAlnum, start + 1);
+            Ok(TTyVar(CompilerText.substring(source, start, j - start)), j)
+          },
+          (false, false) => { Err("malformed type variable", start) }
+        }
+      };
+
+      let punctuation = (c) => {
+        SubsetChar.contains(['(', ')', '[', ']', '{', '}', ',', ';'], c)
+      };
+
+      // Whether code precedes offset i on its line.
+      let trailing = (i) => {
+        let rec back = (k) => {
+          if (k < 0) { false } else {
+            match(at(k)) {
+              '\n' => { false },
+              Var(c) => { if (isFormatting(c)) { back(k - 1) } else { true } }
+            }
+          }
+        };
+        back(i - 1)
+      };
+
+      let rec push = (r, start, acc, cs) => {
+        match(r) {
+          Ok(tok, j) => { loop(j, [(tok, start), ..acc], cs) },
+          Err(message, offset) => { LexError(message, offset) }
+        }
+      }
+
+      and loop = (i, acc, cs) => {
+        if (i >= n) { Tokens(SmlList.rev([(TEOF, n), ..acc]), SmlList.rev(cs)) } else {
+          match(at(i)) {
+            '(' => {
+              if (has(i + 1, '*')) {
+                match(skipComment(i, i + 2, 1)) {
+                  Ok(_, j) => {
+                    loop(
+                      j,
+                      acc,
+                      [(i, CompilerText.substring(source, i + 2, j - i - 4), trailing(i)), ..cs]
+                    )
+                  },
+                  Err(message, offset) => { LexError(message, offset) }
+                }
+              } else { loop(i + 1, [(TKey("("), i), ..acc], cs) }
+            },
+            '.' => {
+              if (if (has(i + 1, '.')) { has(i + 2, '.') } else { false }) { loop(i + 3, [(TKey("..."), i), ..acc], cs) } else { LexError("unexpected `.`", i) }
+            },
+            '"' => {
+              match(lexString(i, i + 1, [])) {
+                Ok(s, j) => { loop(j, [(TScon(SString(s)), i), ..acc], cs) },
+                Err(message, offset) => { LexError(message, offset) }
+              }
+            },
+            '#' => {
+              if (has(i + 1, '"')) { charConstant(i, acc, cs) } else { push(lexSymbolic(i), i, acc, cs) }
+            },
+            '~' => {
+              if (digitAt(i + 1)) { push(lexNumber(i), i, acc, cs) } else { push(lexSymbolic(i), i, acc, cs) }
+            },
+            '\'' => { push(lexTyVar(i), i, acc, cs) },
+            '_' => { loop(i + 1, [(TKey("_"), i), ..acc], cs) },
+            Var(c) => {
+              match(isFormatting(c), punctuation(c), SubsetChar.isDigit(c), SubsetChar.isAlpha(c), isSymbolic(c)) {
+                (true, _, _, _, _) => { loop(i + 1, acc, cs) },
+                (_, true, _, _, _) => { loop(i + 1, [(TKey(CompilerText.str(c)), i), ..acc], cs) },
+                (_, _, true, _, _) => { push(lexNumber(i), i, acc, cs) },
+                (_, _, _, true, _) => { push(lexAlnum(i), i, acc, cs) },
+                (_, _, _, _, true) => { push(lexSymbolic(i), i, acc, cs) },
+                _ => { LexError("unexpected character", i) }
+              }
+            }
+          }
+        }
+      }
+
+      and charConstant = (i, acc, cs) => {
+        match(lexString(i, i + 2, [])) {
+          Ok(s, j) => {
+            if ((CompilerText.size(s): Number) == 1) {
+              loop(
+                j,
+                [
+                  (
+                    TScon(SChar({
+                      let SubsetResult.Ok(decoded) = SubsetSource.fromNative(s);
+                      CompilerText.sub(decoded, 0)
+                    })),
+                    i
+                  ),
+                  ..acc
+                ],
+                cs
+              )
+            } else {
+              LexError("a character constant must contain exactly one character", i)
+            }
+          },
+          Err(message, offset) => { LexError(message, offset) }
+        }
+      };
+      loop(0, [], [])
+    }
+  }
+};

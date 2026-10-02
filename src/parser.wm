@@ -1,0 +1,1007 @@
+/* Parsing (docs/spec.md §3, §4, §7, §8; Definition §2, §3, Appendix B).
+
+   SubsetML has no exceptions, so every parsing function returns a `res`: either the parsed value
+   with the remaining tokens, or an error. `bind` sequences two parsing steps. */
+
+from "./syntax.wm" import * as Syntax;
+from "./lexer.wm" import * as Lexer;
+from "./sml_option.wm" import * as SmlOption;
+from "./subset_string.wm" import * as SubsetString;
+from "./compiler_text.wm" import * as CompilerText;
+from "./subset_char.wm" import * as SubsetChar;
+from "./subset_list.wm" import * as SubsetList;
+from "./sml_list.wm" import * as SmlList;
+from "./subset_order.wm" import * as SubsetOrder;
+from "./subset_result.wm" import * as SubsetResult;
+
+from "./syntax.wm" import *;
+from "./lexer.wm" import *;
+
+type Toks = List<(Token, Pos)>;
+
+type Res<a> = Done<a, Toks> | Fail<String, Pos>;
+
+let bind = (r) => (k) => {
+  match(r) {
+    Done(x, ts) => { k(x)(ts) },
+    Fail(message, offset) => { Fail(message, offset) }
+  }
+};
+
+let peek = match {
+  [t, .._] => { t },
+  [] => { (TEOF, 0) }
+};
+
+let advance = match {
+  [_, ..rest] => { rest },
+  [] => { [] }
+};
+
+let posOf = (ts) => {
+  let (_, p) = peek(ts);
+  p
+};
+
+let isKey = (k, ts) => {
+  match(peek(ts)) {
+    (TKey(k'), _) => { k == k' },
+    _ => { false }
+  }
+};
+
+// ----------------------------------------------------------------------------------------
+// Fixity (spec §3)
+
+// Precedence and right associativity of the fixed infix identifiers.
+let fixity = match {
+  "*" => { Some(7, false) },
+  "/" => { Some(7, false) },
+  "div" => { Some(7, false) },
+  "mod" => { Some(7, false) },
+  "+" => { Some(6, false) },
+  "-" => { Some(6, false) },
+  "^" => { Some(6, false) },
+  "::" => { Some(5, true) },
+  "@" => { Some(5, true) },
+  "=" => { Some(4, false) },
+  "<>" => { Some(4, false) },
+  "<" => { Some(4, false) },
+  ">" => { Some(4, false) },
+  "<=" => { Some(4, false) },
+  ">=" => { Some(4, false) },
+  "o" => { Some(3, false) },
+  "before" => { Some(0, false) },
+  _ => { None }
+};
+
+let isInfix = (s) => { SmlOption.isSome(fixity(s)) };
+
+let precedence = (s) => {
+  match(fixity(s)) {
+    Some(payload) => {
+      let (p, _) = payload;
+      p
+    },
+    None => { -1 }
+  }
+};
+
+let rightAssoc = (s) => {
+  match(fixity(s)) {
+    Some(payload) => {
+      let (_, r) = payload;
+      r
+    },
+    None => { false }
+  }
+};
+
+// ----------------------------------------------------------------------------------------
+// Errors
+
+let unsupported = match {
+  "abstype" => { Some("`abstype` declarations are") },
+  "with" => { Some("`abstype` declarations are") },
+  "as" => { Some("layered patterns (`as`) are") },
+  "exception" => { Some("exceptions are") },
+  "raise" => { Some("exceptions are") },
+  "handle" => { Some("exceptions are") },
+  "fun" => { Some("`fun` declarations (write `val rec f = fn ...`) are") },
+  "infix" => { Some("fixity declarations are") },
+  "infixr" => { Some("fixity declarations are") },
+  "nonfix" => { Some("fixity declarations are") },
+  "op" => { Some("`op` is") },
+  "local" => { Some("`local` declarations are") },
+  "while" => { Some("`while` loops are") },
+  "do" => { Some("`while` loops are") },
+  "withtype" => { Some("`withtype` is") },
+  "eqtype" => { Some("signatures are") },
+  "signature" => { Some("signatures are") },
+  "sig" => { Some("signatures are") },
+  "include" => { Some("signatures are") },
+  "sharing" => { Some("signatures are") },
+  "where" => { Some("signatures are") },
+  ":>" => { Some("signature ascription is") },
+  "functor" => { Some("functors are") },
+  "..." => { Some("flexible record patterns (`...`) are") },
+  _ => { None }
+};
+
+let describe = match {
+  TKey(k) => { "`" ++ k ++ "`" },
+  TId(s) => { "identifier `" ++ s ++ "`" },
+  TLong(q, s) => {
+    "identifier `" ++ SubsetString.concatWith(List.append(q, [s]), ".") ++ "`"
+  },
+  TTyVar(s) => { "type variable `" ++ s ++ "`" },
+  TScon(_) => { "a constant" },
+  TEOF => { "end of input" }
+};
+
+// An error at the next token, explaining it if it belongs to an omitted feature.
+let expected = (what, ts) => {
+  match(peek(ts)) {
+    (TKey(k), Var(p)) => {
+      match(unsupported(k)) {
+        Some(feature) => { Fail(feature ++ " not part of SubsetML", p) },
+        None => { Fail("expected " ++ what ++ ", found `" ++ k ++ "`", p) }
+      }
+    },
+    (Var(t), Var(p)) => { Fail("expected " ++ what ++ ", found " ++ describe(t), p) }
+  }
+};
+
+let expect = (k, ts) => {
+  if (isKey(k, ts)) { Done(void, advance(ts)) } else { expected("`" ++ k ++ "`", ts) }
+};
+
+// ----------------------------------------------------------------------------------------
+// Identifiers and labels
+
+let isAlnumId = (s) => {
+  match(CompilerText.characters(s)) {
+    [] => { false },
+    [first, ..rest] => { SubsetChar.isAlpha(first) }
+  }
+};
+
+// An alphanumeric identifier that may be bound (spec F1).
+let bindableId = (what, ts) => {
+  match(peek(ts)) {
+    (TId(s), Var(p)) => {
+      match(isInfix(s), isAlnumId(s)) {
+        (true, _) => {
+          Fail("infix identifier `" ++ s ++ "` cannot be bound in SubsetML", p)
+        },
+        (false, true) => { Done(s, advance(ts)) },
+        (false, false) => {
+          Fail("symbolic identifier `" ++ s ++ "` cannot be bound in SubsetML", p)
+        }
+      }
+    },
+    _ => { expected(what, ts) }
+  }
+};
+
+// A long structure identifier, as in `open`.
+let longStrId = (ts) => {
+  match(peek(ts)) {
+    (TId(s), _) => {
+      if (isAlnumId(s)) { Done([s], advance(ts)) } else { expected("a structure name", ts) }
+    },
+    (TLong(q, s), _) => { Done(List.append(q, [s]), advance(ts)) },
+    _ => { expected("a structure name", ts) }
+  }
+};
+
+let isNumericLabel = (s) => {
+  match(CompilerText.characters(s)) {
+    [] => { false },
+    [first, ..rest] => {
+      if (first != '0') { SubsetList.all([first, ..rest], SubsetChar.isDigit) } else { false }
+    }
+  }
+};
+
+// A record label: alphanumeric only in record syntax (spec R4), numeric too after `#`.
+let label = (allowNumeric, ts) => {
+  match(peek(ts)) {
+    (TId(s), _) => {
+      if (isAlnumId(s)) { Done(s, advance(ts)) } else { expected("a record label", ts) }
+    },
+    (TScon(SInt(s)), Var(p)) => {
+      match(isNumericLabel(s), allowNumeric) {
+        (true, true) => { Done(s, advance(ts)) },
+        (true, false) => {
+          Fail("numeric record labels are written with tuple syntax in SubsetML", p)
+        },
+        (false, _) => { expected("a record label", ts) }
+      }
+    },
+    _ => { expected("a record label", ts) }
+  }
+};
+
+let rec duplicateLabel = match {
+  [] => { None },
+  [(Var(l), _), ..rest] => {
+    if (SmlList.exists((l', _) => { l == l' })(rest)) { Some(l) } else { duplicateLabel(rest) }
+  }
+};
+
+// `x1 sep x2 sep ... xn` with n >= 1.
+let rec separated = (item, sep, ts) => {
+  bind(item(ts))((x) => (ts) => {
+    if (isKey(sep, ts)) {
+      bind(separated(item, sep, advance(ts)))((xs) => (ts) => { Done([x, ..xs], ts) })
+    } else { Done([x], ts) }
+  })
+};
+
+// ----------------------------------------------------------------------------------------
+// Infix resolution (Definition §2.6)
+
+type Item<a> = Operand<a> | Operator<String, Pos>;
+
+// Precedence climbing over `lhs (op operand)*`; `make` builds one infix application.
+let rec climb = (make, lhs, rest, minPrec) => {
+  match(rest) {
+    [] => { (lhs, []) },
+    [(Var(opr), Var(p), Var(rhs)), ..more] => {
+      if (precedence(opr) < minPrec) { (lhs, rest) } else {
+        let rec absorb = (rhs, more) => {
+          match(more) {
+            [(Var(opr2), Var(ignoredPos), Var(ignoredOperand)), ..ignoredRest] => {
+              // Precedences are finite constants, so Unordered cannot occur.
+              match(SubsetOrder.compareReal(precedence(opr2), precedence(opr)), rightAssoc(opr2)) {
+                (SubsetResult.Ok(SubsetOrder.Greater), _) => { absorb(climb(make, rhs, more, precedence(opr) + 1)) },
+                (SubsetResult.Ok(SubsetOrder.Equal), true) => { absorb(climb(make, rhs, more, precedence(opr))) },
+                _ => { (rhs, more) }
+              }
+            },
+            [] => { (rhs, more) }
+          }
+        };
+        let (rhs', more') = absorb(rhs, more);
+        climb(make, make(opr, p, lhs, rhs'), more', minPrec)
+      }
+    }
+  }
+};
+
+/* Turns `operand (operator operand)*` into a tree. `group` combines a run of adjacent
+   operands (application); it may reject the run. */
+let resolve = (group, make, items, start) => {
+  let rec operands = (items, acc) => {
+    match(items) {
+      [Operand(x), ..rest] => { operands(rest, [x, ..acc]) },
+      _ => { (SmlList.rev(acc), items) }
+    }
+  };
+
+  let rec pairs = (items, acc) => {
+    match(items) {
+      [] => { Done(SmlList.rev(acc), []) },
+      [Operator(opr, p), ..rest] => {
+        match(operands(rest, [])) {
+          ([], _) => {
+            Fail("infix operator `" ++ opr ++ "` is missing its right operand", p)
+          },
+          (Var(xs), Var(rest')) => {
+            bind(group(xs))((x) => (_) => { pairs(rest', [(opr, p, x), ..acc]) })
+          }
+        }
+      },
+      [Operand(ignoredOperand), ..ignoredRest] => { Fail("internal error in infix resolution", start) }
+    }
+  };
+  match(operands(items, [])) {
+    ([], [Operator(opr, p), .._]) => {
+      Fail(
+        "infix operator `" ++ opr ++ "` is missing its left operand (`op` is not part of SubsetML)",
+        p
+      )
+    },
+    ([], _) => { Fail("expected an expression or pattern", start) },
+    (Var(xs), Var(rest)) => {
+      bind(group(xs))((first) => (_) => {
+        bind(pairs(rest, []))((ps) => (_) => {
+          Done(
+            {
+              let (tree, _) = climb(make, first, ps, 0);
+              tree
+            },
+            []
+          )
+        })
+      })
+    }
+  }
+};
+
+let applyExp = match {
+  [f, ..args] => { Done(SmlList.foldl((a, f) => { EApp(f, a) })(f)(args), []) },
+  [] => { Fail("internal error: empty application", 0) }
+};
+
+let infixExp = (opr, p, l, r) => { EApp(EId(p, ([], opr)), ETuple([l, r])) };
+
+let infixPat = (opr, p, l, r) => { PApp(p, ([], opr), PTuple([l, r])) };
+
+// ----------------------------------------------------------------------------------------
+// Type expressions
+
+let startsTyCon = (ts) => {
+  match(peek(ts)) {
+    (TId(s), _) => { if (isAlnumId(s)) { !isInfix(s) } else { false } },
+    (TLong(ignoredQualifiers, ignoredName), Var(ignoredPos)) => { true },
+    _ => { false }
+  }
+};
+
+let tyConName = (ts) => {
+  match(peek(ts)) {
+    (TId(s), _) => { ([], s) },
+    (TLong(q, s), _) => { (q, s) },
+    _ => { ([], "") }
+  }
+};
+
+let isStar = (ts) => {
+  match(peek(ts)) {
+    (TId("*"), _) => { true },
+    _ => { false }
+  }
+};
+
+let rec parseTy = (ts) => {
+  bind(parseTupleTy(ts))((t) => (ts) => {
+    if (isKey("->", ts)) {
+      bind(parseTy(advance(ts)))((r) => (ts) => { Done(TyArrow(t, r), ts) })
+    } else { Done(t, ts) }
+  })
+}
+
+and parseTupleTy = (ts) => {
+  let rec more = (acc, ts) => {
+    if (isStar(ts)) {
+      bind(parseAppTy(advance(ts)))((t) => (ts) => { more([t, ..acc], ts) })
+    } else { Done(SmlList.rev(acc), ts) }
+  };
+  bind(parseAppTy(ts))((t) => (ts) => {
+    bind(more([t], ts))((parts) => (ts) => {
+      match(parts) {
+        [single] => { Done(single, ts) },
+        _ => { Done(TyTuple(parts), ts) }
+      }
+    })
+  })
+}
+
+// An atomic type followed by any number of postfix type constructors.
+and parseAppTy = (ts) => {
+  let rec postfix = (args, ts) => {
+    if (startsTyCon(ts)) { postfix([TyCon(args, tyConName(ts))], advance(ts)) } else { Done(args, ts) }
+  };
+  let finish = (args, ts) => {
+    bind(postfix(args, ts))((result) => (ts') => {
+      match(result) {
+        [t] => { Done(t, ts') },
+        _ => { expected("a type constructor after a type sequence", ts') }
+      }
+    })
+  };
+  match(peek(ts)) {
+    (TTyVar(v), _) => { finish([TyVar(v)], advance(ts)) },
+    (TKey("("), _) => {
+      bind(separated(parseTy, ",", advance(ts)))((args) => (ts) => { bind(expect(")", ts))((_) => (ts) => { finish(args, ts) }) })
+    },
+    (TKey("{"), Var(p)) => {
+      Fail("record types may only appear as the whole right side of a `type` binding", p)
+    },
+    _ => {
+      if (startsTyCon(ts)) { finish([TyCon([], tyConName(ts))], advance(ts)) } else { expected("a type", ts) }
+    }
+  }
+};
+
+let parseRecordTy = (ts) => {
+  let start = posOf(ts);
+  let field = (ts) => {
+    bind(label(false, ts))((l) => (ts) => {
+      bind(expect(":", ts))((_) => (ts) => { bind(parseTy(ts))((t) => (ts) => { Done((l, t), ts) }) })
+    })
+  };
+  bind(expect("{", ts))((_) => (ts) => {
+    if (isKey("}", ts)) {
+      Fail("empty record types are written `unit` in SubsetML", start)
+    } else {
+      bind(separated(field, ",", ts))((fields) => (ts) => {
+        bind(expect("}", ts))((_) => (ts) => {
+          match(duplicateLabel(fields)) {
+            Some(l) => {
+              Fail("label `" ++ l ++ "` appears twice in a record type", start)
+            },
+            None => { Done(TyRecord(fields), ts) }
+          }
+        })
+      })
+    }
+  })
+};
+
+// ----------------------------------------------------------------------------------------
+// Patterns
+
+let startsAtPat = (ts) => {
+  match(peek(ts)) {
+    (TKey(k), _) => {
+      if (if (if (k == "_") { true } else { k == "(" }) { true } else { k == "[" }) { true } else { k == "{" }
+    },
+    (TId(s), _) => { !isInfix(s) },
+    (TLong(ignoredQualifiers, ignoredName), Var(ignoredPos)) => { true },
+    (TScon(ignoredConstant), Var(ignoredPos)) => { true },
+    _ => { false }
+  }
+};
+
+let rec parsePat = (ts) => { bind(parseInfixPat(ts))((p) => (ts) => { typedPat(p, ts) }) }
+
+and typedPat = (p, ts) => {
+  match(peek(ts)) {
+    (TKey(":"), _) => {
+      bind(parseTy(advance(ts)))((t) => (ts) => { typedPat(PTyped(p, t), ts) })
+    },
+    (TKey("as"), _) => { expected("", ts) },
+    _ => { Done(p, ts) }
+  }
+}
+
+and parseInfixPat = (ts) => {
+  let start = posOf(ts);
+  let rec collect = (acc, ts) => {
+    match(peek(ts)) {
+      (TId(s), Var(p)) => {
+        if (isInfix(s)) { collect([Operator(s, p), ..acc], advance(ts)) } else { atom(acc, ts) }
+      },
+      _ => {
+        if (startsAtPat(ts)) { atom(acc, ts) } else { Done(SmlList.rev(acc), ts) }
+      }
+    }
+  }
+  and atom = (acc, ts) => {
+    bind(parseAtPat(ts))((p) => (ts) => { collect([Operand(p), ..acc], ts) })
+  };
+  let group = match {
+    [x] => { Done(x, []) },
+    [PId(p, c), arg] => { Done(PApp(p, c, arg), []) },
+    [ignoredFirst, ignoredSecond] => {
+      Fail("only a constructor can be applied in a pattern", start)
+    },
+    _ => { Fail("too many atomic patterns in a row", start) }
+  };
+  bind(collect([], ts))((items) => (ts) => {
+    bind(resolve(group, infixPat, items, start))((p) => (_) => { Done(p, ts) })
+  })
+}
+
+and parseAtPat = (ts) => {
+  match(peek(ts)) {
+    (TKey("_"), _) => { Done(PWild, advance(ts)) },
+    (TScon(SReal(_)), Var(p)) => { Fail("real constants may not occur in patterns", p) },
+    (TScon(c), Var(p)) => { Done(PScon(p, c), advance(ts)) },
+    (TId(s), Var(p)) => { Done(PId(p, ([], s)), advance(ts)) },
+    (TLong(q, s), Var(p)) => { Done(PId(p, (q, s)), advance(ts)) },
+    (TKey("("), _) => {
+      if (isKey(")", advance(ts))) { Done(PTuple([]), advance(advance(ts))) } else {
+        bind(separated(parsePat, ",", advance(ts)))((ps) => (ts) => {
+          bind(expect(")", ts))((_) => (ts) => {
+            match(ps) {
+              [p] => { Done(p, ts) },
+              _ => { Done(PTuple(ps), ts) }
+            }
+          })
+        })
+      }
+    },
+    (TKey("["), _) => {
+      if (isKey("]", advance(ts))) { Done(PList([]), advance(advance(ts))) } else {
+        bind(separated(parsePat, ",", advance(ts)))((ps) => (ts) => {
+          bind(expect("]", ts))((_) => (ts) => { Done(PList(ps), ts) })
+        })
+      }
+    },
+    (TKey("{"), Var(p)) => { parseRecordPat(p, advance(ts)) },
+    _ => { expected("a pattern", ts) }
+  }
+}
+
+and parseRecordPat = (start, ts) => {
+  // `lab = pat`, or the punned `lab <: ty>` (Appendix A).
+  let field = (ts) => {
+    bind(label(false, ts))((l) => (ts') => {
+      if (isKey("=", ts')) {
+        bind(parsePat(advance(ts')))((p) => (ts) => { Done((l, p), ts) })
+      } else {
+        let var = PId(posOf(ts), ([], l));
+        if (isInfix(l)) {
+          Fail("infix identifier `" ++ l ++ "` cannot be bound in SubsetML", posOf(ts))
+        } else {
+          match(peek(ts')) {
+            (TKey(":"), _) => {
+              bind(parseTy(advance(ts')))((t) => (ts) => { Done((l, PTyped(var, t)), ts) })
+            },
+            _ => { Done((l, var), ts') }
+          }
+        }
+      }
+    })
+  };
+  if (isKey("}", ts)) {
+    Fail("the empty record pattern is written `()` in SubsetML", start)
+  } else {
+    bind(separated(field, ",", ts))((fields) => (ts) => {
+      bind(expect("}", ts))((_) => (ts) => {
+        match(duplicateLabel(fields)) {
+          Some(l) => {
+            Fail("label `" ++ l ++ "` appears twice in a record pattern", start)
+          },
+          None => { Done(PRecord(start, fields), ts) }
+        }
+      })
+    })
+  }
+};
+
+// ----------------------------------------------------------------------------------------
+// Expressions and declarations
+
+let startsAtExp = (ts) => {
+  match(peek(ts)) {
+    (TKey(k), _) => {
+      if (if (if (if (k == "(") { true } else { k == "[" }) { true } else { k == "{" }) { true } else { k == "#" }) { true } else { k == "let" }
+    },
+    (TId(s), _) => { !isInfix(s) },
+    (TLong(ignoredQualifiers, ignoredName), Var(ignoredPos)) => { true },
+    (TScon(ignoredConstant), Var(ignoredPos)) => { true },
+    _ => { false }
+  }
+};
+
+let startsInfixOp = (ts) => {
+  match(peek(ts)) {
+    (TId(s), _) => { isInfix(s) },
+    (TKey("="), _) => { true },
+    _ => { false }
+  }
+};
+
+// Keywords that start an expression extending as far right as possible.
+let startsLowExp = (ts) => {
+  if (if (isKey("fn", ts)) { true } else { isKey("case", ts) }) { true } else { isKey("if", ts) }
+};
+
+let startsDec = (ts) => {
+  if (if (if (isKey("val", ts)) { true } else { isKey("type", ts) }) { true } else { isKey("datatype", ts) }) { true } else { isKey("open", ts) }
+};
+
+let rec parseExp = (ts) => {
+  match(peek(ts)) {
+    (TKey("fn"), _) => {
+      bind(parseMatch(advance(ts)))((m) => (ts) => { Done(EFn(m), ts) })
+    },
+    (TKey("case"), _) => {
+      bind(parseExp(advance(ts)))((e) => (ts) => {
+        bind(expect("of", ts))((_) => (ts) => {
+          bind(parseMatch(ts))((m) => (ts) => { Done(ECase(e, m), ts) })
+        })
+      })
+    },
+    (TKey("if"), _) => {
+      bind(parseExp(advance(ts)))((c) => (ts) => {
+        bind(expect("then", ts))((_) => (ts) => {
+          bind(parseExp(ts))((a) => (ts) => {
+            bind(expect("else", ts))((_) => (ts) => {
+              if (isKey("if", ts)) {
+                Fail(
+                  "`else if` is not part of SubsetML; write `else (if ...)` or use `case`",
+                  posOf(ts)
+                )
+              } else {
+                bind(parseExp(ts))((b) => (ts) => { Done(EIf(c, a, b), ts) })
+              }
+            })
+          })
+        })
+      })
+    },
+    _ => { parseOrelse(ts) }
+  }
+}
+
+// The right operand of `andalso`/`orelse` may itself be a `fn`, `case` or `if`.
+and lowOrElse = (next, ts) => { if (startsLowExp(ts)) { parseExp(ts) } else { next(ts) } }
+
+and parseOrelse = (ts) => {
+  let rec more = (l, ts) => {
+    if (isKey("orelse", ts)) {
+      bind(lowOrElse(parseAndalso, advance(ts)))((r) => (ts) => { more(EOrelse(l, r), ts) })
+    } else { Done(l, ts) }
+  };
+  bind(parseAndalso(ts))((l) => (ts) => { more(l, ts) })
+}
+
+and parseAndalso = (ts) => {
+  let rec more = (l, ts) => {
+    if (isKey("andalso", ts)) {
+      bind(lowOrElse(parseTyped, advance(ts)))((r) => (ts) => { more(EAndalso(l, r), ts) })
+    } else { Done(l, ts) }
+  };
+  bind(parseTyped(ts))((l) => (ts) => { more(l, ts) })
+}
+
+and parseTyped = (ts) => {
+  let rec more = (e, ts) => {
+    match(peek(ts)) {
+      (TKey(":"), _) => {
+        bind(parseTy(advance(ts)))((t) => (ts) => { more(ETyped(e, t), ts) })
+      },
+      (TKey("handle"), _) => { expected("", ts) },
+      _ => { Done(e, ts) }
+    }
+  };
+  bind(parseInfixExp(ts))((e) => (ts) => { more(e, ts) })
+}
+
+and parseInfixExp = (ts) => {
+  let start = posOf(ts);
+  let rec collect = (acc, ts) => {
+    match(peek(ts)) {
+      (TId(s), Var(p)) => {
+        if (isInfix(s)) { collect([Operator(s, p), ..acc], advance(ts)) } else { atom(acc, ts) }
+      },
+      (TKey("="), Var(p)) => { collect([Operator("=", p), ..acc], advance(ts)) },
+      _ => {
+        if (startsAtExp(ts)) { atom(acc, ts) } else { Done(SmlList.rev(acc), ts) }
+      }
+    }
+  }
+  and atom = (acc, ts) => {
+    bind(parseAtExp(ts))((e) => (ts) => { collect([Operand(e), ..acc], ts) })
+  };
+  if (if (startsAtExp(ts)) { true } else { startsInfixOp(ts) }) {
+    bind(collect([], ts))((items) => (ts) => {
+      bind(resolve(applyExp, infixExp, items, start))((e) => (_) => { Done(e, ts) })
+    })
+  } else { expected("an expression", ts) }
+}
+
+and parseAtExp = (ts) => {
+  match(peek(ts)) {
+    (TScon(c), Var(p)) => { Done(EScon(p, c), advance(ts)) },
+    (TId(s), Var(p)) => { Done(EId(p, ([], s)), advance(ts)) },
+    (TLong(q, s), Var(p)) => { Done(EId(p, (q, s)), advance(ts)) },
+    (TKey("#"), Var(p)) => {
+      match(peek(advance(ts))) {
+        (TScon(SInt(_)), Var(q)) => {
+          Fail(
+            "tuple selectors (#1, #2, ...) are not part of SubsetML; use a pattern such as (_, x)",
+            q
+          )
+        },
+        _ => {
+          bind(label(false, advance(ts)))((l) => (ts) => { Done(ESelect(p, l), ts) })
+        }
+      }
+    },
+    (TKey("("), _) => { parseParenExp(advance(ts)) },
+    (TKey("["), _) => {
+      if (isKey("]", advance(ts))) { Done(EList([]), advance(advance(ts))) } else {
+        bind(separated(parseExp, ",", advance(ts)))((es) => (ts) => {
+          bind(expect("]", ts))((_) => (ts) => { Done(EList(es), ts) })
+        })
+      }
+    },
+    (TKey("{"), Var(p)) => { parseRecordExp(p, advance(ts)) },
+    (TKey("let"), _) => {
+      bind(parseDecs(advance(ts)))((ds) => (ts) => {
+        bind(expect("in", ts))((_) => (ts) => {
+          bind(separated(parseExp, ";", ts))((es) => (ts) => {
+            bind(expect("end", ts))((_) => (ts) => { Done(ELet(ds, es), ts) })
+          })
+        })
+      })
+    },
+    _ => { expected("an expression", ts) }
+  }
+}
+
+// After `(`: unit, a parenthesised expression, a tuple or a sequence.
+and parseParenExp = (ts) => {
+  if (isKey(")", ts)) { Done(ETuple([]), advance(ts)) } else {
+    bind(parseExp(ts))((e) => (ts) => {
+      match(peek(ts)) {
+        (TKey(","), _) => {
+          bind(separated(parseExp, ",", advance(ts)))((es) => (ts) => {
+            bind(expect(")", ts))((_) => (ts) => { Done(ETuple([e, ..es]), ts) })
+          })
+        },
+        (TKey(";"), _) => {
+          bind(separated(parseExp, ";", advance(ts)))((es) => (ts) => {
+            bind(expect(")", ts))((_) => (ts) => { Done(ESeq([e, ..es]), ts) })
+          })
+        },
+        _ => { bind(expect(")", ts))((_) => (ts) => { Done(e, ts) }) }
+      }
+    })
+  }
+}
+
+and parseRecordExp = (start, ts) => {
+  let field = (ts) => {
+    bind(label(false, ts))((l) => (ts) => {
+      bind(expect("=", ts))((_) => (ts) => { bind(parseExp(ts))((e) => (ts) => { Done((l, e), ts) }) })
+    })
+  };
+  if (isKey("}", ts)) { Fail("the empty record is written `()` in SubsetML", start) } else {
+    bind(separated(field, ",", ts))((fields) => (ts) => {
+      bind(expect("}", ts))((_) => (ts) => {
+        match(duplicateLabel(fields)) {
+          Some(l) => {
+            Fail("label `" ++ l ++ "` appears twice in a record expression", start)
+          },
+          None => { Done(ERecord(start, fields), ts) }
+        }
+      })
+    })
+  }
+}
+
+and parseMatch = (ts) => {
+  let rule = (ts) => {
+    bind(parsePat(ts))((p) => (ts) => {
+      bind(expect("=>", ts))((_) => (ts) => { bind(parseExp(ts))((e) => (ts) => { Done((p, e), ts) }) })
+    })
+  };
+  separated(rule, "|", ts)
+}
+
+// `'a` or `('a, ..., 'z)` before the bindings of `val`, `type` and `datatype`.
+and parseTyVarSeq = (ts) => {
+  match(peek(ts), peek(advance(ts))) {
+    ((TTyVar(v), _), _) => { Done([v], advance(ts)) },
+    (
+      (TKey("("), Var(ignoredFirstPos)),
+      (TTyVar(ignoredVariable), Var(ignoredSecondPos))
+    ) => {
+      let tyvar = (ts) => {
+        match(peek(ts)) {
+          (TTyVar(v), _) => { Done(v, advance(ts)) },
+          _ => { expected("a type variable", ts) }
+        }
+      };
+      bind(separated(tyvar, ",", advance(ts)))((vs) => (ts) => { bind(expect(")", ts))((_) => (ts) => { Done(vs, ts) }) })
+    },
+    _ => { Done([], ts) }
+  }
+}
+
+and parseDecs = (ts) => {
+  match(isKey(";", ts), startsDec(ts)) {
+    (true, _) => { parseDecs(advance(ts)) },
+    (false, true) => {
+      bind(parseDec(ts))((d) => (ts) => { bind(parseDecs(ts))((ds) => (ts) => { Done([d, ..ds], ts) }) })
+    },
+    (false, false) => { Done([], ts) }
+  }
+}
+
+and parseDec = (ts) => {
+  let p = posOf(ts);
+  match(peek(ts)) {
+    (TKey("val"), _) => {
+      bind(parseTyVarSeq(advance(ts)))((vs) => (ts) => {
+        bind(parseValBind(false, [], [], ts))((plain, recs) => (ts) => { Done(DVal(p, vs, plain, recs), ts) })
+      })
+    },
+    (TKey("type"), _) => {
+      bind(separated(parseTypBind, "and", advance(ts)))((bs) => (ts) => { Done(DType(p, bs), ts) })
+    },
+    (TKey("datatype"), _) => {
+      bind(separated(parseDatBind, "and", advance(ts)))((bs) => (ts) => { Done(DDatatype(p, bs), ts) })
+    },
+    (TKey("open"), _) => {
+      let rec more = (acc, ts) => {
+        match(peek(ts)) {
+          (TId(s), _) => {
+            if (if (isAlnumId(s)) { !isInfix(s) } else { false }) {
+              bind(longStrId(ts))((id) => (ts) => { more([id, ..acc], ts) })
+            } else { Done(SmlList.rev(acc), ts) }
+          },
+          (TLong(ignoredQualifiers, ignoredName), Var(ignoredPos)) => {
+            bind(longStrId(ts))((id) => (ts) => { more([id, ..acc], ts) })
+          },
+          _ => { Done(SmlList.rev(acc), ts) }
+        }
+      };
+      bind(longStrId(advance(ts)))((first) => (ts) => {
+        bind(more([first], ts))((ids) => (ts) => { Done(DOpen(p, ids), ts) })
+      })
+    },
+    _ => { expected("a declaration", ts) }
+  }
+}
+
+// valbind ::= pat = exp <and valbind> | rec valbind. Bindings after `rec` are recursive.
+and parseValBind = (isRec, plain, recs, ts) => {
+  if (isKey("rec", ts)) { parseValBind(true, plain, recs, advance(ts)) } else {
+    bind(parsePat(ts))((pat) => (ts) => {
+      bind(expect("=", ts))((_) => (ts) => {
+        let bodyPos = posOf(ts);
+        bind(parseExp(ts))((e) => (ts) => {
+          let ok = match(e) {
+            EFn(_) => { true },
+            _ => { !isRec }
+          };
+          let plain' = if (isRec) { plain } else { [(pat, e), ..plain] };
+          let recs' = if (isRec) { [(pat, e), ..recs] } else { recs };
+          match(ok, isKey("and", ts)) {
+            (false, _) => {
+              Fail("the right side of a `rec` binding must be `fn match`", bodyPos)
+            },
+            (true, true) => { parseValBind(isRec, plain', recs', advance(ts)) },
+            (true, false) => { Done((SmlList.rev(plain'), SmlList.rev(recs')), ts) }
+          }
+        })
+      })
+    })
+  }
+}
+
+and parseTypBind = (ts) => {
+  bind(parseTyVarSeq(ts))((vs) => (ts) => {
+    bind(bindableId("a type constructor name", ts))((tycon) => (ts) => {
+      bind(expect("=", ts))((_) => (ts) => {
+        if (isKey("{", ts)) {
+          bind(parseRecordTy(ts))((t) => (ts) => { Done((vs, tycon, t), ts) })
+        } else {
+          bind(parseTy(ts))((t) => (ts) => { Done((vs, tycon, t), ts) })
+        }
+      })
+    })
+  })
+}
+
+and parseDatBind = (ts) => {
+  let conbind = (ts) => {
+    bind(bindableId("a constructor name", ts))((con) => (ts') => {
+      if (isKey("of", ts')) {
+        bind(parseTy(advance(ts')))((t) => (ts') => { Done((posOf(ts), con, Some(t)), ts') })
+      } else { Done((posOf(ts), con, None), ts') }
+    })
+  };
+  bind(parseTyVarSeq(ts))((vs) => (ts) => {
+    bind(bindableId("a type constructor name", ts))((tycon) => (ts) => {
+      bind(expect("=", ts))((_) => (ts) => {
+        if (isKey("datatype", ts)) {
+          Fail("datatype replication is not part of SubsetML", posOf(ts))
+        } else {
+          bind(separated(conbind, "|", ts))((cons) => (ts) => { Done((vs, tycon, cons), ts) })
+        }
+      })
+    })
+  })
+};
+
+// ----------------------------------------------------------------------------------------
+// Structures and programs
+
+let parseStrBind = (ts) => {
+  bind(bindableId("a structure name", ts))((name) => (ts) => {
+    if (isKey(":", ts)) {
+      Fail("signature ascription is not part of SubsetML", posOf(ts))
+    } else {
+      bind(expect("=", ts))((_) => (ts) => {
+        if (!isKey("struct", ts)) {
+          Fail("only `struct ... end` structure expressions are part of SubsetML", posOf(ts))
+        } else {
+          bind(parseDecs(advance(ts)))((ds) => (ts) => {
+            if (isKey("structure", ts)) {
+              Fail("nested structures are not part of SubsetML", posOf(ts))
+            } else {
+              bind(expect("end", ts))((_) => (ts) => { Done((name, ds), ts) })
+            }
+          })
+        }
+      })
+    }
+  })
+};
+
+let rec parseStrDecs = (ts) => {
+  match(isKey("structure", ts), startsDec(ts)) {
+    (true, _) => {
+      bind(separated(parseStrBind, "and", advance(ts)))((bs) => (ts') => {
+        bind(parseStrDecs(ts'))((rest) => (ts') => { Done([SStructure(posOf(ts), bs), ..rest], ts') })
+      })
+    },
+    (false, true) => {
+      bind(parseDec(ts))((d) => (ts) => {
+        bind(parseStrDecs(ts))((rest) => (ts) => { Done([SDec(d), ..rest], ts) })
+      })
+    },
+    (false, false) => { Done([], ts) }
+  }
+};
+
+let endOfPhrase = (ts) => {
+  if (isKey(";", ts)) { true } else {
+    match(peek(ts)) {
+      (TEOF, _) => { true },
+      _ => { false }
+    }
+  }
+};
+
+// program ::= topdec ; <program> | exp ; <program> (Definition §8).
+let parseProgram = (ts) => {
+  let rec phrases = (acc, ts) => {
+    if (isKey(";", ts)) { phrases(acc, advance(ts)) } else {
+      match(peek(ts)) {
+        (TEOF, _) => { Done(SmlList.rev(acc), ts) },
+        (_, Var(p)) => {
+          if (if (isKey("structure", ts)) { true } else { startsDec(ts) }) {
+            bind(parseStrDecs(ts))((sds) => (ts) => {
+              if (endOfPhrase(ts)) { phrases([TopDecs(sds), ..acc], ts) } else { expected("a declaration or `;`", ts) }
+            })
+          } else {
+            bind(parseExp(ts))((e) => (ts) => {
+              if (endOfPhrase(ts)) { phrases([TopExp(p, e), ..acc], ts) } else { expected("`;` after a top-level expression", ts) }
+            })
+          }
+        }
+      }
+    }
+  };
+  phrases([], ts)
+};
+
+// Spec M1: a file contains at most one structure.
+let checkFile = (prog) => {
+  let structures = SmlList.concat(SmlList.map(match {
+    TopDecs(sds) => {
+      SmlList.concat(SmlList.map(match {
+        SStructure(p, binds) => { SmlList.map((_) => { p })(binds) },
+        SDec(_) => { [] }
+      })(sds))
+    },
+    TopExp(ignoredPos, ignoredExpression) => { [] }
+  })(prog));
+  match(structures) {
+    [ignoredFirst, second, ..ignoredRest] => { Some("a file may contain only one structure", second) },
+    _ => { None }
+  }
+};
+
+type Result = Program<List<Topdec>, List<Comment>> | ParseError<String, Pos>;
+
+let parse = (src) => {
+  match(Lexer.lex(src)) {
+    LexError(message, offset) => { ParseError(message, offset) },
+    Tokens(ts, comments) => {
+      match(parseProgram(ts)) {
+        Done(prog, _) => {
+          match(checkFile(prog)) {
+            None => { Program(prog, comments) },
+            Some(error) => {
+              let (message, offset) = error;
+              ParseError(message, offset)
+            }
+          }
+        },
+        Fail(message, offset) => { ParseError(message, offset) }
+      }
+    }
+  }
+};

@@ -1,0 +1,24 @@
+/* Portable paired-list algorithms for the custom SubsetML Basis.
+   Current signatures follow their SML origins and stop at the shorter list.
+   Checked variants and Result-based APIs remain to be designed (docs/basis.md). */
+
+from "./sml_list.wm" import * as SmlList;
+
+let zip = (xs, ys) => {
+  let rec go = match {
+    ([x, ..xs], [y, ..ys], Var(acc)) => { go(xs, ys, [(x, y), ..acc]) },
+    ([], Var(ys), Var(acc)) => { SmlList.rev(acc) },
+    (Var(xs), [], Var(acc)) => { SmlList.rev(acc) }
+  };
+  go(xs, ys, [])
+};
+
+let unzip = (pairs) => {
+  let (xs, ys) = SmlList.foldl(((x, y), (xs, ys)) => { ([x, ..xs], [y, ..ys]) })([], [])(pairs);
+  (SmlList.rev(xs), SmlList.rev(ys))
+};
+
+let map = (f) => (lists) => { SmlList.map(f)(zip(lists)) };
+let app = (f) => (lists) => { SmlList.app(f)(zip(lists)) };
+let all = (p) => (lists) => { SmlList.all(p)(zip(lists)) };
+let exists = (p) => (lists) => { SmlList.exists(p)(zip(lists)) };

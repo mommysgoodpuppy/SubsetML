@@ -1,0 +1,1 @@
+let bad = match(1) { 1 => { true }, _ => { false } };

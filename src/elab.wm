@@ -1,0 +1,1104 @@
+/* Elaboration: the static semantics of the Core and of SubsetML's top-level structures
+   (Definition §4, §5), plus the SubsetML restrictions that need types (spec §6, §7, §9).
+
+   Errors stop elaboration: each function returns Unify.res. Declarations elaborate the right
+   sides of `val` one level deeper than their context, so that the type variables left above
+   the context's level at the end can be generalized (Unify). */
+
+from "./syntax.wm" import * as Syntax;
+from "./unify.wm" import * as Unify;
+from "./env.wm" import * as Env;
+from "./sml_list.wm" import * as SmlList;
+from "./sml_list_pair.wm" import * as SmlListPair;
+
+from "./syntax.wm" import *;
+from "./unify.wm" import *;
+from "./env.wm" import *;
+
+// The context: environment, level, and the explicit type variables in scope.
+type Context = (Env, Number, List<String>);
+
+let envOf = (env, _, _) => { env };
+let scopedOf = (_, _, scoped) => { scoped };
+
+// ---------------------------------------------------------------------------------------
+// Helpers
+
+let concatMap = (f, xs) => { SmlList.concat(SmlList.map(f)(xs)) };
+
+let member = (x, xs) => { SmlList.exists((y) => { y == x })(xs) };
+
+let memberReal = (x, xs) => { SmlList.exists((y) => { (y: Number) == x })(xs) };
+
+let longName = (qs, x) => { String.concatWith(".")(List.append(qs, [x])) };
+
+// Folds a res-returning step over a list.
+let rec foldRes = (f, acc, xs, st) => {
+  match(xs) {
+    [] => { Ok(acc, st) },
+    [x, ..rest] => {
+      bind(f(acc, x, st))((acc') => (st') => { foldRes(f, acc', rest, st') })
+    }
+  }
+};
+
+let mapRes = (f, xs, st) => {
+  bind(foldRes(
+    (acc, x, st) => {
+      bind(f(x, st))((y) => (st) => { Ok(List.append(acc, [y]), st) })
+    },
+    [],
+    xs,
+    st
+  ))((ys) => (st) => { Ok(ys, st) })
+};
+
+// The first source position inside a phrase, if any.
+let rec patPos = (p) => {
+  match(p) {
+    PScon(q, _) => { Some(q) },
+    PId(q, _) => { Some(q) },
+    PRecord(q, _) => { Some(q) },
+    PApp(q, _, _) => { Some(q) },
+    PTuple(ps) => {
+      SmlList.foldl((x, acc) => {
+        match(acc) {
+          Some(_) => { acc },
+          None => { patPos(x) }
+        }
+      })(None)(ps)
+    },
+    PList(ps) => {
+      SmlList.foldl((x, acc) => {
+        match(acc) {
+          Some(_) => { acc },
+          None => { patPos(x) }
+        }
+      })(None)(ps)
+    },
+    PTyped(q, _) => { patPos(q) },
+    PWild => { None }
+  }
+};
+
+let rec expPos = (e) => {
+  let first = (es) => {
+    SmlList.foldl((x, acc) => {
+      match(acc) {
+        Some(_) => { acc },
+        None => { expPos(x) }
+      }
+    })(None)(es)
+  };
+  match(e) {
+    EScon(q, _) => { Some(q) },
+    EId(q, _) => { Some(q) },
+    ERecord(q, _) => { Some(q) },
+    ESelect(q, _) => { Some(q) },
+    ETuple(es) => { first(es) },
+    EList(es) => { first(es) },
+    ESeq(es) => { first(es) },
+    ELet(_, es) => { first(es) },
+    EApp(f, a) => { first([f, a]) },
+    ETyped(x, _) => { expPos(x) },
+    EAndalso(a, b) => { first([a, b]) },
+    EOrelse(a, b) => { first([a, b]) },
+    EIf(c, a, b) => { first([c, a, b]) },
+    ECase(x, _) => { expPos(x) },
+    EFn(rules) => {
+      match(rules) {
+        [(Var(p), Var(x)), .._] => {
+          match(patPos(p)) {
+            Some(q) => { Some(q) },
+            None => { expPos(x) }
+          }
+        },
+        [] => { None }
+      }
+    }
+  }
+};
+
+let at = (fallback, found) => {
+  match(found) {
+    Some(q) => { q },
+    None => { fallback }
+  }
+};
+
+// Unifies, or reports `what` with both types.
+let unifyAt = (st, pos, what, expected, found) => {
+  match(unify(st, expected, found)) {
+    Unified(st') => { Ok(void, st') },
+    Mismatch(reason) => {
+      match(showAll(st, [expected, found])) {
+        [e, f] => {
+          Err(
+            what ++ ": expected " ++ e ++ ", found " ++ f ++ (if (reason == "") { "" } else { " (" ++ reason ++ ")" }),
+            pos
+          )
+        },
+        _ => { Err(what, pos) }
+      }
+    }
+  }
+};
+
+// ---------------------------------------------------------------------------------------
+// Type expressions. `tyvar` resolves explicit type variables.
+
+let rec elabTy = (env, tyvar, pos, t, st) => {
+  match(t) {
+    TyVar(v) => {
+      match(tyvar(v)) {
+        Some(t') => { Ok(t', st) },
+        None => { Err("unbound type variable " ++ v, pos) }
+      }
+    },
+    TyCon(args, id) => {
+      match(Env.tycon(env, id)) {
+        None => { Err("unbound type constructor " ++ longName(id), pos) },
+        Some(TyStr(arity, body, _)) => {
+          if ((arity: Number) != List.length(args)) {
+            Err(
+              "type constructor " ++ longName(id) ++ " takes " ++ Number.toString(arity) ++ " argument(s), given " ++ Number.toString(List.length(args)),
+              pos
+            )
+          } else {
+            bind(mapRes((a, st) => { elabTy(env, tyvar, pos, a, st) }, args, st))((args') => (st) => { Ok(substGen(args', body), st) })
+          }
+        }
+      }
+    },
+    TyTuple(ts) => {
+      bind(mapRes((a, st) => { elabTy(env, tyvar, pos, a, st) }, ts, st))((ts') => (st) => { Ok(tupleTy(ts'), st) })
+    },
+    TyArrow(a, b) => {
+      bind(elabTy(env, tyvar, pos, a, st))((a') => (st) => {
+        bind(elabTy(env, tyvar, pos, b, st))((b') => (st) => { Ok(TArrow(a', b'), st) })
+      })
+    },
+    TyRecord(fields) => {
+      bind(mapRes(
+        ((l, a), st) => {
+          bind(elabTy(env, tyvar, pos, a, st))((a') => (st) => { Ok((l, a'), st) })
+        },
+        fields,
+        st
+      ))((fields') => (st) => { Ok(TRecord(sortFields(fields')), st) })
+    }
+  }
+};
+
+// An explicit type variable in scope stands for itself.
+let scopedTy = ((env, _, scoped), pos, t, st) => {
+  elabTy(
+    env,
+    (v) => { if (member(v, scoped)) { Some(TRigid(v)) } else { None } },
+    pos,
+    t,
+    st
+  )
+};
+
+// ---------------------------------------------------------------------------------------
+/* Explicit type variables occurring unguarded in a value declaration (Definition §4.6):
+   those in its annotations, not counting nested value declarations. */
+
+let rec tyVarsOf = (t) => {
+  match(t) {
+    TyVar(v) => { [v] },
+    TyCon(args, _) => { concatMap(tyVarsOf, args) },
+    TyTuple(ts) => { concatMap(tyVarsOf, ts) },
+    TyArrow(a, b) => { List.append(tyVarsOf(a), tyVarsOf(b)) },
+    TyRecord(fields) => { concatMap((_, a) => { tyVarsOf(a) }, fields) }
+  }
+};
+
+let rec patTyVars = (p) => {
+  match(p) {
+    PRecord(_, fields) => { concatMap((_, q) => { patTyVars(q) }, fields) },
+    PTuple(ps) => { concatMap(patTyVars, ps) },
+    PList(ps) => { concatMap(patTyVars, ps) },
+    PApp(_, _, q) => { patTyVars(q) },
+    PTyped(q, t) => { List.append(patTyVars(q), tyVarsOf(t)) },
+    _ => { [] }
+  }
+};
+
+let rec expTyVars = (e) => {
+  match(e) {
+    ERecord(_, fields) => { concatMap((_, x) => { expTyVars(x) }, fields) },
+    ETuple(es) => { concatMap(expTyVars, es) },
+    EList(es) => { concatMap(expTyVars, es) },
+    ESeq(es) => { concatMap(expTyVars, es) },
+    ELet(_, es) => { concatMap(expTyVars, es) },
+    EApp(f, a) => { List.append(expTyVars(f), expTyVars(a)) },
+    ETyped(x, t) => { List.append(expTyVars(x), tyVarsOf(t)) },
+    EAndalso(a, b) => { List.append(expTyVars(a), expTyVars(b)) },
+    EOrelse(a, b) => { List.append(expTyVars(a), expTyVars(b)) },
+    EIf(c, a, b) => {
+      List.append(expTyVars(c), List.append(expTyVars(a), expTyVars(b)))
+    },
+    ECase(x, rules) => {
+      List.append(
+        expTyVars(x),
+        concatMap((p, y) => { List.append(patTyVars(p), expTyVars(y)) }, rules)
+      )
+    },
+    EFn(rules) => {
+      concatMap((p, y) => { List.append(patTyVars(p), expTyVars(y)) }, rules)
+    },
+    _ => { [] }
+  }
+};
+
+let distinct = (xs) => {
+  SmlList.foldl((x, acc) => { if (member(x, acc)) { acc } else { List.append(acc, [x]) } })([])(xs)
+};
+
+// ---------------------------------------------------------------------------------------
+// SubsetML restrictions
+
+/* Spec B1: the full Basis binds these as constructors; SubsetML leaves them out, so binding
+   them as variables would give a program SML reads differently. */
+let omittedConstructors = [
+  "ref",
+  "Match",
+  "Bind",
+  "Chr",
+  "Div",
+  "Domain",
+  "Empty",
+  "Fail",
+  "Option",
+  "Overflow",
+  "Size",
+  "Span",
+  "Subscript",
+  "Io"
+];
+
+// The Definition (§2.9) forbids binding these.
+let unbindable = ["true", "false", "nil", "::", "ref"];
+
+// Spec R3: a record's labels must be those of a record type declaration in scope.
+let checkRecordLabels = (env, pos, labels, st) => {
+  let sorted = SmlList.map((l, _) => { l })(sortFields(SmlList.map((l) => { (l, void) })(labels)));
+  if (SmlList.exists((set) => { set == sorted })(recordLabelSets(env))) { Ok(void, st) } else {
+    Err(
+      "no record type with the labels {" ++ String.concatWith(", ")(sorted) ++ "} is in scope; SubsetML records must have a declared type (spec R3)",
+      pos
+    )
+  }
+};
+
+// ---------------------------------------------------------------------------------------
+// Patterns: their type and the variables they bind.
+
+let constTy = match {
+  SInt(_) => { intTy },
+  SReal(_) => { realTy },
+  SString(_) => { stringTy },
+  SChar(_) => { charTy }
+};
+
+// SubsetML omits int (spec §9.3), so integer constants are rejected.
+let checkConst = (pos, c, st) => {
+  match(c) {
+    SInt(text) => {
+      Err(
+        "integer constants are not part of SubsetML, which omits int for now; write " ++ text ++ ".0",
+        pos
+      )
+    },
+    _ => { Ok(constTy(c), st) }
+  }
+};
+
+let mergeVars = (pos, a, b, st) => {
+  match(SmlList.find((x, _) => { SmlList.exists((y, _) => { x == y })(a) })(b)) {
+    Some(x, _) => { Err("variable " ++ x ++ " is bound twice in a pattern", pos) },
+    None => { Ok(List.append(a, b), st) }
+  }
+};
+
+let rec pat = (ctx, p, st) => {
+  let (env, level, _) = ctx;
+  match(p) {
+    PWild => {
+      let (t, st') = fresh(st, KPlain, level);
+      Ok((t, []), st')
+    },
+    PScon(q, c) => {
+      bind(checkConst(q, c, st))((t) => (st) => { Ok((t, []), st) })
+    },
+    PId(q, id) => {
+      match(Env.value(env, id), id) {
+        (Some(scheme, SCon), _) => {
+          let (t, st') = instantiate(st, level, scheme);
+          match(prune(st', t)) {
+            TArrow(_) => {
+              Err("constructor " ++ longName(id) ++ " needs an argument", q)
+            },
+            _ => { Ok((t, []), st') }
+          }
+        },
+        (_, ([], Var(x))) => {
+          if (member(x, omittedConstructors)) {
+            Err(
+              "`" ++ x ++ "` is a constructor in the SML Basis, which SubsetML omits; it cannot be " ++ "bound as a variable (spec B1)",
+              q
+            )
+          } else {
+            let (t, st') = fresh(st, KPlain, level);
+            Ok((t, [(x, t)]), st')
+          }
+        },
+        _ => { Err("unbound constructor " ++ longName(id), q) }
+      }
+    },
+    PRecord(q, fields) => {
+      bind(checkRecordLabels(env, q, SmlList.map((l, _) => { l })(fields), st))((_) => (st) => {
+        bind(foldRes(
+          ((fs, vars), (l, f), st) => {
+            bind(pat(ctx, f, st))((t, vs) => (st) => {
+              bind(mergeVars(q, vars, vs, st))((vars') => (st) => { Ok((List.append(fs, [(l, t)]), vars'), st) })
+            })
+          },
+          ([], []),
+          fields,
+          st
+        ))((fs, vars) => (st) => { Ok((TRecord(sortFields(fs)), vars), st) })
+      })
+    },
+    PTuple(ps) => {
+      bind(pats(ctx, at(0, patPos(p)), ps, st))((ts, vars) => (st) => {
+        Ok((if (SmlList.null(ts)) { unitTy } else { tupleTy(ts) }, vars), st)
+      })
+    },
+    PList(ps) => {
+      let (elem, st0) = fresh(st, KPlain, level);
+      bind(pats(ctx, at(0, patPos(p)), ps, st0))((ts, vars) => (st) => {
+        bind(foldRes(
+          (_, (t, x), st) => {
+            unifyAt(st, at(0, patPos(x)), "list pattern element", elem, t)
+          },
+          void,
+          SmlListPair.zip(ts, ps),
+          st
+        ))((_) => (st) => { Ok((listTy(elem), vars), st) })
+      })
+    },
+    PApp(q, id, arg) => {
+      match(Env.value(env, id)) {
+        Some(scheme, SCon) => {
+          let (t, st') = instantiate(st, level, scheme);
+          match(prune(st', t)) {
+            TArrow(dom, cod) => {
+              bind(pat(ctx, arg, st'))((ta, vars) => (st) => {
+                bind(unifyAt(st, at(q, patPos(arg)), "argument of constructor " ++ longName(id), dom, ta))((_) => (st) => { Ok((cod, vars), st) })
+              })
+            },
+            _ => {
+              Err("constructor " ++ longName(id) ++ " takes no argument", q)
+            }
+          }
+        },
+        _ => { Err("`" ++ longName(id) ++ "` is not a constructor", q) }
+      }
+    },
+    PTyped(inner, t) => {
+      bind(pat(ctx, inner, st))((ti, vars) => (st) => {
+        bind(scopedTy(ctx, at(0, patPos(inner)), t, st))((t') => (st) => {
+          bind(unifyAt(st, at(0, patPos(inner)), "type annotation", t', ti))((_) => (st) => { Ok((t', vars), st) })
+        })
+      })
+    }
+  }
+}
+
+and pats = (ctx, pos, ps, st) => {
+  foldRes(
+    ((ts, vars), p, st) => {
+      bind(pat(ctx, p, st))((t, vs) => (st) => {
+        bind(mergeVars(at(pos, patPos(p)), vars, vs, st))((vars') => (st) => { Ok((List.append(ts, [t]), vars'), st) })
+      })
+    },
+    ([], []),
+    ps,
+    st
+  )
+};
+
+// ---------------------------------------------------------------------------------------
+// Non-expansive expressions (Definition §4.7), which may be generalized.
+
+let rec nonExpansive = (env, e) => {
+  match(e) {
+    EScon(_) => { true },
+    EId(_) => { true },
+    EFn(_) => { true },
+    ESelect(_) => { true },
+    ERecord(_, fields) => { SmlList.all((_, x) => { nonExpansive(env, x) })(fields) },
+    ETuple(es) => { SmlList.all((x) => { nonExpansive(env, x) })(es) },
+    EList(es) => { SmlList.all((x) => { nonExpansive(env, x) })(es) },
+    ETyped(x, _) => { nonExpansive(env, x) },
+    EApp(EId(_, id), arg) => {
+      match(Env.value(env, id)) {
+        Some(_, SCon) => { nonExpansive(env, arg) },
+        _ => { false }
+      }
+    },
+    _ => { false }
+  }
+};
+
+// ---------------------------------------------------------------------------------------
+// Expressions
+
+let rec exp = (ctx, e, st) => {
+  let (env, level, _) = ctx;
+  match(e) {
+    EScon(q, c) => { checkConst(q, c, st) },
+    EId(q, id) => {
+      match(Env.value(env, id)) {
+        Some(scheme, _) => {
+          let (t, st') = instantiate(st, level, scheme);
+          Ok(t, st')
+        },
+        None => { Err("unbound identifier " ++ longName(id), q) }
+      }
+    },
+    ERecord(q, fields) => {
+      bind(checkRecordLabels(env, q, SmlList.map((l, _) => { l })(fields), st))((_) => (st) => {
+        bind(mapRes(
+          ((l, x), st) => { bind(exp(ctx, x, st))((t) => (st) => { Ok((l, t), st) }) },
+          fields,
+          st
+        ))((fs) => (st) => { Ok(TRecord(sortFields(fs)), st) })
+      })
+    },
+    ESelect(q, l) => {
+      let (r, st1) = fresh(st, KPlain, level);
+      let (f, st2) = fresh(st1, KPlain, level);
+      let State(vars, next, sels, recs, eqs) = st2;
+      Ok(TArrow(r, f), State(vars, next, [(q, level, r, l, f), ..sels], recs, eqs))
+    },
+    ETuple([]) => { Ok(unitTy, st) },
+    ETuple(es) => {
+      bind(mapRes((x, st) => { exp(ctx, x, st) }, es, st))((ts) => (st) => { Ok(tupleTy(ts), st) })
+    },
+    EList(es) => {
+      let (elem, st0) = fresh(st, KPlain, level);
+      bind(foldRes(
+        (_, x, st) => {
+          bind(exp(ctx, x, st))((t) => (st) => { unifyAt(st, at(0, expPos(x)), "list element", elem, t) })
+        },
+        void,
+        es,
+        st0
+      ))((_) => (st) => { Ok(listTy(elem), st) })
+    },
+    ESeq(es) => {
+      bind(foldRes((_, x, st) => { exp(ctx, x, st) }, unitTy, es, st))((t) => (st) => { Ok(t, st) })
+    },
+    ELet(ds, es) => {
+      let State(_, start, _, _, _) = st;
+      bind(decs(ctx, ds, st))((delta) => (st) => {
+        bind(foldRes(
+          (_, x, st) => { exp((plus(env, delta), level, scopedOf(ctx)), x, st) },
+          unitTy,
+          es,
+          st
+        ))((t) => (st) => {
+          if (SmlList.exists((s) => { s >= start })(tynames(resolve(st, t)))) {
+            Err("the type of this `let` mentions a type declared inside it", at(0, expPos(e)))
+          } else { Ok(t, st) }
+        })
+      })
+    },
+    EApp(EId(q, ([], Var(opr))), a) => {
+      match(if (opr == "=") { true } else { opr == "<>" }, st) {
+        (true, State(_, _, _, _, Some(_))) => {
+          bind(exp(ctx, a, st))((ta) => (st) => {
+            let (operand, st1) = fresh(st, KPlain, level);
+            bind(unifyAt(st1, q, "operands of " ++ opr, tupleTy([operand, operand]), ta))((_) => (st) => {
+              let State(vars, next, sels, recs, sites) = st;
+              Ok(
+                boolTy,
+                State(
+                  vars,
+                  next,
+                  sels,
+                  recs,
+                  Some([
+                    (q, operand),
+                    ..match(sites) {
+                      Some(l) => { l },
+                      None => { [] }
+                    }
+                  ])
+                )
+              )
+            })
+          })
+        },
+        _ => { application(ctx, EId(q, ([], opr)), a, st) }
+      }
+    },
+    EApp(f, a) => { application(ctx, f, a, st) },
+    ETyped(x, t) => {
+      bind(exp(ctx, x, st))((tx) => (st) => {
+        bind(scopedTy(ctx, at(0, expPos(x)), t, st))((t') => (st) => {
+          bind(unifyAt(st, at(0, expPos(x)), "type annotation", t', tx))((_) => (st) => { Ok(t', st) })
+        })
+      })
+    },
+    EAndalso(a, b) => { boolOp(ctx, "andalso", a, b, st) },
+    EOrelse(a, b) => { boolOp(ctx, "orelse", a, b, st) },
+    EIf(c, a, b) => {
+      bind(exp(ctx, c, st))((tc) => (st) => {
+        bind(unifyAt(st, at(0, expPos(c)), "condition of `if`", boolTy, tc))((_) => (st) => {
+          bind(exp(ctx, a, st))((ta) => (st) => {
+            bind(exp(ctx, b, st))((tb) => (st) => {
+              bind(unifyAt(st, at(0, expPos(b)), "branches of `if` differ", ta, tb))((_) => (st) => { Ok(ta, st) })
+            })
+          })
+        })
+      })
+    },
+    ECase(x, rules) => {
+      bind(exp(ctx, x, st))((tx) => (st) => {
+        bind(matchRules(ctx, rules, st))((tp, tr) => (st) => {
+          bind(unifyAt(st, at(0, expPos(x)), "`case` patterns do not fit the value", tp, tx))((_) => (st) => { Ok(tr, st) })
+        })
+      })
+    },
+    EFn(rules) => {
+      bind(matchRules(ctx, rules, st))((tp, tr) => (st) => { Ok(TArrow(tp, tr), st) })
+    }
+  }
+}
+
+and application = (ctx, f, a, st) => {
+  let (_, level, _) = ctx;
+  bind(exp(ctx, f, st))((tf) => (st) => {
+    bind(exp(ctx, a, st))((ta) => (st) => {
+      let what = match(f) {
+        EId(_, id) => { "argument of " ++ longName(id) },
+        _ => { "function argument" }
+      };
+      let pos = at(
+        0,
+        match(expPos(a)) {
+          Some(q) => { Some(q) },
+          None => { expPos(f) }
+        }
+      );
+      match(prune(st, tf)) {
+        TArrow(dom, cod) => {
+          bind(unifyAt(st, pos, what, dom, ta))((_) => (st) => { Ok(cod, st) })
+        },
+        _ => {
+          let (r, st') = fresh(st, KPlain, level);
+          bind(unifyAt(st', at(pos, expPos(f)), "applied expression", TArrow(ta, r), tf))((_) => (st) => { Ok(r, st) })
+        }
+      }
+    })
+  })
+}
+
+and boolOp = (ctx, name, a, b, st) => {
+  bind(exp(ctx, a, st))((ta) => (st) => {
+    bind(unifyAt(st, at(0, expPos(a)), "operand of " ++ name, boolTy, ta))((_) => (st) => {
+      bind(exp(ctx, b, st))((tb) => (st) => {
+        bind(unifyAt(st, at(0, expPos(b)), "operand of " ++ name, boolTy, tb))((_) => (st) => { Ok(boolTy, st) })
+      })
+    })
+  })
+}
+
+// A match: the type of its patterns and of its results.
+and matchRules = (ctx, rules, st) => {
+  let (env, level, scoped) = ctx;
+  let (tp, st1) = fresh(st, KPlain, level);
+  let (tr, st2) = fresh(st1, KPlain, level);
+  bind(foldRes(
+    (_, (p, x), st) => {
+      bind(pat(ctx, p, st))((t, vars) => (st) => {
+        bind(unifyAt(st, at(0, patPos(p)), "patterns of a match differ", tp, t))((_) => (st) => {
+          bind(exp(
+            (
+              plus(env, withValues(SmlList.map((v, vt) => { (v, (([], vt), SValue)) })(vars))),
+              level,
+              scoped
+            ),
+            x,
+            st
+          ))((tx) => (st) => {
+            unifyAt(st, at(0, expPos(x)), "results of a match differ", tr, tx)
+          })
+        })
+      })
+    },
+    void,
+    rules,
+    st2
+  ))((_) => (st) => { Ok((tp, tr), st) })
+}
+
+// ---------------------------------------------------------------------------------------
+// Declarations: each returns the environment it declares.
+
+and decs = (ctx, ds, st) => {
+  let (env, level, scoped) = ctx;
+  foldRes(
+    (delta, d, st) => {
+      bind(dec((plus(env, delta), level, scoped), d, st))((more) => (st) => { Ok(plus(delta, more), st) })
+    },
+    empty,
+    ds,
+    st
+  )
+}
+
+and dec = (ctx, d, st) => {
+  match(d) {
+    DVal(pos, tyvars, plain, recs) => { valDec(ctx, pos, tyvars, plain, recs, st) },
+    DType(pos, binds) => { typeDec(ctx, pos, binds, st) },
+    DDatatype(pos, binds) => { datatypeDec(ctx, pos, binds, st) },
+    DOpen(pos, paths) => {
+      foldRes(
+        (delta, path, st) => {
+          match(structureAt(envOf(ctx), path)) {
+            Some(_, true) => {
+              Err(
+                "SubsetML can only open structures the program declares, not Basis structure " ++ String.concatWith(".")(path) ++ " (spec F2)",
+                pos
+              )
+            },
+            Some(found, false) => { Ok(plus(delta, found), st) },
+            None => {
+              Err("unbound structure " ++ String.concatWith(".")(path), pos)
+            }
+          }
+        },
+        empty,
+        paths,
+        st
+      )
+    }
+  }
+}
+
+// `val`: Definition §4.10 rules 15-16 and the closure of §4.8.
+and valDec = ((env, level, scoped), pos, tyvars, plain, recs, st) => {
+  let bindings = List.append(plain, recs);
+  let implicit = SmlList.filter((v) => { !member(v, scoped) })(distinct(concatMap((p, e) => { List.append(patTyVars(p), expTyVars(e)) }, bindings)));
+  let explicit = distinct(List.append(tyvars, implicit));
+  let inner = (env, level + 1, List.append(scoped, explicit));
+  // A binding's pattern, its type and variables, checked against its expression's type.
+  let plainBinding = ((p, e), st) => {
+    bind(exp(inner, e, st))((te) => (st) => {
+      bind(pat(inner, p, st))((tp, vars) => (st) => {
+        bind(unifyAt(st, at(pos, patPos(p)), "value binding", tp, te))((_) => (st) => { Ok((vars, nonExpansive(env, e)), st) })
+      })
+    })
+  };
+  // SubsetML only allows a variable (SML would also let `val rec` rebind a constructor).
+  let recPattern = ((p, _), st) => {
+    let single = (_, vars) => (st) => {
+      match(vars) {
+        [_] => { Ok(vars, st) },
+        _ => {
+          Err(
+            "a `val rec` binding must bind a variable, not a constructor",
+            at(pos, patPos(p))
+          )
+        }
+      }
+    };
+    match(p) {
+      PId(_, ([], _)) => { bind(pat(inner, p, st))(single) },
+      PTyped(PId(_, ([], _)), _) => { bind(pat(inner, p, st))(single) },
+      _ => {
+        Err("a `val rec` binding must bind a single variable", at(pos, patPos(p)))
+      }
+    }
+  };
+  if (SmlList.exists((v) => { member(v, scoped) })(tyvars)) {
+    Err("a type variable is already scoped by an enclosing `val`", pos)
+  } else {
+    bind(mapRes(plainBinding, plain, st))((plainResults) => (st) => {
+      bind(mapRes(recPattern, recs, st))((recVars) => (st) => {
+        let recEnv = withValues(SmlList.map((v, t) => { (v, (([], t), SValue)) })(SmlList.concat(recVars)));
+        let recInner = (plus(env, recEnv), level + 1, List.append(scoped, explicit));
+        bind(foldRes(
+          (_, ((_, e), vars), st) => {
+            match(vars) {
+              [(_, Var(t))] => {
+                bind(exp(recInner, e, st))((te) => (st) => { unifyAt(st, at(pos, expPos(e)), "recursive binding", t, te) })
+              },
+              _ => { Ok(void, st) }
+            }
+          },
+          void,
+          SmlListPair.zip(recs, recVars),
+          st
+        ))((_) => (st) => {
+          let results = List.append(plainResults, SmlList.map((vars) => { (vars, true) })(recVars));
+          closeValBindings(level, explicit, pos, results, st)
+        })
+      })
+    })
+  }
+}
+
+/* Closes a `val`'s bindings: each variable's scheme, given whether its expression may be
+   generalized. */
+and closeValBindings = (level, explicit, pos, results, st) => {
+  let names = concatMap((vars, _) => { SmlList.map((x, _) => { x })(vars) }, results);
+  match(SmlList.find((x) => { List.length(SmlList.filter((y) => { y == x })(names)) > 1 })(names), SmlList.find((x) => { member(x, unbindable) })(names)) {
+    (Some(x), _) => { Err("`" ++ x ++ "` is bound twice in this declaration", pos) },
+    (_, Some(x)) => { Err("`" ++ x ++ "` cannot be rebound", pos) },
+    (None, None) => {
+      bind(closeDeclaration(level, st))((_) => (st) => {
+        bind(foldRes(
+          (acc, (vars, generalizable), st) => {
+            foldRes(
+              (acc, (x, t), st) => {
+                bind(closeBinding(level, explicit, generalizable, pos, x, t, st))((entry) => (st) => { Ok(List.append(acc, [entry]), st) })
+              },
+              acc,
+              vars,
+              st
+            )
+          },
+          [],
+          results,
+          st
+        ))((entries) => (st) => {
+          Ok(withValues(SmlList.map((x, s) => { (x, (s, SValue)) })(entries)), st)
+        })
+      })
+    }
+  }
+}
+
+/* Settles what the declaration's context must settle (spec §10): pending `# lab`
+   selections, and overloaded type variables, which default to int (Appendix E). */
+and closeDeclaration = (level, st) => {
+  bind(settleSelections(level, st))((_) => (st) => { Ok(void, st) })
+}
+
+and settleSelections = (level, st) => {
+  let State(vars, next, sels, recs, eqs) = st;
+  // One pass: resolves each selection whose record type is known.
+  let step = ((pending, progress), sel, st) => {
+    let (q, l, r, lab, f) = sel;
+    match(prune(st, r)) {
+      TRecord(fields) => {
+        match(SmlList.find((l', _) => { l' == lab })(fields)) {
+          Some(_, ft) => {
+            bind(unifyAt(st, q, "field " ++ lab, ft, f))((_) => (st) => { Ok((pending, true), st) })
+          },
+          None => {
+            Err("the record has no field " ++ lab ++ ": " ++ show(st, r), q)
+          }
+        }
+      },
+      TVar(_) => { Ok((List.append(pending, [sel]), progress), st) },
+      _ => {
+        Err("`#" ++ lab ++ "` is applied to a non-record: " ++ show(st, r), q)
+      }
+    }
+  };
+  let rec loop = (st) => {
+    let State(vs, nx, sels, rs, eq) = st;
+    bind(foldRes(step, ([], false), sels, State(vs, nx, [], rs, eq)))((pending, progress) => (st) => {
+      let State(vs', nx', _, rs', eq') = st;
+      if (progress) { loop(State(vs', nx', pending, rs', eq')) } else { Ok(pending, State(vs', nx', pending, rs', eq')) }
+    })
+  };
+  bind(loop(State(vars, next, sels, recs, eqs)))((pending) => (st) => {
+    match(SmlList.find((_, _, r, _, _) => {
+      match(prune(st, r)) {
+        TVar(v) => {
+          match(lookup(st, v)) {
+            Free(_, l) => { l > level },
+            Bound(_) => { false }
+          }
+        },
+        _ => { false }
+      }
+    })(pending)) {
+      Some(q, _, _, lab, _) => {
+        Err(
+          "cannot determine the record type for `#" ++ lab ++ "`; add a type annotation",
+          q
+        )
+      },
+      None => { Ok(void, st) }
+    }
+  })
+}
+
+// The scheme of one bound variable.
+and closeBinding = (level, explicit, generalizable, pos, x, t, st) => {
+  /* An overloaded variable its context has not resolved would default to int in SML
+     (Appendix E), which SubsetML omits (spec §9.3). */
+  let unresolved = SmlList.exists((v) => {
+    match(lookup(st, v)) {
+      Free(KClass(_), l) => { l > level },
+      _ => { false }
+    }
+  })(freeVars(st, t));
+  let rigid = SmlList.filter((v) => { member(v, explicit) })(rigidNames(resolve(st, t)));
+  match(unresolved, generalizable, rigid) {
+    (true, _, _) => {
+      Err(
+        "the type of an overloaded operation in `" ++ x ++ "` is not determined: SML would make it int, " ++ "which SubsetML omits; add a type annotation such as (x : real)",
+        pos
+      )
+    },
+    (false, true, _) => { Ok((x, generalize(st, level, explicit, t)), st) },
+    (false, false, [v, .._]) => {
+      Err(
+        "type variable " ++ v ++ " cannot be generalized: the value is expansive (Definition, section 4.8)",
+        pos
+      )
+    },
+    (false, false, []) => { Ok((x, ([], resolve(st, t))), adjust(st, level, t)) }
+  }
+}
+
+and rigidNames = (t) => {
+  match(t) {
+    TRigid(v) => { [v] },
+    TCon(_, ts) => { concatMap(rigidNames, ts) },
+    TArrow(a, b) => { List.append(rigidNames(a), rigidNames(b)) },
+    TRecord(fields) => { concatMap((_, a) => { rigidNames(a) }, fields) },
+    _ => { [] }
+  }
+}
+
+// `type`: Definition §4.10 rule 17, plus spec R2 for record types.
+and typeDec = ((env, _, _), pos, binds, st) => {
+  let names = SmlList.map((_, name, _) => { name })(binds);
+  let dup = SmlList.find((n) => { List.length(SmlList.filter((m) => { m == n })(names)) > 1 })(names);
+  match(dup) {
+    Some(n) => { Err("type " ++ n ++ " is bound twice", pos) },
+    None => {
+      bind(foldRes(
+        (acc, (params, name, t), st) => {
+          bind(paramScope(pos, params, st))((tyvar) => (st) => {
+            bind(elabTy(env, tyvar, pos, t, st))((body) => (st) => {
+              bind(match(t) {
+                TyRecord(_) => { recordDeclared(pos, body, st) },
+                _ => { Ok(void, st) }
+              })((_) => (st) => {
+                Ok(List.append(acc, [(name, TyStr(List.length(params), body, []))]), st)
+              })
+            })
+          })
+        },
+        [],
+        binds,
+        st
+      ))((tys) => (st) => { Ok(withTypes(tys), st) })
+    }
+  }
+}
+
+// Maps a declaration's type parameters to TGen.
+and paramScope = (pos, params, st) => {
+  match(SmlList.find((v) => { List.length(SmlList.filter((w) => { w == v })(params)) > 1 })(params)) {
+    Some(v) => { Err("type parameter " ++ v ++ " appears twice", pos) },
+    None => {
+      let rec index = match {
+        (_, [], _) => { None },
+        (Var(v), [w, ..rest], Var(i)) => { if (v == w) { Some(TGen(i)) } else { index(v, rest, i + 1) } }
+      };
+      Ok((v) => { index(v, params, 0) }, st)
+    }
+  }
+}
+
+and recordDeclared = (pos, body, st) => {
+  match(body) {
+    TRecord(fields) => {
+      let labels = SmlList.map((l, _) => { l })(fields);
+      let State(vars, next, sels, recs, eqs) = st;
+      if (member(labels, recs)) {
+        Err(
+          "another record type already has the labels {" ++ String.concatWith(", ")(labels) ++ "} (spec R2)",
+          pos
+        )
+      } else { Ok(void, State(vars, next, sels, [labels, ..recs], eqs)) }
+    },
+    _ => { Ok(void, st) }
+  }
+}
+
+// `datatype`: Definition §4.10 rule 19 and §4.9 for the equality attribute.
+and datatypeDec = ((env, _, _), pos, binds, st) => {
+  let names = SmlList.map((_, name, _) => { name })(binds);
+  let cons = concatMap((_, _, cs) => { SmlList.map((_, c, _) => { c })(cs) }, binds);
+  let dupIn = (xs) => {
+    SmlList.find((n) => { List.length(SmlList.filter((m) => { m == n })(xs)) > 1 })(xs)
+  };
+  // Fresh type names, first assuming every one admits equality.
+  let (stamps, st1) = SmlList.foldl((_, (acc, st)) => {
+    let (s, st') = freshStamp(st);
+    (List.append(acc, [s]), st')
+  })([], st)(binds);
+  let nameFor = (eqs, (params, name, _), s) => { (s, name, List.length(params), memberReal(s, eqs)) };
+  let tyFor = (tn) => { TCon(tn, List.tabulate(arityOf(tn), TGen)) };
+  // The constructors' argument types, with the group's names given the equality flags.
+  let elabCons = (eqs, st) => {
+    let group = SmlListPair.map((b, s) => { nameFor(eqs, b, s) })(binds, stamps);
+    let groupEnv = plus(
+      env,
+      withTypes(SmlList.map((tn) => { (nameOf(tn), TyStr(arityOf(tn), tyFor(tn), [])) })(group))
+    );
+    bind(mapRes(
+      (((params, _, cs), tn), st) => {
+        bind(paramScope(pos, params, st))((tyvar) => (st) => {
+          bind(mapRes(
+            ((cp, c, arg), st) => {
+              match(arg) {
+                None => { Ok((c, None), st) },
+                Some(t) => {
+                  bind(elabTy(groupEnv, tyvar, cp, t, st))((t') => (st) => { Ok((c, Some(t')), st) })
+                }
+              }
+            },
+            cs,
+            st
+          ))((cs') => (st) => { Ok((tn, cs'), st) })
+        })
+      },
+      SmlListPair.zip(binds, group),
+      st
+    ))((result) => (st) => { Ok(result, st) })
+  };
+  // Whether a type admits equality, assuming `eqs` for the group (Definition §4.9).
+  let rec admits = (eqs, t) => {
+    match(t) {
+      TCon((Var(s), _, _, Var(eq)), args) => {
+        if (if (memberReal(s, stamps)) { memberReal(s, eqs) } else { eq }) { SmlList.all((a) => { admits(eqs, a) })(args) } else { false }
+      },
+      TArrow(_) => { false },
+      TRecord(fields) => { SmlList.all((_, a) => { admits(eqs, a) })(fields) },
+      TGen(_) => { true },
+      _ => { false }
+    }
+  };
+  let rec fixpoint = (eqs, st) => {
+    bind(elabCons(eqs, st))((group) => (st) => {
+      let eqs' = SmlList.filter((s) => {
+        SmlList.all(((s', _, _, _), cs) => {
+          if ((s': Number) != s) { true } else {
+            SmlList.all((_, arg) => {
+              match(arg) {
+                None => { true },
+                Some(t) => { admits(eqs, t) }
+              }
+            })(cs)
+          }
+        })(group)
+      })(eqs);
+      if ((List.length(eqs'): Number) == List.length(eqs)) { Ok(group, st) } else { fixpoint(eqs', st) }
+    })
+  };
+  match(dupIn(names), dupIn(cons), SmlList.find((c) => { if (member(c, unbindable)) { true } else { c == "it" } })(cons)) {
+    (Some(n), _, _) => { Err("type " ++ n ++ " is bound twice", pos) },
+    (_, Some(c), _) => { Err("constructor " ++ c ++ " is bound twice", pos) },
+    (_, _, Some(c)) => { Err("`" ++ c ++ "` cannot be bound by a datatype", pos) },
+    _ => {
+      bind(fixpoint(stamps, st1))((group) => (st) => {
+        let conEntries = concatMap(
+          (tn, cs) => {
+            SmlList.map((c, arg) => {
+              let kinds = List.tabulate(arityOf(tn), (_) => { KPlain });
+              match(arg) {
+                None => { (c, ((kinds, tyFor(tn)), SCon)) },
+                Some(t) => { (c, ((kinds, TArrow(t, tyFor(tn))), SCon)) }
+              }
+            })(cs)
+          },
+          group
+        );
+        let tyEntries = SmlList.map((tn, cs) => {
+          (
+            nameOf(tn),
+            TyStr(
+              arityOf(tn),
+              tyFor(tn),
+              SmlList.map((c, _) => {
+                (
+                  c,
+                  {
+                    let (scheme, _) = valOf(assoc(c, conEntries));
+                    scheme
+                  }
+                )
+              })(cs)
+            )
+          )
+        })(group);
+        Ok(Env([], tyEntries, conEntries), st)
+      })
+    }
+  }
+};
+
+// ---------------------------------------------------------------------------------------
+// Top-level phrases (Definition §8)
+
+let strdec = (env, sd, st) => {
+  match(sd) {
+    SDec(d) => { dec((env, 0, []), d, st) },
+    SStructure(_, binds) => {
+      foldRes(
+        (delta, (name, ds), st) => {
+          bind(decs((env, 0, []), ds, st))((body) => (st) => { Ok(plus(delta, withStructure(name, body, false)), st) })
+        },
+        empty,
+        binds,
+        st
+      )
+    }
+  }
+};
+
+let topdec = (env, td, st) => {
+  match(td) {
+    TopDecs(sds) => {
+      foldRes(
+        (delta, sd, st) => {
+          bind(strdec(plus(env, delta), sd, st))((more) => (st) => { Ok(plus(delta, more), st) })
+        },
+        empty,
+        sds,
+        st
+      )
+    },
+    TopExp(pos, e) => {
+      dec((env, 0, []), DVal(pos, [], [(PId(pos, ([], "it")), e)], []), st)
+    }
+  }
+};
+
+// Elaborates a file's phrases in order, extending the environment.
+let program = (env, phrases, st) => {
+  foldRes(
+    (env, td, st) => {
+      bind(topdec(env, td, st))((delta) => (st) => { Ok(plus(env, delta), st) })
+    },
+    env,
+    phrases,
+    st
+  )
+};

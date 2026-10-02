@@ -1,0 +1,32 @@
+/* Portable option algorithms for the custom SubsetML Basis.
+   Current SML-shaped signatures are transitional; checked APIs will use Result. */
+
+let getOpt = (opt, fallback) => {
+  match(opt) {
+    None => { fallback },
+    Some(x) => { x }
+  }
+};
+let isSome = match {
+  None => { false },
+  Some(_) => { true }
+};
+let map = (f) => (opt) => {
+  match(opt) {
+    None => { None },
+    Some(x) => { Some(f(x)) }
+  }
+};
+let mapPartial = (f) => (opt) => {
+  match(opt) {
+    None => { None },
+    Some(x) => { f(x) }
+  }
+};
+let join = match {
+  None => { None },
+  Some(opt) => { opt }
+};
+let filter = (p) => (x) => { if (p(x)) { Some(x) } else { None } };
+let compose = (f, g) => (x) => { map(f)(g(x)) };
+let composePartial = (f, g) => (x) => { mapPartial(f)(g(x)) };

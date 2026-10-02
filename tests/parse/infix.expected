@@ -1,0 +1,7 @@
+(it (app - (tuple (app + (tuple 1 (app * (tuple 2 3)))) 4)))
+(it (app :: (tuple a (app :: (tuple b (app @ (tuple c d)))))))
+(it (app before (tuple (app = (tuple (app + (tuple (app (app f x) y) (app g z))) h)) i)))
+(it (orelse (andalso (: x int) y) z))
+(it (orelse a (fn (=> x (orelse x b)))))
+(val (tyvars) (= (: (:: (tuple x xs)) (list int)) l))
+(it (case e (=> A (case f (=> B 1) (=> C 2)))))
