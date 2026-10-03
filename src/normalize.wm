@@ -1,3 +1,8 @@
+/* @subsetml
+from "./syntax.sml" import * as Syntax;
+from "./sml_list.sml" import * as SmlList;
+*/
+
 /* Canonical forms for comparing syntax trees across a translation round trip. Some SML
    spellings share one Workman spelling, so they come back as the canonical one:
 
@@ -12,7 +17,7 @@ from "./syntax.wm" import *;
 
 let rec pat = (p) => {
   match(p) {
-    PId(ignored1, ([], "nil")) => { PList([]) },
+    PId(_, ([], "nil")) => { PList([]) },
     PRecord(pos, fields) => { PRecord(pos, SmlList.map((l, q) => { (l, pat(q)) })(fields)) },
     PTuple(ps) => { PTuple(SmlList.map(pat)(ps)) },
     PList(ps) => { PList(SmlList.map(pat)(ps)) },
@@ -24,7 +29,7 @@ let rec pat = (p) => {
     },
     PApp(pos, id, q) => { PApp(pos, id, pat(q)) },
     PTyped(q, t) => { PTyped(pat(q), t) },
-    Var(ignored2) => { p }
+    _ => { p }
   }
 };
 
@@ -32,7 +37,7 @@ let rules = (f, g, rs) => { SmlList.map((p, e) => { (f(p), g(e)) })(rs) };
 
 let rec exp = (e) => {
   match(e) {
-    EId(ignored3, ([], "nil")) => { EList([]) },
+    EId(_, ([], "nil")) => { EList([]) },
     ERecord(pos, fields) => { ERecord(pos, SmlList.map((l, x) => { (l, exp(x)) })(fields)) },
     ETuple(es) => { ETuple(SmlList.map(exp)(es)) },
     EList(es) => { EList(SmlList.map(exp)(es)) },
@@ -64,24 +69,24 @@ let rec exp = (e) => {
     EFn([
       (
         PTuple([
-          PTyped(PId(ignored4, ([], Var(x))), TyCon([], ([], "real"))),
-          PTyped(PId(ignored5, ([], Var(y))), TyCon([], ([], "real")))
+          PTyped(PId(_, ([], Var(x))), TyCon([], ([], "real"))),
+          PTyped(PId(_, ([], Var(y))), TyCon([], ([], "real")))
         ]),
         EApp(
           EId(p, (["Real"], Var(opr))),
-          ETuple([EId(ignored6, ([], Var(a))), EId(ignored7, ([], Var(b)))])
+          ETuple([EId(_, ([], Var(a))), EId(_, ([], Var(b)))])
         )
       )
     ]) => {
       if (if (if (if (if (opr == "==") { true } else { opr == "!=" }) { x == a } else { false }) { y == b } else { false }) { x != y } else { false }) { EId(p, (["Real"], opr)) } else {
         match(e) {
           EFn(rs) => { EFn(rules(pat, exp, rs)) },
-          Var(ignored8) => { e }
+          _ => { e }
         }
       }
     },
     EFn(rs) => { EFn(rules(pat, exp, rs)) },
-    Var(ignored9) => { e }
+    _ => { e }
   }
 }
 

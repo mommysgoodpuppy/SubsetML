@@ -1,3 +1,9 @@
+(* @subsetml
+from "./subset_list.sml" import * as SubsetList;
+from "./subset_result.sml" import * as SubsetResult;
+from "./subset_string.sml" import * as SubsetString;
+*)
+
 (* Portable SML literal contents for byte characters; quotation marks are supplied by callers. *)
 structure SubsetSmlEscape = struct
   datatype error = NonByte of real

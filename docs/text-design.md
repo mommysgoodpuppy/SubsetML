@@ -132,5 +132,6 @@ must become an explicit optional/error result instead of depending on host NaN b
 
 The compiler types, unifier, elaborator, reverse parser, normalization and translation now
 use source text operations. CLI text helpers use the byte layer; file/process access is
-provided by the six-operation SubsetIo/SubsetProcess profile. Exact count formatting is provided by
+provided by the six-operation SubsetIo/SubsetProcess CLI profile; source module loading adds
+filesystem canonicalization as a separate host operation. Exact count formatting is provided by
 `SubsetNatural`; arbitrary floating-point formatting is a separate contract.

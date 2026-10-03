@@ -1,3 +1,10 @@
+/* @subsetml
+from "./subset_result.sml" import * as SubsetResult;
+from "./subset_string.sml" import * as SubsetString;
+from "./subset_list.sml" import * as SubsetList;
+from "./subset_host.sml" import * as SubsetHost;
+*/
+
 // Whole-file byte I/O. Conversion and validation are ordinary source algorithms.
 
 from "./subset_result.wm" import * as SubsetResult;
@@ -40,6 +47,18 @@ let readFile = (file) => {
     path(file),
     (valid) => {
       SubsetResult.andThen(host(SubsetHost.readFile(valid)), bytes)
+    }
+  )
+};
+// Filesystem identity, not lexical path cleanup. Validate both byte boundaries.
+let canonicalPath = (file) => {
+  SubsetResult.andThen(
+    path(file),
+    (valid) => {
+      SubsetResult.andThen(
+        host(SubsetHost.canonicalPath(valid)),
+        (resolved) => { SubsetResult.map(bytes(resolved), (_) => { resolved }) }
+      )
     }
   )
 };

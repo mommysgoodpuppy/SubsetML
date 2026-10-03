@@ -39,4 +39,6 @@ wm_lexer.sml
 wm_parse.sml
 normalize.sml
 translate.sml
+module_imports.sml
+module_project.sml
 main.sml

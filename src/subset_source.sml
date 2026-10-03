@@ -1,3 +1,10 @@
+(* @subsetml
+from "./subset_list.sml" import * as SubsetList;
+from "./subset_result.sml" import * as SubsetResult;
+from "./subset_bytes.sml" import * as SubsetBytes;
+from "./subset_string.sml" import * as SubsetString;
+*)
+
 (* Immutable source-built byte index. Native input is converted exactly once. *)
 structure SubsetSource = struct
   datatype source = Empty | Byte of char | Branch of real * source * source

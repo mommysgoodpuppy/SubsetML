@@ -1,6 +1,29 @@
+(* @subsetml
+from "./subset_io.sml" import * as SubsetIo;
+from "./compiler_text.sml" import * as CompilerText;
+from "./subset_result.sml" import * as SubsetResult;
+from "./subset_process.sml" import * as SubsetProcess;
+from "./syntax.sml" import * as Syntax;
+from "./lexer.sml" import * as Lexer;
+from "./parser.sml" import * as Parser;
+from "./sml_list.sml" import * as SmlList;
+from "./subset_list.sml" import * as SubsetList;
+from "./translate.sml" import * as Translate;
+from "./sml_list_pair.sml" import * as SmlListPair;
+from "./wm_parse.sml" import * as WmParse;
+from "./unify.sml" import * as Unify;
+from "./sml_option.sml" import * as SmlOption;
+from "./print.sml" import * as Print;
+from "./normalize.sml" import * as Normalize;
+from "./basis.sml" import * as Basis;
+from "./elab.sml" import * as Elab;
+from "./module_project.sml" import * as ModuleProject;
+*)
+
 (* Command-line driver.
 
-     subsetml check FILE...         parse and type-check the files, in order, as one program
+     subsetml check ENTRY.sml       check the entry file's explicit import graph
+     subsetml check FILE1 FILE2 ... legacy sequential source-list checking
      subsetml parse FILE...         print the abstract syntax of each file
      subsetml fmt FILE...           reprint each file as SubsetML
      subsetml wm OUTDIR FILE...     translate the program's files to Workman modules in OUTDIR
@@ -48,15 +71,42 @@ structure Main = struct
 
   datatype parsed =
       Parsed of string * string * Syntax.topdec list * Syntax.comment list
-    | Failed
 
-  (* Reads and parses a file, reporting any error. *)
+  (* Keep causes and source context until the CLI reporting boundary. *)
+  datatype sourceError =
+      ReadFailure of string * SubsetIo.error
+    | LexFailure of string * string * string * Syntax.pos
+    | ParseFailure of string * string * string * Syntax.pos
+
+  val lexSource = fn (path, src) =>
+    case Lexer.lex src of
+      Lexer.LexError (msg, pos) => SubsetResult.Err (LexFailure (path, src, msg, pos))
+    | Lexer.Tokens (tokens, comments) => SubsetResult.Ok (path, src, tokens, comments)
+
+  val parseSource = fn (path, src, tokens, comments) =>
+    case Parser.parseTokens (tokens, comments) of
+      Parser.ParseError (msg, pos) => SubsetResult.Err (ParseFailure (path, src, msg, pos))
+    | Parser.Program (phrases, comments) => SubsetResult.Ok (Parsed (path, src, phrases, comments))
+
+  (* No reporting or exit inside the procedure; later transformations skip on Err. *)
   val load = fn path =>
-    let val src = readFile path in
-      case Parser.parse src of
-        Parser.ParseError (msg, pos) => (eprint (errorLine (path, src, msg, pos)); Failed)
-      | Parser.Program (phrases, comments) => Parsed (path, src, phrases, comments)
+    let
+      val read = SubsetResult.viaError (fn error => ReadFailure (path, error))
+        (fn file => SubsetResult.map (SubsetIo.readFile file,
+          fn bytes => (file, CompilerText.stringOf bytes)))
+      val lex = SubsetResult.via lexSource
+      val parse = SubsetResult.via parseSource
+
+      val loaded = read (SubsetResult.Ok path)
+      val lexed = lex loaded
+    in
+      parse lexed
     end
+
+  val sourceErrorText = fn
+      ReadFailure (path, error) => path ^ ": " ^ SubsetIo.errorText error ^ "\n"
+    | LexFailure (path, src, msg, pos) => errorLineKind (path, src, "lex error", msg, pos)
+    | ParseFailure (path, src, msg, pos) => errorLineKind (path, src, "parse error", msg, pos)
 
   val usage = fn () =>
     (eprint "usage: subsetml (check | parse | fmt | roundtrip) FILE...\n       subsetml wm OUTDIR FILE...\n       subsetml sml OUTDIR FILE.wm...\n";
@@ -68,7 +118,10 @@ structure Main = struct
   val withParsed = fn (files, f) =>
     let
       val loaded = SmlList.map load files
-      val parsed = SmlList.concat (SmlList.map (fn Parsed (path, src, prog, comments) => [(path, src, prog, comments)] | Failed => []) loaded)
+      val parsed = SmlList.concat (SmlList.map (fn
+          SubsetResult.Ok value =>
+            (case value of Parsed (path, src, prog, comments) => [(path, src, prog, comments)])
+        | SubsetResult.Err error => (eprint (sourceErrorText error); [])) loaded)
     in
       if SmlList.null files then usage ()
       else (if Real.== (SubsetList.length parsed, SubsetList.length files) then finish (f parsed) else finish false)
@@ -76,26 +129,26 @@ structure Main = struct
 
   val translate = fn (outDir, parsed) =>
     let
-      val structures = SmlList.concat (SmlList.map (fn (ignored2, ignored3, prog, ignored4) => Translate.structureOf prog) parsed)
+      val structures = SmlList.concat (SmlList.map (fn (_, _, prog, _) => Translate.structureOf prog) parsed)
       val results =
         SmlList.map (fn (path, src, prog, comments) =>
                     Translate.toWm (structures, path, src, prog, comments)) parsed
       val errors =
-        SmlList.concat (SmlList.map (fn Translate.TranslateError e => [e] | Translate.Output (ignored5Field0, ignored5Field1, ignored5Field2) => []) results)
-      val warn = fn ((path, src, ignored6, ignored7), result) =>
+        SmlList.concat (SmlList.map (fn Translate.TranslateError e => [e] | Translate.Output (_, _, _) => []) results)
+      val warn = fn ((path, src, _, _), result) =>
         case result of
-          Translate.Output (ignored8, ignored9, warnings) =>
+          Translate.Output (_, _, warnings) =>
             SmlList.app (fn (pos, msg) =>
                         eprint (errorLineKind (path, src, "warning", msg, pos))) warnings
-        | Translate.TranslateError ignored10 => ()
+        | Translate.TranslateError _ => ()
     in
       case errors of
         [] =>
-          (SmlList.app (fn Translate.Output (name, text, ignored11) => writeFile (outDir ^ "/" ^ name, text)
-                      | Translate.TranslateError ignored12 => ()) results;
+          (SmlList.app (fn Translate.Output (name, text, _) => writeFile (outDir ^ "/" ^ name, text)
+                      | Translate.TranslateError _ => ()) results;
            SmlListPair.app warn (parsed, results);
            true)
-      | ignored13 => (SmlList.app (fn e => eprint ("error: " ^ e ^ "\n")) errors; false)
+      | _ => (SmlList.app (fn e => eprint ("error: " ^ e ^ "\n")) errors; false)
     end
 
   (* Workman to SubsetML: foo_bar.wm becomes foo_bar.sml holding structure FooBar. *)
@@ -113,9 +166,9 @@ structure Main = struct
       val recovered = SmlList.map (fn m => Translate.recover (modules, m)) modules
       val ok = Real.== (SubsetList.length modules, SubsetList.length files)
       val results = SmlList.map (fn
-          Unify.Err (msg, ignored14) => (eprint ("error translating Workman: " ^ msg ^ "\n"); NONE)
-        | Unify.Ok ((path, src, prog, cs), ignored15) =>
-            let val (ignored16, phrases) = Translate.module prog
+          Unify.Err (msg, _) => (eprint ("error translating Workman: " ^ msg ^ "\n"); NONE)
+        | Unify.Ok ((path, src, prog, cs), _) =>
+            let val (_, phrases) = Translate.module prog
                 val (ds, es) = Translate.parts phrases
                 val stem = Translate.baseName path
                 val name = if CompilerText.isSuffix (stem, ".wm")
@@ -130,11 +183,11 @@ structure Main = struct
   (* SML -> Workman -> SML must give back the same declarations, up to Normalize. *)
   val roundTrip = fn parsed =>
     let
-      val structures = SmlList.concat (SmlList.map (fn (ignored17, ignored18, prog, ignored19) => Translate.structureOf prog) parsed)
+      val structures = SmlList.concat (SmlList.map (fn (_, _, prog, _) => Translate.structureOf prog) parsed)
       val loaded = SmlList.map (fn (path, src, prog, comments) =>
         case Translate.toWm (structures, path, src, prog, comments) of
           Translate.TranslateError msg => (eprint (msg ^ "\n"); NONE)
-        | Translate.Output (name, text, ignored20) =>
+        | Translate.Output (name, text, _) =>
             case WmParse.parseModule text of
               WmParse.ParseError (msg, pos) => (eprint (errorLine (path, text, msg, pos)); NONE)
             | WmParse.Module (ds, es, cs) => SOME (path, text,
@@ -142,16 +195,16 @@ structure Main = struct
                 SmlList.map (fn e => Syntax.TopExp (0.0, e)) es, cs)) parsed
       val modules = SmlList.concat (SmlList.map (fn SOME m => [m] | NONE => []) loaded)
       val show = fn prog =>
-        let val (ignored21, phrases) = Translate.module prog
+        let val (_, phrases) = Translate.module prog
             val (ds, es) = Translate.parts phrases
         in SmlList.map Print.dec (Normalize.decs ds) @ SmlList.map (fn e => Print.exp (Normalize.exp e)) es end
-      val check = fn (path, ignored22, prog, ignored23) =>
-        case SmlList.find (fn (p, ignored24, ignored25, ignored26) => p = path) modules of
+      val check = fn (path, _, prog, _) =>
+        case SmlList.find (fn (p, _, _, _) => p = path) modules of
           NONE => false
         | SOME m =>
             case Translate.recover (modules, m) of
-              Unify.Err (msg, ignored27) => (eprint (path ^ ": round trip: " ^ msg ^ "\n"); false)
-            | Unify.Ok ((ignored28, ignored29, actual, ignored30), ignored31) =>
+              Unify.Err (msg, _) => (eprint (path ^ ": round trip: " ^ msg ^ "\n"); false)
+            | Unify.Ok ((_, _, actual, _), _) =>
                 if show prog = show actual then true
                 else (eprint (path ^ ": syntax changed in the round trip\n"); false)
     in
@@ -162,12 +215,12 @@ structure Main = struct
      error. *)
   val typeCheck = fn parsed =>
     case Basis.initial of
-      Unify.Err (msg, ignored32) => (eprint ("internal error in the basis: " ^ msg ^ "\n"); false)
-    | Unify.Ok (basis, ignored33) =>
+      Unify.Err (msg, _) => (eprint ("internal error in the basis: " ^ msg ^ "\n"); false)
+    | Unify.Ok (basis, _) =>
         let
           val rec go = fn
-              (ignored34, [], ignored35) => true
-            | (env, (path, src, prog, ignored36) :: rest, st) =>
+              (_, [], _) => true
+            | (env, (path, src, prog, _) :: rest, st) =>
                 case Elab.program (env, prog, st) of
                   Unify.Ok (env', st') => go (env', rest, st')
                 | Unify.Err (msg, pos) => (eprint (errorLine (path, src, msg, pos)); false)
@@ -175,28 +228,51 @@ structure Main = struct
           go (basis, parsed, Unify.initial)
         end
 
+  (* An entry file has only its explicit import environment; legacy source lists remain
+     available for bootstrap checking and ordinary SML compilation-unit order. *)
+  val checkProject = fn path =>
+    let
+      val source = fn file => SubsetResult.map (load file,
+        fn Parsed (path, src, prog, comments) => ModuleProject.Source (path, src, prog, comments))
+      val checked = SubsetResult.andThen (ModuleProject.discover (path, source), fn graph =>
+        case Basis.initial of
+          Unify.Err (message, _) => SubsetResult.Err
+            (ModuleProject.CheckFailure (path, "", "internal error in the basis: " ^ message, 0.0))
+        | Unify.Ok (basis, _) => ModuleProject.check (graph, basis))
+      val report = fn
+          ModuleProject.LoadFailure error => sourceErrorText error
+        | ModuleProject.ResolutionFailure (path, error) => path ^ ": " ^ SubsetIo.errorText error ^ "\n"
+        | ModuleProject.ImportFailure (path, src, message, pos) => errorLineKind (path, src, "import error", message, pos)
+        | ModuleProject.CheckFailure (path, src, message, pos) => errorLine (path, src, message, pos)
+    in
+      case checked of
+        SubsetResult.Ok _ => finish true
+      | SubsetResult.Err error => (eprint (report error); finish false)
+    end
+
   val main = fn () =>
     let
       val args = case SubsetProcess.arguments () of
         SubsetResult.Ok values => values
       | SubsetResult.Err error => fatal (SubsetIo.errorText error)
     in case args of
-      "check" :: files => withParsed (files, typeCheck)
-    | "parse-only" :: files => withParsed (files, fn ignored37 => true)
+      "check" :: [file] => checkProject file
+    | "check" :: files => withParsed (files, typeCheck)
+    | "parse-only" :: files => withParsed (files, fn _ => true)
     | "parse" :: files =>
         withParsed (files, fn parsed =>
-          (SmlList.app (fn (ignored38, ignored39, prog, ignored40) => SmlList.app (fn p => output (Print.topdec p ^ "\n")) prog) parsed;
+          (SmlList.app (fn (_, _, prog, _) => SmlList.app (fn p => output (Print.topdec p ^ "\n")) prog) parsed;
            true))
     | "fmt" :: files =>
         withParsed (files, fn parsed =>
-          (SmlList.app (fn (ignored41, src, prog, comments) => output (Translate.toSml (src, prog, comments))) parsed;
+          (SmlList.app (fn (_, src, prog, comments) => output (Translate.toSml (src, prog, comments))) parsed;
            true))
     | "wm" :: outDir :: files => withParsed (files, fn parsed => translate (outDir, parsed))
     | "sml" :: outDir :: files => if SmlList.null files then usage () else finish (fromWm (outDir, files))
     | "roundtrip" :: files => withParsed (files, roundTrip)
-    | ignored42 => usage ()
+    | _ => usage ()
     end
 
 end
 
-val ignored43 = Main.main ()
+val _ = Main.main ()

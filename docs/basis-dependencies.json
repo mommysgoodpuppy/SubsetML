@@ -1,5 +1,5 @@
 {
-  "status": "source Basis and compiler core implemented; generated compiler checks and translates its own sources using seven explicit host entry points",
+  "status": "source Basis and compiler core implemented; native and Workman entry-file checking with explicit imports and eight host entry points",
   "modules": {
     "SubsetResult": {
       "source": "src/subset_result.sml",
@@ -130,6 +130,7 @@
         "SubsetString"
       ],
       "primitives": [
+        "SubsetHost.canonicalPath",
         "SubsetHost.readFile",
         "SubsetHost.writeFile",
         "SubsetHost.writeStdout",
@@ -196,6 +197,7 @@
       "workman": "lib/subset_host.wm",
       "javascript": "lib/subset_host.js",
       "operations": [
+        "canonicalPath",
         "readFile",
         "writeFile",
         "writeStdout",

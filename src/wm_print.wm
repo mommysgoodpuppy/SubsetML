@@ -1,3 +1,16 @@
+/* @subsetml
+from "./syntax.sml" import * as Syntax;
+from "./doc.sml" import * as Doc;
+from "./compiler_text.sml" import * as CompilerText;
+from "./subset_char.sml" import * as SubsetChar;
+from "./subset_string.sml" import * as SubsetString;
+from "./subset_list.sml" import * as SubsetList;
+from "./sml_list.sml" import * as SmlList;
+from "./subset_result.sml" import * as SubsetResult;
+from "./parser.sml" import * as Parser;
+from "./sml_print.sml" import * as SmlPrint;
+*/
+
 /* Prints abstract syntax as Workman source, following the frontend-v3 spelling
    (../wm-mini/tooling/frontend-v3/lexical-design.md). The mapping is designed to be read back
    by WmParse; docs/translation.md lists every rule.
@@ -434,7 +447,7 @@ let rec expL = match {
       cat(
         atom(p, "-"),
         match(e, level >= 9) {
-          (EScon(ignoredPos, ignoredConstant), Var(ignoredLevel)) => { cats([text("("), d, text(")")]) },
+          (EScon(_, _), _) => { cats([text("("), d, text(")")]) },
           (_, true) => { d },
           (_, false) => { cats([text("("), d, text(")")]) }
         }
@@ -566,7 +579,7 @@ and dec = (structures, d) => {
   match(d) {
     DVal(p, [], plain, []) => { andGroup(atom(p, "let "), SmlList.map(binding)(plain)) },
     DVal(p, [], [], recs) => { andGroup(atom(p, "let rec "), SmlList.map(binding)(recs)) },
-    DVal(ignoredPos, ignoredVariables, ignoredPlain, ignoredRecursive) => { fallback(d) },
+    DVal(_, _, _, _) => { fallback(d) },
     DType(p, [(Var(vs), Var(tycon), TyRecord(fields))]) => {
       cats([
         atom(p, "record "),
@@ -581,7 +594,7 @@ and dec = (structures, d) => {
       ])
     },
     DType(p, binds) => {
-      if (SmlList.exists((ignoredVariables, ignoredName, t) => {
+      if (SmlList.exists((_, _, t) => {
         match(t) {
           TyRecord(_) => { true },
           _ => { false }

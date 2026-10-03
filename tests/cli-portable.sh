@@ -46,6 +46,30 @@ end
         for path in [bad, root / 'missing.sml']:
             failed = run(command, ['check', path])
             assert failed.returncode == 1 and failed.stderr and not failed.stdout, (path, failed)
+    lexical = root / 'lexical.sml'
+    lexical.write_text('(* input *)\nval x = "unterminated')
+    syntax = root / 'syntax.sml'
+    syntax.write_text('val x =\n')
+    multiple = root / 'multiple.sml'
+    multiple.write_text('structure A = struct end\nstructure B = struct end\n')
+    for path, location, message in [
+        (lexical, ':2:9: lex error:', 'unterminated string constant'),
+        (syntax, ':2:1: parse error:', 'expected'),
+        (multiple, ':2:1: parse error:', 'a file may contain only one structure'),
+    ]:
+        expected = run(native, ['check', path])
+        assert expected.returncode == 1 and not expected.stdout
+        assert (str(path) + location).encode() in expected.stderr and message.encode() in expected.stderr, expected.stderr
+        if workman:
+            actual = run(workman, ['check', path])
+            assert (actual.returncode, actual.stdout, actual.stderr) == (1, b'', expected.stderr), actual.stderr
+    # Report every loading failure; never render a successfully parsed file on failure.
+    for command in [native] + ([workman] if workman else []):
+        failed = run(command, ['fmt', root / 'missing.sml', lexical, source, syntax])
+        assert failed.returncode == 1 and not failed.stdout, failed
+        for path in [root / 'missing.sml', lexical, syntax]:
+            assert str(path).encode() in failed.stderr, failed.stderr
+        assert failed.stderr.index(b'missing.sml') < failed.stderr.index(b'lexical.sml') < failed.stderr.index(b'syntax.sml')
     outputs = []
     for index, command in enumerate([native] + ([workman] if workman else [])):
         wm_dir = root / f'wm-{index}'

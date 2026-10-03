@@ -7,7 +7,7 @@ structure WmPrinter = struct
     | SubsetResult.Ok pairs => SubsetList.all (pairs, fn (byte, expected) =>
         WmPrint.scon (Syntax.SChar byte) = "'" ^ expected ^ "'"
         andalso (case WmLexer.lex (WmPrint.scon (Syntax.SChar byte)) of
-          WmLexer.Tokens ([(WmLexer.WScon (Syntax.SChar actual), ignoredFirstPos), (WmLexer.WEOF, ignoredLastPos)], []) => actual = byte
+          WmLexer.Tokens ([(WmLexer.WScon (Syntax.SChar actual), _), (WmLexer.WEOF, _)], []) => actual = byte
         | WmLexer.Tokens (tokens, comments) => false | WmLexer.LexError (message, offset) => false))
   val strings =
     case SubsetString.toNative SubsetChar.byteChars of
@@ -15,7 +15,7 @@ structure WmPrinter = struct
     | SubsetResult.Ok value =>
         WmPrint.scon (Syntax.SString value) = "\"" ^ WmEscapeExpected.string ^ "\""
         andalso (case WmLexer.lex (WmPrint.scon (Syntax.SString value)) of
-          WmLexer.Tokens ([(WmLexer.WScon (Syntax.SString actual), ignoredFirstPos), (WmLexer.WEOF, ignoredLastPos)], []) => actual = value
+          WmLexer.Tokens ([(WmLexer.WScon (Syntax.SString actual), _), (WmLexer.WEOF, _)], []) => actual = value
         | WmLexer.Tokens (tokens, comments) => false | WmLexer.LexError (message, offset) => false)
   val names = WmPrint.capitalize "" = "" andalso WmPrint.capitalize "name" = "Name"
     andalso WmPrint.capitalize "_name" = "_name"

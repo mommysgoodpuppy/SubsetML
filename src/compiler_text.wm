@@ -1,3 +1,14 @@
+/* @subsetml
+from "./subset_result.sml" import * as SubsetResult;
+from "./subset_string.sml" import * as SubsetString;
+from "./subset_natural.sml" import * as SubsetNatural;
+from "./subset_bytes.sml" import * as SubsetBytes;
+from "./subset_order.sml" import * as SubsetOrder;
+from "./subset_list.sml" import * as SubsetList;
+from "./subset_sml_escape.sml" import * as SubsetSmlEscape;
+from "./subset_source.sml" import * as SubsetSource;
+*/
+
 /* Compiler-only compatibility helpers while callers migrate to checked Basis APIs.
    Assertions below rely on validated byte strings and checked/generated lexical bounds. */
 

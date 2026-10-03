@@ -1,3 +1,16 @@
+(* @subsetml
+from "./syntax.sml" import * as Syntax;
+from "./lexer.sml" import * as Lexer;
+from "./sml_option.sml" import * as SmlOption;
+from "./subset_string.sml" import * as SubsetString;
+from "./compiler_text.sml" import * as CompilerText;
+from "./subset_char.sml" import * as SubsetChar;
+from "./subset_list.sml" import * as SubsetList;
+from "./sml_list.sml" import * as SmlList;
+from "./subset_order.sml" import * as SubsetOrder;
+from "./subset_result.sml" import * as SubsetResult;
+*)
+
 (* Parsing (docs/spec.md §3, §4, §7, §8; Definition §2, §3, Appendix B).
 
    SubsetML has no exceptions, so every parsing function returns a `res`: either the parsed value
@@ -193,7 +206,7 @@ structure Parser = struct
           let
             val rec absorb = fn (rhs, more) =>
               case more of
-                (opr2, ignoredPos, ignoredOperand) :: ignoredRest =>
+                (opr2, _, _) :: _ =>
                   (* Precedences are finite constants, so Unordered cannot occur. *)
                   (case (SubsetOrder.compareReal (precedence opr2, precedence opr), rightAssoc opr2) of
                      (SubsetResult.Ok SubsetOrder.Greater, _) => absorb (climb (make, rhs, more, precedence opr + 1.0))
@@ -222,7 +235,7 @@ structure Parser = struct
                ([], _) => Fail ("infix operator `" ^ opr ^ "` is missing its right operand", p)
              | (xs, rest') =>
                  bind (group xs) (fn x => fn _ => pairs (rest', (opr, p, x) :: acc)))
-        | Operand ignoredOperand :: ignoredRest => Fail ("internal error in infix resolution", start)
+        | Operand _ :: _ => Fail ("internal error in infix resolution", start)
     in
       case operands (items, []) of
         ([], Operator (opr, p) :: _) =>
@@ -248,7 +261,7 @@ structure Parser = struct
   val startsTyCon = fn ts =>
     case peek ts of
       (TId s, _) => isAlnumId s andalso not (isInfix s)
-    | (TLong (ignoredQualifiers, ignoredName), ignoredPos) => true
+    | (TLong (_, _), _) => true
     | _ => false
 
   val tyConName = fn ts =>
@@ -331,8 +344,8 @@ structure Parser = struct
     case peek ts of
       (TKey k, _) => k = "_" orelse k = "(" orelse k = "[" orelse k = "{"
     | (TId s, _) => not (isInfix s)
-    | (TLong (ignoredQualifiers, ignoredName), ignoredPos) => true
-    | (TScon ignoredConstant, ignoredPos) => true
+    | (TLong (_, _), _) => true
+    | (TScon _, _) => true
     | _ => false
 
   val rec parsePat = fn ts =>
@@ -358,7 +371,7 @@ structure Parser = struct
       val group = fn
           [x] => Done (x, [])
         | [PId (p, c), arg] => Done (PApp (p, c, arg), [])
-        | [ignoredFirst, ignoredSecond] => Fail ("only a constructor can be applied in a pattern", start)
+        | [_, _] => Fail ("only a constructor can be applied in a pattern", start)
         | _ => Fail ("too many atomic patterns in a row", start)
     in
       bind (collect ([], ts)) (fn items => fn ts =>
@@ -421,8 +434,8 @@ structure Parser = struct
     case peek ts of
       (TKey k, _) => k = "(" orelse k = "[" orelse k = "{" orelse k = "#" orelse k = "let"
     | (TId s, _) => not (isInfix s)
-    | (TLong (ignoredQualifiers, ignoredName), ignoredPos) => true
-    | (TScon ignoredConstant, ignoredPos) => true
+    | (TLong (_, _), _) => true
+    | (TScon _, _) => true
     | _ => false
 
   val startsInfixOp = fn ts =>
@@ -578,7 +591,7 @@ structure Parser = struct
   and parseTyVarSeq = fn ts =>
     case (peek ts, peek (advance ts)) of
       ((TTyVar v, _), _) => Done ([v], advance ts)
-    | ((TKey "(", ignoredFirstPos), (TTyVar ignoredVariable, ignoredSecondPos)) =>
+    | ((TKey "(", _), (TTyVar _, _)) =>
         let
           val tyvar = fn ts =>
             case peek ts of
@@ -619,7 +632,7 @@ structure Parser = struct
                   if isAlnumId s andalso not (isInfix s)
                   then bind (longStrId ts) (fn id => fn ts => more (id :: acc, ts))
                   else Done (SmlList.rev acc, ts)
-              | (TLong (ignoredQualifiers, ignoredName), ignoredPos) => bind (longStrId ts) (fn id => fn ts => more (id :: acc, ts))
+              | (TLong (_, _), _) => bind (longStrId ts) (fn id => fn ts => more (id :: acc, ts))
               | _ => Done (SmlList.rev acc, ts)
           in
             bind (longStrId (advance ts)) (fn first => fn ts =>
@@ -739,10 +752,10 @@ structure Parser = struct
               SmlList.concat (SmlList.map (fn
                   SStructure (p, binds) => SmlList.map (fn _ => p) binds
                 | SDec _ => []) sds)
-          | TopExp (ignoredPos, ignoredExpression) => []) prog)
+          | TopExp (_, _) => []) prog)
     in
       case structures of
-        ignoredFirst :: second :: ignoredRest => SOME ("a file may contain only one structure", second)
+        _ :: second :: _ => SOME ("a file may contain only one structure", second)
       | _ => NONE
     end
 
@@ -750,15 +763,18 @@ structure Parser = struct
       Program of topdec list * comment list
     | ParseError of string * pos
 
+  (* A separate token entry point lets procedures preserve lexical vs parse failures. *)
+  val parseTokens = fn (ts, comments) =>
+    case parseProgram ts of
+      Done (prog, _) =>
+        (case checkFile prog of
+           NONE => Program (prog, comments)
+         | SOME error => let val (message, offset) = error in ParseError (message, offset) end)
+    | Fail (message, offset) => ParseError (message, offset)
+
   val parse = fn src =>
     case Lexer.lex src of
       LexError (message, offset) => ParseError (message, offset)
-    | Tokens (ts, comments) =>
-        case parseProgram ts of
-          Done (prog, _) =>
-            (case checkFile prog of
-               NONE => Program (prog, comments)
-             | SOME error => let val (message, offset) = error in ParseError (message, offset) end)
-        | Fail (message, offset) => ParseError (message, offset)
+    | Tokens (ts, comments) => parseTokens (ts, comments)
 
 end

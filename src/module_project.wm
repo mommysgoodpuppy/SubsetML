@@ -1,0 +1,276 @@
+/* @subsetml
+from "./syntax.sml" import * as Syntax;
+from "./module_imports.sml" import * as ModuleImports;
+from "./subset_io.sml" import * as SubsetIo;
+from "./subset_list.sml" import * as SubsetList;
+from "./compiler_text.sml" import * as CompilerText;
+from "./subset_string.sml" import * as SubsetString;
+from "./subset_result.sml" import * as SubsetResult;
+from "./translate.sml" import * as Translate;
+from "./env.sml" import * as Env;
+from "./elab.sml" import * as Elab;
+from "./unify.sml" import * as Unify;
+*/
+
+// Entry-file loading with explicit imports, canonical identity and private working scope.
+
+from "./syntax.wm" import * as Syntax;
+from "./module_imports.wm" import * as ModuleImports;
+from "./subset_io.wm" import * as SubsetIo;
+from "./subset_list.wm" import * as SubsetList;
+from "./compiler_text.wm" import * as CompilerText;
+from "./subset_string.wm" import * as SubsetString;
+from "./subset_result.wm" import * as SubsetResult;
+from "./translate.wm" import * as Translate;
+from "./env.wm" import * as Env;
+from "./elab.wm" import * as Elab;
+from "./unify.wm" import * as Unify;
+
+// The canonical key is constructed only at the resolver boundary.
+type ModuleId = | ModuleId<String>;
+type Resolved = | Resolved<ModuleId, String>;
+type Source = | Source<String, String, List<Syntax.Topdec>, List<Syntax.Comment>>;
+type Edge = | Edge<ModuleImports.Dependency, ModuleId>;
+type Node = | Node<ModuleId, String, Source, List<Edge>>;
+type Graph = | Graph<ModuleId, List<Node>>;
+type Error<e> =
+  | LoadFailure<e>
+  | ResolutionFailure<String, SubsetIo.Error>
+  | ImportFailure<String, String, String, Syntax.Pos>
+  | CheckFailure<String, String, String, Syntax.Pos>;
+
+let same = match {
+  (ModuleId(left), ModuleId(right)) => { left == right }
+};
+let location = match {
+  Resolved(_, path) => { path }
+};
+let find = (id, nodes) => {
+  SubsetList.find(
+    nodes,
+    match {
+      Node(key, _, _, _) => { same(id, key) }
+    }
+  )
+};
+
+let dirname = (path) => {
+  CompilerText.stringOf(SubsetList.reverse(SubsetList.dropWhile(SubsetList.reverse(CompilerText.characters(path)), (c) => { c != '/' })))
+};
+
+// Like Workman's URL resolution, remove dot segments before following symlinks.
+let normalize = (path) => {
+  let pieces = CompilerText.fields(path, (c) => { c == '/' });
+  let arcs = SubsetList.foldLeft(
+    pieces,
+    [],
+    (piece, acc) => {
+      match(piece) {
+        "" => { acc },
+        "." => { acc },
+        ".." => {
+          match(acc) {
+            [] => { [] },
+            [_, ..rest] => { rest }
+          }
+        },
+        _ => { [piece, ..acc] }
+      }
+    }
+  );
+  "/" ++ SubsetString.concatWith(SubsetList.reverse(arcs), "/")
+};
+
+let identify = (path) => {
+  SubsetResult.andThen(
+    SubsetIo.canonicalPath(path),
+    (canonical) => {
+      if (CompilerText.firstIs(canonical, (c) => { c == '/' })) { SubsetResult.Ok(Resolved(ModuleId(canonical), canonical)) } else {
+        SubsetResult.Err(SubsetIo.HostError("the initial source resolver supports POSIX filesystem paths only"))
+      }
+    }
+  )
+};
+
+let resolve = (referrer, specifier) => {
+  identify(normalize(dirname(location(referrer)) ++ specifier))
+};
+
+let firstPosition = (prog, src) => {
+  match(prog) {
+    [] => { CompilerText.size(src) },
+    [Syntax.TopExp(pos, _), .._] => { pos },
+    [Syntax.TopDecs(declarations), .._] => {
+      match(declarations) {
+        [Syntax.SStructure(pos, _), .._] => { pos },
+        [Syntax.SDec(dec), .._] => {
+          match(dec) {
+            Syntax.DVal(pos, _, _, _) => { pos },
+            Syntax.DType(pos, _) => { pos },
+            Syntax.DDatatype(pos, _) => { pos },
+            Syntax.DOpen(pos, _) => { pos }
+          }
+        },
+        [] => { CompilerText.size(src) }
+      }
+    }
+  }
+};
+
+let cycle = (active, repeated) => {
+  let Resolved(repeatedId, _) = repeated;
+  let ordered = SubsetList.dropWhile(
+    SubsetList.reverse(active),
+    match {
+      Resolved(id, _) => { !same(id, repeatedId) }
+    }
+  );
+  "import cycle: " ++ SubsetString.concatWith(SubsetList.map(SubsetList.append(ordered, [repeated]), location), " -> ")
+};
+
+// The injected loader returns source or its own typed read/lex/parse error.
+let discover = (entry, load) => {
+  let rec visit = (resolved, display, active, completed) => {
+    let Resolved(id, physical) = resolved;
+    match(find(id, completed)) {
+      Some(_) => { SubsetResult.Ok(completed) },
+      None => {
+        SubsetResult.andThen(
+          SubsetResult.mapError(load(display), LoadFailure),
+          (source) => {
+            let Source(path, src, prog, comments) = source;
+            match(ModuleImports.parse(firstPosition(prog, src), comments)) {
+              ModuleImports.Error(message, pos) => { SubsetResult.Err(ImportFailure(path, src, message, pos)) },
+              ModuleImports.Imports(imports) => {
+                let rec walk = (imports, completed, edges) => {
+                  match(imports) {
+                    [] => {
+                      SubsetResult.Ok([Node(id, physical, source, SubsetList.reverse(edges)), ..completed])
+                    },
+                    [ModuleImports.Import(specifier, name, pos), ..rest] => {
+                      match(resolve(resolved, specifier)) {
+                        SubsetResult.Err(error) => {
+                          SubsetResult.Err(ImportFailure(
+                            path,
+                            src,
+                            "cannot resolve import \"" ++ specifier ++ "\": " ++ SubsetIo.errorText(error),
+                            pos
+                          ))
+                        },
+                        SubsetResult.Ok(child) => {
+                          let Resolved(target, targetPath) = child;
+                          if (SubsetList.exists(
+                            [resolved, ..active],
+                            match {
+                              Resolved(key, _) => { same(key, target) }
+                            }
+                          )) {
+                            SubsetResult.Err(ImportFailure(path, src, cycle([resolved, ..active], child), pos))
+                          } else {
+                            SubsetResult.andThen(
+                              visit(child, targetPath, [resolved, ..active], completed),
+                              (checked) => {
+                                match(find(target, checked)) {
+                                  None => {
+                                    SubsetResult.Err(ImportFailure(path, src, "internal error: dependency not loaded", pos))
+                                  },
+                                  Some(Node(_, _, Source(_, _, childProg, _), _)) => {
+                                    if (Translate.structureOf(childProg) == [name]) {
+                                      walk(
+                                        rest,
+                                        checked,
+                                        [Edge(ModuleImports.Import(specifier, name, pos), target), ..edges]
+                                      )
+                                    } else {
+                                      SubsetResult.Err(ImportFailure(
+                                        path,
+                                        src,
+                                        "import name " ++ name ++ " must match the dependency's declared structure",
+                                        pos
+                                      ))
+                                    }
+                                  }
+                                }
+                              }
+                            )
+                          }
+                        }
+                      }
+                    }
+                  }
+                };
+                walk(imports, completed, [])
+              }
+            }
+          }
+        )
+      }
+    }
+  };
+  SubsetResult.andThen(
+    SubsetResult.mapError(identify(entry), (error) => { ResolutionFailure(entry, error) }),
+    (root) => {
+      let Resolved(rootId, _) = root;
+      SubsetResult.map(
+        visit(root, entry, [], []),
+        (completed) => { Graph(rootId, SubsetList.reverse(completed)) }
+      )
+    }
+  )
+};
+
+let check = match {
+  (Graph(_, nodes), Var(basis)) => {
+    let rec loop = (nodes, cache, st) => {
+      match(nodes) {
+        [] => { SubsetResult.Ok() },
+        [Node(id, _, Source(path, src, prog, _), edges), ..rest] => {
+          let rec working = (edges, env) => {
+            match(edges) {
+              [] => { SubsetResult.Ok(env) },
+              [Edge(ModuleImports.Import(_, name, pos), target), ..rest] => {
+                match(SubsetList.find(cache, (key, _) => { same(key, target) })) {
+                  None => {
+                    SubsetResult.Err(CheckFailure(path, src, "internal error: dependency not checked", pos))
+                  },
+                  Some(entry) => {
+                    let (_, exports) = entry;
+                    let Env.Env(_, topTypes, topValues) = exports;
+                    if (!(if (SubsetList.isEmpty(topTypes)) { SubsetList.isEmpty(topValues) } else { false })) {
+                      SubsetResult.Err(CheckFailure(
+                        path,
+                        src,
+                        "namespace imports do not yet support named top-level declarations outside the dependency's structure",
+                        pos
+                      ))
+                    } else {
+                      match(Env.structureAt(exports, [name])) {
+                        None => {
+                          SubsetResult.Err(CheckFailure(path, src, "imported structure is missing", pos))
+                        },
+                        Some(payload) => {
+                          let (body, _) = payload;
+                          working(rest, Env.plus(env, Env.withStructure(name, body, false)))
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          };
+          match(working(edges, basis)) {
+            SubsetResult.Err(error) => { SubsetResult.Err(error) },
+            SubsetResult.Ok(env) => {
+              match(Elab.programExports(env, prog, st)) {
+                Unify.Err(message, pos) => { SubsetResult.Err(CheckFailure(path, src, message, pos)) },
+                Unify.Ok(exports, next) => { loop(rest, [(id, exports), ..cache], next) }
+              }
+            }
+          }
+        }
+      }
+    };
+    loop(nodes, [], Unify.initial)
+  }
+};

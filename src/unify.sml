@@ -1,3 +1,15 @@
+(* @subsetml
+from "./types.sml" import * as Types;
+from "./syntax.sml" import * as Syntax;
+from "./int_map.sml" import * as IntMap;
+from "./sml_list.sml" import * as SmlList;
+from "./subset_char.sml" import * as SubsetChar;
+from "./subset_result.sml" import * as SubsetResult;
+from "./compiler_text.sml" import * as CompilerText;
+from "./subset_string.sml" import * as SubsetString;
+from "./subset_list.sml" import * as SubsetList;
+*)
+
 (* Unification over a substitution threaded as state (SubsetML has no references).
 
    Type variables carry a kind (Types.kind) and a level. A variable created while elaborating
@@ -53,7 +65,7 @@ structure Unify = struct
 
   val freshStamp = fn State (vars, next, sels, recs, eqs) => (next, State (vars, next + 1.0, sels, recs, eqs))
 
-  val lookup = fn (State (vars, ignored1, ignored2, ignored3, ignored4), v) =>
+  val lookup = fn (State (vars, _, _, _, _), v) =>
     case IntMap.find (vars, v) of
       SOME info => info
     | NONE => Free (KPlain, 0.0)
@@ -67,8 +79,8 @@ structure Unify = struct
       TVar v =>
         (case lookup (st, v) of
            Bound t' => prune (st, t')
-         | Free (ignored5, ignoredFreeLevel) => t)
-    | ignored6 => t
+         | Free (_, _) => t)
+    | _ => t
 
   (* Applies the substitution throughout a type. *)
   val rec resolve = fn (st, t) =>
@@ -84,10 +96,10 @@ structure Unify = struct
       val rec go = fn (t, acc) =>
         case prune (st, t) of
           TVar v => if SmlList.exists (fn w => Real.== (w, v)) acc then acc else acc @ [v]
-        | TCon (ignored7, ts) => SmlList.foldl go acc ts
+        | TCon (_, ts) => SmlList.foldl go acc ts
         | TArrow (a, b) => go (b, go (a, acc))
-        | TRecord fields => SmlList.foldl (fn ((ignored8, a), acc) => go (a, acc)) acc fields
-        | ignored9 => acc
+        | TRecord fields => SmlList.foldl (fn ((_, a), acc) => go (a, acc)) acc fields
+        | _ => acc
     in
       go (t, [])
     end
@@ -105,15 +117,15 @@ structure Unify = struct
       val vars = SmlList.foldl (fn (t, acc) => acc @ SmlList.filter (fn v => not (SmlList.exists (fn w => Real.== (w, v)) acc))
                                                                (freeVars (st, t))) [] ts'
       val rec indexOf = fn
-          (ignored10, [], ignored11) => 0.0
+          (_, [], _) => 0.0
         | (v, w :: rest, i) => if Real.== (v, w) then i else indexOf (v, rest, i + 1.0)
       (* Explicit type variables keep their names, so free variables avoid them. *)
       val rec rigids = fn
           TRigid name => [name]
-        | TCon (ignored12, ts) => SmlList.concat (SmlList.map rigids ts)
+        | TCon (_, ts) => SmlList.concat (SmlList.map rigids ts)
         | TArrow (a, b) => rigids a @ rigids b
-        | TRecord fields => SmlList.concat (SmlList.map (fn (ignored13, a) => rigids a) fields)
-        | ignored14 => []
+        | TRecord fields => SmlList.concat (SmlList.map (fn (_, a) => rigids a) fields)
+        | _ => []
       val taken = SmlList.concat (SmlList.map rigids ts')
       val rec nth = fn (i, candidate) =>
         if SmlList.exists (fn r => r = varName candidate) taken then nth (i, candidate + 1.0)
@@ -121,9 +133,9 @@ structure Unify = struct
       val varText = fn v =>
         let val name = nth (indexOf (v, vars, 0.0), 0.0) in
           case lookup (st, v) of
-            Free (KEq, ignored15) => "'" ^ name
-          | Free (KClass names, ignored16) => name ^ " (" ^ SubsetString.concatWith ((SmlList.map nameOf names), " or ") ^ ")"
-          | ignored17 => name
+            Free (KEq, _) => "'" ^ name
+          | Free (KClass names, _) => name ^ " (" ^ SubsetString.concatWith ((SmlList.map nameOf names), " or ") ^ ")"
+          | _ => name
         end
       (* Levels: arrow 0, tuple 1, application 2. *)
       val rec show = fn (level, t) =>
@@ -149,7 +161,7 @@ structure Unify = struct
   val show = fn (st, t) =>
     case showAll (st, [t]) of
       [s] => s
-    | ignored18 => ""
+    | _ => ""
 
   (* --------------------------------------------------------------------------------------- *)
   (* Unification *)
@@ -161,8 +173,8 @@ structure Unify = struct
       (KPlain, k) => SOME k
     | (k, KPlain) => SOME k
     | (KEq, KEq) => SOME KEq
-    | (KEq, KClass ns) => (case SmlList.filter (fn (ignored19, ignored20, ignored21, eq) => eq) ns of [] => NONE | ns' => SOME (KClass ns'))
-    | (KClass ns, KEq) => (case SmlList.filter (fn (ignored22, ignored23, ignored24, eq) => eq) ns of [] => NONE | ns' => SOME (KClass ns'))
+    | (KEq, KClass ns) => (case SmlList.filter (fn (_, _, _, eq) => eq) ns of [] => NONE | ns' => SOME (KClass ns'))
+    | (KClass ns, KEq) => (case SmlList.filter (fn (_, _, _, eq) => eq) ns of [] => NONE | ns' => SOME (KClass ns'))
     | (KClass a, KClass b) =>
         (case SmlList.filter (fn n => SmlList.exists (fn m => sameName (n, m)) b) a of
            [] => NONE
@@ -179,42 +191,42 @@ structure Unify = struct
       TVar v =>
         (case lookup (st, v) of
            Free (k, l) => if l > level then set (st, v, Free (k, level)) else st
-         | Bound ignored25 => st)
-    | TCon (ignored26, ts) => SmlList.foldl (fn (a, st) => adjust (st, level, a)) st ts
+         | Bound _ => st)
+    | TCon (_, ts) => SmlList.foldl (fn (a, st) => adjust (st, level, a)) st ts
     | TArrow (a, b) => adjust (adjust (st, level, a), level, b)
-    | TRecord fields => SmlList.foldl (fn ((ignored27, a), st) => adjust (st, level, a)) st fields
-    | ignored28 => st
+    | TRecord fields => SmlList.foldl (fn ((_, a), st) => adjust (st, level, a)) st fields
+    | _ => st
 
   val rec occurs = fn (st, v, t) =>
     case prune (st, t) of
       TVar w => Real.== (v, w)
-    | TCon (ignored29, ts) => SmlList.exists (fn a => occurs (st, v, a)) ts
+    | TCon (_, ts) => SmlList.exists (fn a => occurs (st, v, a)) ts
     | TArrow (a, b) => occurs (st, v, a) orelse occurs (st, v, b)
-    | TRecord fields => SmlList.exists (fn (ignored30, a) => occurs (st, v, a)) fields
-    | ignored31 => false
+    | TRecord fields => SmlList.exists (fn (_, a) => occurs (st, v, a)) fields
+    | _ => false
 
   (* Makes t satisfy kind k. *)
   val rec require = fn (st, k, t) =>
     case (k, prune (st, t)) of
-      (KPlain, ignored32) => Unified st
-    | (ignored33, TVar w) =>
+      (KPlain, _) => Unified st
+    | (_, TVar w) =>
         (case lookup (st, w) of
            Free (k2, l) =>
              (case combine (k, k2) of
                 SOME k' => Unified (set (st, w, Free (k', l)))
               | NONE => Mismatch ("it must be " ^ kindText k ^ " and " ^ kindText k2))
-         | Bound ignored34 => Unified st)
-    | (KEq, TCon ((ignored35, name, ignored36, eq), args)) =>
+         | Bound _ => Unified st)
+    | (KEq, TCon ((_, name, _, eq), args)) =>
         if eq then requireAll (st, k, args)
         else Mismatch ("type " ^ name ^ " does not admit equality")
-    | (KEq, TRecord fields) => requireAll (st, k, SmlList.map (fn (ignored37, t) => t) fields)
-    | (KEq, TArrow (ignored38, ignoredArrowResult)) => Mismatch "function types do not admit equality"
+    | (KEq, TRecord fields) => requireAll (st, k, SmlList.map (fn (_, t) => t) fields)
+    | (KEq, TArrow (_, _)) => Mismatch "function types do not admit equality"
     | (KEq, TRigid name) => Mismatch ("type variable " ^ name ^ " does not admit equality")
     | (KClass ns, TCon (n, [])) =>
         if SmlList.exists (fn m => sameName (n, m)) ns then Unified st
         else Mismatch ("the overloaded operation needs " ^ kindText k)
-    | (KClass ignored39, ignored40) => Mismatch ("the overloaded operation needs " ^ kindText k)
-    | (ignored41, TGen ignored42) => Unified st
+    | (KClass _, _) => Mismatch ("the overloaded operation needs " ^ kindText k)
+    | (_, TGen _) => Unified st
 
   and requireAll = fn (st, k, ts) =>
     case ts of
@@ -230,16 +242,16 @@ structure Unify = struct
         if sameName (n, m) then unifyAll (st, args, args') else Mismatch ""
     | (TArrow (a1, r1), TArrow (a2, r2)) => andThen (unify (st, a1, a2), fn st => unify (st, r1, r2))
     | (TRecord f1, TRecord f2) =>
-        if SmlList.map (fn (l, ignored43) => l) f1 = SmlList.map (fn (l, ignored44) => l) f2
-        then unifyAll (st, SmlList.map (fn (ignored45, t) => t) f1, SmlList.map (fn (ignored46, t) => t) f2)
+        if SmlList.map (fn (l, _) => l) f1 = SmlList.map (fn (l, _) => l) f2
+        then unifyAll (st, SmlList.map (fn (_, t) => t) f1, SmlList.map (fn (_, t) => t) f2)
         else Mismatch ""
     | (TRigid x, TRigid y) => if x = y then Unified st else Mismatch ""
-    | ignored47 => Mismatch ""
+    | _ => Mismatch ""
 
   and unifyAll = fn (st, xs, ys) =>
     case (xs, ys) of
       (x :: xs', y :: ys') => andThen (unify (st, x, y), fn st => unifyAll (st, xs', ys'))
-    | ignored48 => Unified st
+    | _ => Unified st
 
   and bindVar = fn (st, v, t) =>
     case lookup (st, v) of
@@ -267,15 +279,15 @@ structure Unify = struct
     let
       val t' = resolve (st, t)
       val vars =
-        SmlList.filter (fn v => case lookup (st, v) of Free (ignored49, l) => l > level | Bound ignored50 => false)
+        SmlList.filter (fn v => case lookup (st, v) of Free (_, l) => l > level | Bound _ => false)
           (freeVars (st, t'))
-      val kinds = SmlList.map (fn v => case lookup (st, v) of Free (k, ignored51) => k | Bound ignored52 => KPlain) vars
+      val kinds = SmlList.map (fn v => case lookup (st, v) of Free (k, _) => k | Bound _ => KPlain) vars
       val count = SubsetList.length vars
       (* The position of x in a list, by the given equality. *)
       val indexIn = fn (same, x, xs) =>
         let
           val rec go = fn
-              ([], ignored53) => NONE
+              ([], _) => NONE
             | (y :: rest, i) => if same (x, y) then SOME i else go (rest, i + 1.0)
         in
           go (xs, 0.0)
@@ -287,9 +299,9 @@ structure Unify = struct
         | TCon (n, ts) => TCon (n, SmlList.map go ts)
         | TArrow (a, b) => TArrow (go a, go b)
         | TRecord fields => TRecord (SmlList.map (fn (l, a) => (l, go a)) fields)
-        | TGen ignored54 => t
+        | TGen _ => t
     in
-      (kinds @ SmlList.map (fn ignored55 => KPlain) rigid, go t')
+      (kinds @ SmlList.map (fn _ => KPlain) rigid, go t')
     end
 
 end

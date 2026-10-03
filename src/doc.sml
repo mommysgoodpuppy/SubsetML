@@ -1,3 +1,16 @@
+(* @subsetml
+from "./syntax.sml" import * as Syntax;
+from "./sml_list.sml" import * as SmlList;
+from "./sml_option.sml" import * as SmlOption;
+from "./compiler_text.sml" import * as CompilerText;
+from "./subset_list.sml" import * as SubsetList;
+from "./subset_bytes.sml" import * as SubsetBytes;
+from "./subset_char.sml" import * as SubsetChar;
+from "./subset_result.sml" import * as SubsetResult;
+from "./subset_source.sml" import * as SubsetSource;
+from "./subset_string.sml" import * as SubsetString;
+*)
+
 (* Layout shared by the source printers.
 
    A document is a non-empty list of lines. Each line has an indentation relative to the
@@ -43,7 +56,7 @@ structure Doc = struct
 
   (* The text of a one-line document. *)
   val flat = fn
-      [(ignoredIndent, t, ignoredTag)] => SOME t
+      [(_, t, _)] => SOME t
     | _ => NONE
 
   val isFlat = fn d => SmlOption.isSome (flat d)
@@ -160,7 +173,7 @@ structure Doc = struct
       val rec flush = fn (acc, lastTag, ind, limit, cs) =>
         case cs of
           (c :: rest) =>
-            let val (p, ignoredBody, ignoredTrailing) = c in
+            let val (p, _, _) = c in
               if p < limit then flush (emitComment (acc, lastTag, ind, c), p, ind, limit, rest)
               else (acc, lastTag, cs)
             end
@@ -176,7 +189,7 @@ structure Doc = struct
       val rec go = fn (ls, acc, lastTag, cs, seenCode) =>
         case ls of
           [] =>
-            let val (acc', ignoredTag, ignoredComments) = flush (acc, lastTag, 0.0, SubsetSource.length src + 1.0, cs) in acc' end
+            let val (acc', _, _) = flush (acc, lastTag, 0.0, SubsetSource.length src + 1.0, cs) in acc' end
         | (ind, t, NONE) :: rest => go (rest, (spaces ind ^ t, false) :: acc, lastTag, cs, seenCode)
         | (ind, t, SOME p) :: rest =>
             let

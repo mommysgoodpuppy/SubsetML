@@ -1,0 +1,113 @@
+/* @subsetml
+from "./syntax.sml" import * as Syntax;
+from "./compiler_text.sml" import * as CompilerText;
+from "./subset_list.sml" import * as SubsetList;
+from "./subset_char.sml" import * as SubsetChar;
+from "./wm_lexer.sml" import * as WmLexer;
+*/
+
+// Comment metadata, using Workman's namespace import spelling.
+
+from "./syntax.wm" import * as Syntax;
+from "./compiler_text.wm" import * as CompilerText;
+from "./subset_list.wm" import * as SubsetList;
+from "./subset_char.wm" import * as SubsetChar;
+from "./wm_lexer.wm" import * as WmLexer;
+
+type Dependency = | Import<String, String, Syntax.Pos>;
+type Result = Imports<List<Dependency>> | Error<String, Syntax.Pos>;
+
+let marker = "@subsetml";
+let prefix = (text, beginning) => {
+  let rec go = match {
+    (_, []) => { true },
+    ([], _) => { false },
+    ([x, ..xs], [y, ..ys]) => { if (x == y) { go(xs, ys) } else { false } }
+  };
+  go(CompilerText.characters(text), CompilerText.characters(beginning))
+};
+
+let marked = (body) => {
+  let trimmed = CompilerText.stringOf(SubsetList.dropWhile(CompilerText.characters(body), SubsetChar.isSpace));
+  if (prefix(trimmed, marker)) {
+    let rest = CompilerText.drop(trimmed, CompilerText.size(marker));
+    if (if (rest == "") { true } else { CompilerText.firstIs(rest, SubsetChar.isSpace) }) {
+      Some(CompilerText.size(body) - CompilerText.size(rest), rest)
+    } else { None }
+  } else { None }
+};
+
+/* Supported specifiers are explicit POSIX relative paths in the common local profile.
+   URL escaping/query syntax and non-ASCII specifiers are rejected, not approximated. */
+let validPath = (path) => {
+  if (if (if (prefix(path, "./")) { true } else { prefix(path, "../") }) { CompilerText.isSuffix(path, ".sml") } else { false }) {
+    SubsetList.all(
+      CompilerText.characters(path),
+      (c) => {
+        if (SubsetChar.isPrint(c)) { !SubsetChar.contains(['\\', '%', '?', '#'], c) } else { false }
+      }
+    )
+  } else { false }
+};
+
+let declarations = (body, base) => {
+  match(WmLexer.lex(body)) {
+    WmLexer.LexError(message, offset) => { Error(message, base + offset) },
+    WmLexer.Tokens(tokens, _) => {
+      let rec loop = (tokens, acc) => {
+        match(tokens) {
+          [(WmLexer.WEOF, _)] => { Imports(SubsetList.reverse(acc)) },
+          [
+            (WmLexer.WKey("from"), Var(pos)),
+            (WmLexer.WScon(Syntax.SString(path)), _),
+            (WmLexer.WKey("import"), _),
+            (WmLexer.WKey("*"), _),
+            (WmLexer.WKey("as"), _),
+            (WmLexer.WName([name]), _),
+            (WmLexer.WKey(";"), _),
+            ..rest
+          ] => {
+            if (validPath(path)) { loop(rest, [Import(path, name, base + pos), ..acc]) } else {
+              Error(
+                "imports require explicit relative .sml paths; URL escapes and non-ASCII specifiers are not supported yet",
+                base + pos
+              )
+            }
+          },
+          [(_, Var(pos)), .._] => {
+            Error("expected `from \"./file.sml\" import * as Structure;`", base + pos)
+          },
+          [] => { Error("incomplete import metadata", base) }
+        }
+      };
+      loop(tokens, [])
+    }
+  }
+};
+
+let parse = (first, comments) => {
+  let rec loop = (comments, seen, imports) => {
+    match(comments) {
+      [] => { Imports(imports) },
+      [(Var(pos), Var(body), _), ..rest] => {
+        match(marked(body)) {
+          None => { loop(rest, seen, imports) },
+          Some(payload) => {
+            let (skip, text) = payload;
+            if (seen) { Error("only one @subsetml metadata block is allowed", pos) } else {
+              if (pos >= first) {
+                Error("import metadata must precede ordinary declarations", pos)
+              } else {
+                match(declarations(text, pos + 2 + skip)) {
+                  Error(message, offset) => { Error(message, offset) },
+                  Imports(entries) => { loop(rest, true, entries) }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  };
+  loop(comments, false, [])
+};

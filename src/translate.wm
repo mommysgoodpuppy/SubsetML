@@ -1,3 +1,19 @@
+/* @subsetml
+from "./syntax.sml" import * as Syntax;
+from "./sml_list.sml" import * as SmlList;
+from "./compiler_text.sml" import * as CompilerText;
+from "./subset_char.sml" import * as SubsetChar;
+from "./doc.sml" import * as Doc;
+from "./wm_print.sml" import * as WmPrint;
+from "./unify.sml" import * as Unify;
+from "./types.sml" import * as Types;
+from "./elab.sml" import * as Elab;
+from "./basis.sml" import * as Basis;
+from "./wm_parse.sml" import * as WmParse;
+from "./wm_lexer.sml" import * as WmLexer;
+from "./sml_print.sml" import * as SmlPrint;
+*/
+
 /* Whole-file translation. By spec M1 a file has at most one structure, so each SubsetML file
    becomes one Workman module: `structure FooBar` in foo_bar.sml becomes foo_bar.wm, and the
    file's other top-level declarations join the module. */
@@ -23,35 +39,35 @@ from "./syntax.wm" import *;
 
 let head = match {
   [] => { [] },
-  [q, ..ignored1] => { [q] }
+  [q, .._] => { [q] }
 };
 
 let concatMap = (f, xs) => { SmlList.concat(SmlList.map(f)(xs)) };
 
 let rec tyQuals = match {
-  TyVar(ignored2) => { [] },
-  TyCon(args, (Var(qs), Var(ignored3))) => { List.append(head(qs), concatMap(tyQuals, args)) },
+  TyVar(_) => { [] },
+  TyCon(args, (Var(qs), _)) => { List.append(head(qs), concatMap(tyQuals, args)) },
   TyTuple(ts) => { concatMap(tyQuals, ts) },
   TyArrow(a, b) => { List.append(tyQuals(a), tyQuals(b)) },
-  TyRecord(fields) => { concatMap((ignored4, t) => { tyQuals(t) }, fields) }
+  TyRecord(fields) => { concatMap((_, t) => { tyQuals(t) }, fields) }
 };
 
 let rec patQuals = match {
   PWild => { [] },
-  PScon(ignored5Field0, ignored5Field1) => { [] },
-  PId(ignored6, (Var(qs), Var(ignored7))) => { head(qs) },
-  PRecord(ignored8, fields) => { concatMap((ignored9, p) => { patQuals(p) }, fields) },
+  PScon(_, _) => { [] },
+  PId(_, (Var(qs), _)) => { head(qs) },
+  PRecord(_, fields) => { concatMap((_, p) => { patQuals(p) }, fields) },
   PTuple(ps) => { concatMap(patQuals, ps) },
   PList(ps) => { concatMap(patQuals, ps) },
-  PApp(ignored10, (Var(qs), Var(ignored11)), p) => { List.append(head(qs), patQuals(p)) },
+  PApp(_, (Var(qs), _), p) => { List.append(head(qs), patQuals(p)) },
   PTyped(p, t) => { List.append(patQuals(p), tyQuals(t)) }
 };
 
 let rec expQuals = match {
-  EScon(ignored12Field0, ignored12Field1) => { [] },
-  EId(ignored13, (Var(qs), Var(ignored14))) => { head(qs) },
-  ERecord(ignored15, fields) => { concatMap((ignored16, e) => { expQuals(e) }, fields) },
-  ESelect(ignored17Field0, ignored17Field1) => { [] },
+  EScon(_, _) => { [] },
+  EId(_, (Var(qs), _)) => { head(qs) },
+  ERecord(_, fields) => { concatMap((_, e) => { expQuals(e) }, fields) },
+  ESelect(_, _) => { [] },
   ETuple(es) => { concatMap(expQuals, es) },
   EList(es) => { concatMap(expQuals, es) },
   ESeq(es) => { concatMap(expQuals, es) },
@@ -74,17 +90,15 @@ and ruleQuals = (rules) => {
 }
 
 and decQuals = match {
-  DVal(ignored18, ignored19, plain, recs) => { ruleQuals(List.append(plain, recs)) },
-  DType(ignored20, binds) => {
-    concatMap((ignored21, ignored22, t) => { tyQuals(t) }, binds)
-  },
-  DDatatype(ignored23, binds) => {
+  DVal(_, _, plain, recs) => { ruleQuals(List.append(plain, recs)) },
+  DType(_, binds) => { concatMap((_, _, t) => { tyQuals(t) }, binds) },
+  DDatatype(_, binds) => {
     concatMap(
-      (ignored24, ignored25, cons) => {
+      (_, _, cons) => {
         concatMap(
           match {
-            (Var(ignored26), Var(ignored27), None) => { [] },
-            (Var(ignored28), Var(ignored29), Some(t)) => { tyQuals(t) }
+            (_, _, None) => { [] },
+            (_, _, Some(t)) => { tyQuals(t) }
           },
           cons
         )
@@ -92,14 +106,14 @@ and decQuals = match {
       binds
     )
   },
-  DOpen(ignored30, ids) => { concatMap(head, ids) }
+  DOpen(_, ids) => { concatMap(head, ids) }
 };
 
 let decPos = match {
-  DVal(p, ignored31, ignored32, ignored33) => { p },
-  DType(p, ignored34) => { p },
-  DDatatype(p, ignored35) => { p },
-  DOpen(p, ignored36) => { p }
+  DVal(p, _, _, _) => { p },
+  DType(p, _) => { p },
+  DDatatype(p, _) => { p },
+  DOpen(p, _) => { p }
 };
 
 // ---------------------------------------------------------------------------------------
@@ -109,13 +123,13 @@ let decPos = match {
 let unqualify = (self, id) => {
   match(id) {
     ([q, ..rest], Var(x)) => { if (q == self) { (rest, x) } else { id } },
-    Var(ignored37) => { id }
+    _ => { id }
   }
 };
 
 let rec tyStrip = (self, t) => {
   match(t) {
-    TyVar(ignored38) => { t },
+    TyVar(_) => { t },
     TyCon(args, id) => {
       TyCon(SmlList.map((a) => { tyStrip(self, a) })(args), unqualify(self, id))
     },
@@ -136,7 +150,7 @@ let rec patStrip = (self, p) => {
     PList(ps) => { PList(SmlList.map(go)(ps)) },
     PApp(pos, id, q) => { PApp(pos, unqualify(self, id), go(q)) },
     PTyped(q, t) => { PTyped(go(q), tyStrip(self, t)) },
-    Var(ignored39) => { p }
+    _ => { p }
   }
 };
 
@@ -159,7 +173,7 @@ let rec expStrip = (self, e) => {
     EIf(c, a, b) => { EIf(go(c), go(a), go(b)) },
     ECase(x, rs) => { ECase(go(x), rules(rs)) },
     EFn(rs) => { EFn(rules(rs)) },
-    Var(ignored40) => { e }
+    _ => { e }
   }
 }
 
@@ -187,7 +201,7 @@ and decStrip = (self, d) => {
         })(binds)
       )
     },
-    DOpen(ignored41Field0, ignored41Field1) => { d }
+    DOpen(_, _) => { d }
   }
 };
 
@@ -203,20 +217,20 @@ let isUpper = (s) => { CompilerText.firstIs(s, SubsetChar.isUpper) };
 // Every identifier written in a phrase, with the nearest known position.
 let rec patNames = (pos, p) => {
   match(p) {
-    PId(q, (Var(ignored42), Var(x))) => { [(q, x)] },
+    PId(q, (_, Var(x))) => { [(q, x)] },
     PRecord(q, fields) => { concatMap((l, f) => { [(q, l), ..patNames(q, f)] }, fields) },
     PTuple(ps) => { concatMap((f) => { patNames(pos, f) }, ps) },
     PList(ps) => { concatMap((f) => { patNames(pos, f) }, ps) },
-    PApp(q, (Var(ignored43), Var(c)), f) => { [(q, c), ..patNames(q, f)] },
-    PTyped(f, ignored44) => { patNames(pos, f) },
-    Var(ignored45) => { [] }
+    PApp(q, (_, Var(c)), f) => { [(q, c), ..patNames(q, f)] },
+    PTyped(f, _) => { patNames(pos, f) },
+    _ => { [] }
   }
 };
 
 let rec expNames = (pos, e) => {
   let go = (x) => { expNames(pos, x) };
   match(e) {
-    EId(q, (Var(ignored46), Var(x))) => { [(q, x)] },
+    EId(q, (_, Var(x))) => { [(q, x)] },
     ERecord(q, fields) => { concatMap((l, x) => { [(q, l), ..expNames(q, x)] }, fields) },
     ESelect(q, l) => { [(q, l)] },
     ETuple(es) => { concatMap(go, es) },
@@ -224,13 +238,13 @@ let rec expNames = (pos, e) => {
     ESeq(es) => { concatMap(go, es) },
     ELet(ds, es) => { List.append(concatMap(decNames, ds), concatMap(go, es)) },
     EApp(f, a) => { List.append(go(f), go(a)) },
-    ETyped(x, ignored47) => { go(x) },
+    ETyped(x, _) => { go(x) },
     EAndalso(a, b) => { List.append(go(a), go(b)) },
     EOrelse(a, b) => { List.append(go(a), go(b)) },
     EIf(c, a, b) => { List.append(go(c), List.append(go(a), go(b))) },
     ECase(x, rules) => { List.append(go(x), ruleNames(pos, rules)) },
     EFn(rules) => { ruleNames(pos, rules) },
-    EScon(ignored48Field0, ignored48Field1) => { [] }
+    EScon(_, _) => { [] }
   }
 }
 
@@ -239,19 +253,17 @@ and ruleNames = (pos, rules) => {
 }
 
 and decNames = match {
-  DVal(pos, ignored49, plain, recs) => { ruleNames(pos, List.append(plain, recs)) },
-  DType(pos, binds) => {
-    SmlList.map((ignored50, tycon, ignored51) => { (pos, tycon) })(binds)
-  },
+  DVal(pos, _, plain, recs) => { ruleNames(pos, List.append(plain, recs)) },
+  DType(pos, binds) => { SmlList.map((_, tycon, _) => { (pos, tycon) })(binds) },
   DDatatype(pos, binds) => {
     concatMap(
-      (ignored52, tycon, cons) => {
-        [(pos, tycon), ..SmlList.map((cp, c, ignored53) => { (cp, c) })(cons)]
+      (_, tycon, cons) => {
+        [(pos, tycon), ..SmlList.map((cp, c, _) => { (cp, c) })(cons)]
       },
       binds
     )
   },
-  DOpen(ignored54Field0, ignored54Field1) => { [] }
+  DOpen(_, _) => { [] }
 };
 
 // Warnings for one module's declarations and expressions.
@@ -264,7 +276,7 @@ let conventionWarnings = (decs, exps) => {
   let casing = match {
     DType(pos, binds) => {
       concatMap(
-        (ignored55, tycon, ignored56) => {
+        (_, tycon, _) => {
           if (isUpper(tycon)) { [(pos, "type `" ++ tycon ++ "` should start lowercase")] } else { [] }
         },
         binds
@@ -272,11 +284,11 @@ let conventionWarnings = (decs, exps) => {
     },
     DDatatype(pos, binds) => {
       concatMap(
-        (ignored57, tycon, cons) => {
+        (_, tycon, cons) => {
           List.append(
             if (isUpper(tycon)) { [(pos, "type `" ++ tycon ++ "` should start lowercase")] } else { [] },
             concatMap(
-              (cp, c, ignored58) => {
+              (cp, c, _) => {
                 if (isUpper(c)) { [] } else { [(cp, "constructor `" ++ c ++ "` should start uppercase")] }
               },
               cons
@@ -286,7 +298,7 @@ let conventionWarnings = (decs, exps) => {
         binds
       )
     },
-    Var(ignored59) => { [] }
+    _ => { [] }
   };
   List.append(
     concatMap(
@@ -309,7 +321,7 @@ let distinct = (xs) => {
 // The file name without directory and extension.
 let baseName = (path) => {
   let file = match(SmlList.rev(CompilerText.fields(path, (c) => { c == '/' }))) {
-    [last, ..ignored60] => { last },
+    [last, .._] => { last },
     [] => { path }
   };
   if (CompilerText.isSuffix(file, ".sml")) { CompilerText.slice(file, 0, CompilerText.size(file) - 4) } else { file }
@@ -322,13 +334,13 @@ let structureOf = (prog) => {
       TopDecs(sds) => {
         concatMap(
           match {
-            SStructure(ignored61, binds) => { SmlList.map((name, ignored62) => { name })(binds) },
-            SDec(ignored63) => { [] }
+            SStructure(_, binds) => { SmlList.map((name, _) => { name })(binds) },
+            SDec(_) => { [] }
           },
           sds
         )
       },
-      TopExp(ignored64Field0, ignored64Field1) => { [] }
+      TopExp(_, _) => { [] }
     },
     prog
   )
@@ -340,7 +352,7 @@ type Result = Output<String, String, List<(Pos, String)>> | TranslateError<Strin
    order, with the structure's declarations in place and other phrases unqualified. */
 let module = (prog) => {
   let self = match(structureOf(prog)) {
-    [name, ..ignored65] => { name },
+    [name, .._] => { name },
     [] => { "" }
   };
   let phrases = concatMap(
@@ -348,8 +360,8 @@ let module = (prog) => {
       TopDecs(sds) => {
         concatMap(
           match {
-            SStructure(ignored66, binds) => {
-              concatMap((ignored67, ds) => { SmlList.map((d) => { TopDecs([SDec(d)]) })(ds) }, binds)
+            SStructure(_, binds) => {
+              concatMap((_, ds) => { SmlList.map((d) => { TopDecs([SDec(d)]) })(ds) }, binds)
             },
             SDec(d) => { [TopDecs([SDec(decStrip(self, d))])] }
           },
@@ -374,19 +386,19 @@ let parts = (phrases) => {
           concatMap(
             match {
               SDec(d) => { [d] },
-              SStructure(ignored68Field0, ignored68Field1) => { [] }
+              SStructure(_, _) => { [] }
             },
             sds
           )
         },
-        TopExp(ignored69Field0, ignored69Field1) => { [] }
+        TopExp(_, _) => { [] }
       },
       phrases
     ),
     concatMap(
       match {
-        TopExp(ignored70, e) => { [e] },
-        TopDecs(ignored71) => { [] }
+        TopExp(_, e) => { [e] },
+        TopDecs(_) => { [] }
       },
       phrases
     )
@@ -399,8 +411,8 @@ let toWm = (structures, path, src, prog, comments) => {
   let (decs, exps) = parts(phrases);
   let used = distinct(List.append(concatMap(decQuals, decs), concatMap(expQuals, exps)));
   let start = match(prog) {
-    [TopDecs([SStructure(p, ignored72), ..ignored73]), ..ignored74] => { p },
-    Var(ignored75) => { 0 }
+    [TopDecs([SStructure(p, _), .._]), .._] => { p },
+    _ => { 0 }
   };
   let imports = SmlList.map((q) => {
     Doc.atom(start, "from \"./" ++ WmPrint.fileName(q) ++ "\" import * as " ++ q ++ ";")
@@ -410,7 +422,7 @@ let toWm = (structures, path, src, prog, comments) => {
   let doc = Doc.stack(SmlList.map((td) => { WmPrint.topdec(structures, td) })(phrases));
   let body = match(imports) {
     [] => { doc },
-    Var(ignored76) => { Doc.stack([Doc.stack(imports), Doc.text(""), doc]) }
+    _ => { Doc.stack([Doc.stack(imports), Doc.text(""), doc]) }
   };
   let expected = WmPrint.fileName(self);
   if (if (self != "") { expected != baseName(path) ++ ".wm" } else { false }) {
@@ -443,7 +455,7 @@ let rec mapExp = (f, e) => {
     EIf(c, a, b) => { EIf(go(c), go(a), go(b)) },
     ECase(x, rs) => { ECase(go(x), rules(rs)) },
     EFn(rs) => { EFn(rules(rs)) },
-    Var(ignored77) => { e }
+    _ => { e }
   })
 }
 
@@ -453,7 +465,7 @@ and mapDec = (f, d) => {
       let rules = (rs) => { SmlList.map((pat, e) => { (pat, mapExp(f, e)) })(rs) };
       DVal(p, vs, rules(plain), rules(recs))
     },
-    Var(ignored78) => { d }
+    _ => { d }
   }
 };
 
@@ -477,11 +489,11 @@ let mapProgram = (f, prog) => {
 /* Workman equality is ambiguous until elaboration. Only a scalar real comparison is
    rewritten; a second, strict elaboration rejects every remaining invalid SML equality. */
 let realEquality = (st, prog) => {
-  let Unify.State(ignored79, ignored80, ignored81, ignored82, sites) = st;
-  let positions = SmlList.map((p, ignored83) => { p })(SmlList.filter((ignored84, t) => {
+  let Unify.State(_, _, _, _, sites) = st;
+  let positions = SmlList.map((p, _) => { p })(SmlList.filter((_, t) => {
     match(Unify.prune(st, t)) {
       Types.TCon(n, []) => { Unify.sameName(n, Types.realName) },
-      Var(ignored85) => { false }
+      _ => { false }
     }
   })(match(sites) {
     Some(xs) => { xs },
@@ -494,7 +506,7 @@ let realEquality = (st, prog) => {
           EApp(EId(p, (["Real"], if (opr == "=") { "==" } else { "!=" })), a)
         } else { e }
       },
-      Var(ignored86) => { e }
+      _ => { e }
     }
   };
   mapProgram(rewrite, prog)
@@ -503,31 +515,31 @@ let realEquality = (st, prog) => {
 /* Check dependencies before a module, regardless of the command-line order. Every
    recovery starts with its dependency closure, so unrelated input files remain independent. */
 let recover = (modules, target) => {
-  let nameOfModule = (ignored87, ignored88, prog, ignored89) => {
+  let nameOfModule = (_, _, prog, _) => {
     match(structureOf(prog)) {
-      [n, ..ignored90] => { n },
+      [n, .._] => { n },
       [] => { "" }
     }
   };
   let rec decDeps = (d) => {
     match(d) {
-      DOpen(ignored91, ids) => { concatMap(head, ids) },
-      Var(ignored92) => { decQuals(d) }
+      DOpen(_, ids) => { concatMap(head, ids) },
+      _ => { decQuals(d) }
     }
   };
-  let deps = (ignored93, ignored94, prog, ignored95) => {
+  let deps = (_, _, prog, _) => {
     distinct(concatMap(
       match {
         TopDecs(sds) => {
           concatMap(
             match {
               SDec(d) => { decDeps(d) },
-              SStructure(ignored96, bs) => { concatMap((ignored97, ds) => { concatMap(decDeps, ds) }, bs) }
+              SStructure(_, bs) => { concatMap((_, ds) => { concatMap(decDeps, ds) }, bs) }
             },
             sds
           )
         },
-        TopExp(ignored98, e) => { expQuals(e) }
+        TopExp(_, e) => { expQuals(e) }
       },
       prog
     ))
@@ -544,7 +556,7 @@ let recover = (modules, target) => {
             Unify.Ok(([name, ..done], List.append(acc, [item])), Unify.initial)
           },
           ([m, ..rest], Var(done), Var(acc)) => {
-            Unify.bind(order(m, [name, ..visiting], done, acc))((done, acc) => (ignored99) => { walk(rest, done, acc) })
+            Unify.bind(order(m, [name, ..visiting], done, acc))((done, acc) => (_) => { walk(rest, done, acc) })
           }
         };
         walk(needed, done, acc)
@@ -552,14 +564,14 @@ let recover = (modules, target) => {
     }
   };
   let rec elaborate = match {
-    (Var(ignored100), [], Var(st), Var(acc)) => { Unify.Ok(acc, st) },
+    (_, [], Var(st), Var(acc)) => { Unify.Ok(acc, st) },
     (
       Var(env),
       [(Var(path), Var(src), Var(prog), Var(comments)), ..rest],
       Var(st),
       Var(acc)
     ) => {
-      let Unify.State(vars, next, sels, recs, ignored101) = st;
+      let Unify.State(vars, next, sels, recs, _) = st;
       Unify.bind(Elab.program(env, prog, Unify.State(vars, next, sels, recs, Some([]))))((env) => (st) => {
         elaborate(
           env,
@@ -571,19 +583,15 @@ let recover = (modules, target) => {
     }
   };
   let rec strict = match {
-    (Var(ignored102), [], Var(st)) => { Unify.Ok(void, st) },
-    (
-      Var(env),
-      [(Var(ignored103), Var(ignored104), Var(prog), Var(ignored105)), ..rest],
-      Var(st)
-    ) => {
+    (_, [], Var(st)) => { Unify.Ok(void, st) },
+    (Var(env), [(_, _, Var(prog), _), ..rest], Var(st)) => {
       Unify.bind(Elab.program(env, prog, st))((env) => (st) => { strict(env, rest, st) })
     }
   };
-  Unify.bind(order(target, [], [], []))((ignored106, ordered) => (ignored107) => {
-    Unify.bind(Basis.initial)((basis) => (ignored108) => {
-      Unify.bind(elaborate(basis, ordered, Unify.lenient, []))((rewritten) => (ignored109) => {
-        Unify.bind(strict(basis, rewritten, Unify.initial))((ignored110) => (st) => {
+  Unify.bind(order(target, [], [], []))((_, ordered) => (_) => {
+    Unify.bind(Basis.initial)((basis) => (_) => {
+      Unify.bind(elaborate(basis, ordered, Unify.lenient, []))((rewritten) => (_) => {
+        Unify.bind(strict(basis, rewritten, Unify.initial))((_) => (st) => {
           match(SmlList.find((m) => { nameOfModule(m) == nameOfModule(target) })(rewritten)) {
             Some(m) => { Unify.Ok(m, st) },
             None => { Unify.Err("missing translated module", 0) }
@@ -600,10 +608,10 @@ let fromWm = (path, src, decs, exps, comments) => {
   /* Imports disappear from the AST. Anchor the structure before them, so comments
      between an import and the first declaration stay inside the structure. */
   let first = match(WmLexer.lex(src)) {
-    WmLexer.Tokens([(WmLexer.WKey("from"), Var(p)), ..ignored111], ignored112) => { Some(p) },
-    Var(ignored113) => {
+    WmLexer.Tokens([(WmLexer.WKey("from"), Var(p)), .._], _) => { Some(p) },
+    _ => {
       match(decs) {
-        [d, ..ignored114] => { Some(decPos(d)) },
+        [d, .._] => { Some(decPos(d)) },
         [] => { None }
       }
     }
@@ -620,7 +628,7 @@ let fromWm = (path, src, decs, exps, comments) => {
   let expDocs = SmlList.map((e) => { Doc.cat(SmlPrint.exp(e), Doc.text(";")) })(exps);
   let doc = match(expDocs) {
     [] => { structureDoc },
-    Var(ignored115) => { Doc.stack([Doc.cat(structureDoc, Doc.text(";")), ..expDocs]) }
+    _ => { Doc.stack([Doc.cat(structureDoc, Doc.text(";")), ..expDocs]) }
   };
   Doc.render(src, comments, SmlPrint.commentStyle, doc)
 };

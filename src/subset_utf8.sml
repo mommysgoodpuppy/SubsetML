@@ -1,3 +1,10 @@
+(* @subsetml
+from "./subset_unicode.sml" import * as SubsetUnicode;
+from "./subset_result.sml" import * as SubsetResult;
+from "./subset_list.sml" import * as SubsetList;
+from "./subset_char.sml" import * as SubsetChar;
+*)
+
 (* Strict UTF-8 over byte characters and numeric Unicode scalars. *)
 structure SubsetUtf8 = struct
   val encodeOne = fn (code, index) =>

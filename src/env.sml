@@ -1,3 +1,8 @@
+(* @subsetml
+from "./types.sml" import * as Types;
+from "./sml_list.sml" import * as SmlList;
+*)
+
 (* Static environments (Definition §4.2): structures, types and values, newest binding first. *)
 structure Env = struct
 
@@ -22,7 +27,7 @@ structure Env = struct
   val plus = fn (Env (s1, t1, v1), Env (s2, t2, v2)) => Env (s2 @ s1, t2 @ t1, v2 @ v1)
 
   val assoc = fn (key, entries) =>
-    case SmlList.find (fn (k, ignored1) => k = key) entries of
+    case SmlList.find (fn (k, _) => k = key) entries of
       SOME entry => let val (key, v) = entry in SOME v end
     | NONE => NONE
 
@@ -31,7 +36,7 @@ structure Env = struct
     case path of
       [] => SOME (env, false)
     | name :: rest =>
-        let val Env (strs, ignored2, ignored3) = env in
+        let val Env (strs, _, _) = env in
           case assoc (name, strs) of
             SOME entry =>
               let val (inner, basis) = entry in (case structureAt (inner, rest) of
@@ -55,7 +60,7 @@ structure Env = struct
   val withStructure = fn (name, env, basis) => Env ([(name, (env, basis))], [], [])
 
   (* The label sets of the record type declarations in scope (spec R3). *)
-  val recordLabelSets = fn Env (ignored4, tys, ignored5) =>
-    SmlList.concat (SmlList.map (fn (ignored6, TyStr (ignored7, TRecord fields, ignored8)) => [SmlList.map (fn (l, ignored9) => l) fields] | ignored10 => []) tys)
+  val recordLabelSets = fn Env (_, tys, _) =>
+    SmlList.concat (SmlList.map (fn (_, TyStr (_, TRecord fields, _)) => [SmlList.map (fn (l, _) => l) fields] | _ => []) tys)
 
 end

@@ -1,3 +1,16 @@
+/* @subsetml
+from "./syntax.sml" import * as Syntax;
+from "./types.sml" import * as Types;
+from "./unify.sml" import * as Unify;
+from "./env.sml" import * as Env;
+from "./sml_list.sml" import * as SmlList;
+from "./subset_string.sml" import * as SubsetString;
+from "./subset_list.sml" import * as SubsetList;
+from "./compiler_text.sml" import * as CompilerText;
+from "./sml_list_pair.sml" import * as SmlListPair;
+from "./subset_result.sml" import * as SubsetResult;
+*/
+
 /* Elaboration: the static semantics of the Core and of SubsetML's top-level structures
    (Definition §4, §5), plus the SubsetML restrictions that need types (spec §6, §7, §9).
 
@@ -24,8 +37,8 @@ from "./env.wm" import *;
 // The context: environment, level, and the explicit type variables in scope.
 type Context = (Env, Number, List<String>);
 
-let envOf = (env, ignored1, ignored2) => { env };
-let scopedOf = (ignored3, ignored4, scoped) => { scoped };
+let envOf = (env, _, _) => { env };
+let scopedOf = (_, _, scoped) => { scoped };
 
 // ---------------------------------------------------------------------------------------
 // Helpers
@@ -62,14 +75,14 @@ let mapRes = (f, xs, st) => {
 // The first source position inside a phrase, if any.
 let rec patPos = (p) => {
   match(p) {
-    PScon(q, ignored5) => { Some(q) },
-    PId(q, ignored6) => { Some(q) },
-    PRecord(q, ignored7) => { Some(q) },
-    PApp(q, ignored8, ignored9) => { Some(q) },
+    PScon(q, _) => { Some(q) },
+    PId(q, _) => { Some(q) },
+    PRecord(q, _) => { Some(q) },
+    PApp(q, _, _) => { Some(q) },
     PTuple(ps) => {
       SmlList.foldl((x, acc) => {
         match(acc) {
-          Some(ignored10) => { acc },
+          Some(_) => { acc },
           None => { patPos(x) }
         }
       })(None)(ps)
@@ -77,12 +90,12 @@ let rec patPos = (p) => {
     PList(ps) => {
       SmlList.foldl((x, acc) => {
         match(acc) {
-          Some(ignored11) => { acc },
+          Some(_) => { acc },
           None => { patPos(x) }
         }
       })(None)(ps)
     },
-    PTyped(q, ignored12) => { patPos(q) },
+    PTyped(q, _) => { patPos(q) },
     PWild => { None }
   }
 };
@@ -91,29 +104,29 @@ let rec expPos = (e) => {
   let first = (es) => {
     SmlList.foldl((x, acc) => {
       match(acc) {
-        Some(ignored13) => { acc },
+        Some(_) => { acc },
         None => { expPos(x) }
       }
     })(None)(es)
   };
   match(e) {
-    EScon(q, ignored14) => { Some(q) },
-    EId(q, ignored15) => { Some(q) },
-    ERecord(q, ignored16) => { Some(q) },
-    ESelect(q, ignored17) => { Some(q) },
+    EScon(q, _) => { Some(q) },
+    EId(q, _) => { Some(q) },
+    ERecord(q, _) => { Some(q) },
+    ESelect(q, _) => { Some(q) },
     ETuple(es) => { first(es) },
     EList(es) => { first(es) },
     ESeq(es) => { first(es) },
-    ELet(ignored18, es) => { first(es) },
+    ELet(_, es) => { first(es) },
     EApp(f, a) => { first([f, a]) },
-    ETyped(x, ignored19) => { expPos(x) },
+    ETyped(x, _) => { expPos(x) },
     EAndalso(a, b) => { first([a, b]) },
     EOrelse(a, b) => { first([a, b]) },
     EIf(c, a, b) => { first([c, a, b]) },
-    ECase(x, ignored20) => { expPos(x) },
+    ECase(x, _) => { expPos(x) },
     EFn(rules) => {
       match(rules) {
-        [(Var(p), Var(x)), ..ignored21] => {
+        [(Var(p), Var(x)), .._] => {
           match(patPos(p)) {
             Some(q) => { Some(q) },
             None => { expPos(x) }
@@ -144,7 +157,7 @@ let unifyAt = (st, pos, what, expected, found) => {
             pos
           )
         },
-        Var(ignored22) => { Err(what, pos) }
+        _ => { Err(what, pos) }
       }
     }
   }
@@ -164,7 +177,7 @@ let rec elabTy = (env, tyvar, pos, t, st) => {
     TyCon(args, id) => {
       match(Env.tycon(env, id)) {
         None => { Err("unbound type constructor " ++ longName(id), pos) },
-        Some(TyStr(arity, body, ignored23)) => {
+        Some(TyStr(arity, body, _)) => {
           if ((arity: Number) != SubsetList.length(args)) {
             Err(
               "type constructor " ++ longName(id) ++ " takes " ++ CompilerText.natural(arity) ++ " argument(s), given " ++ CompilerText.natural(SubsetList.length(args)),
@@ -197,7 +210,7 @@ let rec elabTy = (env, tyvar, pos, t, st) => {
 };
 
 // An explicit type variable in scope stands for itself.
-let scopedTy = ((env, ignored24, scoped), pos, t, st) => {
+let scopedTy = ((env, _, scoped), pos, t, st) => {
   elabTy(
     env,
     (v) => { if (member(v, scoped)) { Some(TRigid(v)) } else { None } },
@@ -214,31 +227,31 @@ let scopedTy = ((env, ignored24, scoped), pos, t, st) => {
 let rec tyVarsOf = (t) => {
   match(t) {
     TyVar(v) => { [v] },
-    TyCon(args, ignored25) => { concatMap(tyVarsOf, args) },
+    TyCon(args, _) => { concatMap(tyVarsOf, args) },
     TyTuple(ts) => { concatMap(tyVarsOf, ts) },
     TyArrow(a, b) => { List.append(tyVarsOf(a), tyVarsOf(b)) },
-    TyRecord(fields) => { concatMap((ignored26, a) => { tyVarsOf(a) }, fields) }
+    TyRecord(fields) => { concatMap((_, a) => { tyVarsOf(a) }, fields) }
   }
 };
 
 let rec patTyVars = (p) => {
   match(p) {
-    PRecord(ignored27, fields) => { concatMap((ignored28, q) => { patTyVars(q) }, fields) },
+    PRecord(_, fields) => { concatMap((_, q) => { patTyVars(q) }, fields) },
     PTuple(ps) => { concatMap(patTyVars, ps) },
     PList(ps) => { concatMap(patTyVars, ps) },
-    PApp(ignored29, ignored30, q) => { patTyVars(q) },
+    PApp(_, _, q) => { patTyVars(q) },
     PTyped(q, t) => { List.append(patTyVars(q), tyVarsOf(t)) },
-    Var(ignored31) => { [] }
+    _ => { [] }
   }
 };
 
 let rec expTyVars = (e) => {
   match(e) {
-    ERecord(ignored32, fields) => { concatMap((ignored33, x) => { expTyVars(x) }, fields) },
+    ERecord(_, fields) => { concatMap((_, x) => { expTyVars(x) }, fields) },
     ETuple(es) => { concatMap(expTyVars, es) },
     EList(es) => { concatMap(expTyVars, es) },
     ESeq(es) => { concatMap(expTyVars, es) },
-    ELet(ignored34, es) => { concatMap(expTyVars, es) },
+    ELet(_, es) => { concatMap(expTyVars, es) },
     EApp(f, a) => { List.append(expTyVars(f), expTyVars(a)) },
     ETyped(x, t) => { List.append(expTyVars(x), tyVarsOf(t)) },
     EAndalso(a, b) => { List.append(expTyVars(a), expTyVars(b)) },
@@ -255,7 +268,7 @@ let rec expTyVars = (e) => {
     EFn(rules) => {
       concatMap((p, y) => { List.append(patTyVars(p), expTyVars(y)) }, rules)
     },
-    Var(ignored35) => { [] }
+    _ => { [] }
   }
 };
 
@@ -290,7 +303,7 @@ let unbindable = ["true", "false", "nil", "::", "ref"];
 
 // Spec R3: a record's labels must be those of a record type declaration in scope.
 let checkRecordLabels = (env, pos, labels, st) => {
-  let sorted = SmlList.map((l, ignored36) => { l })(sortFields(SmlList.map((l) => { (l, void) })(labels)));
+  let sorted = SmlList.map((l, _) => { l })(sortFields(SmlList.map((l) => { (l, void) })(labels)));
   if (SmlList.exists((set) => { set == sorted })(recordLabelSets(env))) { Ok(void, st) } else {
     Err(
       "no record type with the labels {" ++ SubsetString.concatWith(sorted, ", ") ++ "} is in scope; SubsetML records must have a declared type (spec R3)",
@@ -303,10 +316,10 @@ let checkRecordLabels = (env, pos, labels, st) => {
 // Patterns: their type and the variables they bind.
 
 let constTy = match {
-  SInt(ignored37) => { intTy },
-  SReal(ignored38) => { realTy },
-  SString(ignored39) => { stringTy },
-  SChar(ignored40) => { charTy }
+  SInt(_) => { intTy },
+  SReal(_) => { realTy },
+  SString(_) => { stringTy },
+  SChar(_) => { charTy }
 };
 
 // SubsetML omits int (spec §9.3), so integer constants are rejected.
@@ -318,14 +331,14 @@ let checkConst = (pos, c, st) => {
         pos
       )
     },
-    Var(ignored41) => { Ok(constTy(c), st) }
+    _ => { Ok(constTy(c), st) }
   }
 };
 
 let mergeVars = (pos, a, b, st) => {
-  match(SmlList.find((x, ignored42) => { SmlList.exists((y, ignored43) => { x == y })(a) })(b)) {
+  match(SmlList.find((x, _) => { SmlList.exists((y, _) => { x == y })(a) })(b)) {
     Some(entry) => {
-      let (x, ignored44) = entry;
+      let (x, _) = entry;
       Err("variable " ++ x ++ " is bound twice in a pattern", pos)
     },
     None => { Ok(List.append(a, b), st) }
@@ -346,7 +359,7 @@ let constructorScheme = (entry) => {
 };
 
 let rec pat = (ctx, p, st) => {
-  let (env, level, ignored45) = ctx;
+  let (env, level, _) = ctx;
   match(p) {
     PWild => {
       let (t, st') = fresh(st, KPlain, level);
@@ -357,16 +370,16 @@ let rec pat = (ctx, p, st) => {
     },
     PId(q, id) => {
       match(constructorScheme(Env.value(env, id)), id) {
-        (Some(scheme), Var(ignored46)) => {
+        (Some(scheme), _) => {
           let (t, st') = instantiate(st, level, scheme);
           match(prune(st', t)) {
-            TArrow(ignored47, ignoredArrowResult) => {
+            TArrow(_, _) => {
               Err("constructor " ++ longName(id) ++ " needs an argument", q)
             },
-            Var(ignored48) => { Ok((t, []), st') }
+            _ => { Ok((t, []), st') }
           }
         },
-        (Var(ignored49), ([], Var(x))) => {
+        (_, ([], Var(x))) => {
           if (member(x, omittedConstructors)) {
             Err(
               "`" ++ x ++ "` is a constructor in the SML Basis, which SubsetML omits; it cannot be " ++ "bound as a variable (spec B1)",
@@ -377,11 +390,11 @@ let rec pat = (ctx, p, st) => {
             Ok((t, [(x, t)]), st')
           }
         },
-        Var(ignored50) => { Err("unbound constructor " ++ longName(id), q) }
+        _ => { Err("unbound constructor " ++ longName(id), q) }
       }
     },
     PRecord(q, fields) => {
-      bind(checkRecordLabels(env, q, SmlList.map((l, ignored51) => { l })(fields), st))((ignored52) => (st) => {
+      bind(checkRecordLabels(env, q, SmlList.map((l, _) => { l })(fields), st))((_) => (st) => {
         bind(foldRes(
           ((fs, vars), (l, f), st) => {
             bind(pat(ctx, f, st))((t, vs) => (st) => {
@@ -403,13 +416,13 @@ let rec pat = (ctx, p, st) => {
       let (elem, st0) = fresh(st, KPlain, level);
       bind(pats(ctx, at(0, patPos(p)), ps, st0))((ts, vars) => (st) => {
         bind(foldRes(
-          (ignored53, (t, x), st) => {
+          (_, (t, x), st) => {
             unifyAt(st, at(0, patPos(x)), "list pattern element", elem, t)
           },
           void,
           SmlListPair.zip(ts, ps),
           st
-        ))((ignored54) => (st) => { Ok((listTy(elem), vars), st) })
+        ))((_) => (st) => { Ok((listTy(elem), vars), st) })
       })
     },
     PApp(q, id, arg) => {
@@ -419,21 +432,21 @@ let rec pat = (ctx, p, st) => {
           match(prune(st', t)) {
             TArrow(dom, cod) => {
               bind(pat(ctx, arg, st'))((ta, vars) => (st) => {
-                bind(unifyAt(st, at(q, patPos(arg)), "argument of constructor " ++ longName(id), dom, ta))((ignored55) => (st) => { Ok((cod, vars), st) })
+                bind(unifyAt(st, at(q, patPos(arg)), "argument of constructor " ++ longName(id), dom, ta))((_) => (st) => { Ok((cod, vars), st) })
               })
             },
-            Var(ignored56) => {
+            _ => {
               Err("constructor " ++ longName(id) ++ " takes no argument", q)
             }
           }
         },
-        Var(ignored57) => { Err("`" ++ longName(id) ++ "` is not a constructor", q) }
+        _ => { Err("`" ++ longName(id) ++ "` is not a constructor", q) }
       }
     },
     PTyped(inner, t) => {
       bind(pat(ctx, inner, st))((ti, vars) => (st) => {
         bind(scopedTy(ctx, at(0, patPos(inner)), t, st))((t') => (st) => {
-          bind(unifyAt(st, at(0, patPos(inner)), "type annotation", t', ti))((ignored58) => (st) => { Ok((t', vars), st) })
+          bind(unifyAt(st, at(0, patPos(inner)), "type annotation", t', ti))((_) => (st) => { Ok((t', vars), st) })
         })
       })
     }
@@ -458,23 +471,21 @@ and pats = (ctx, pos, ps, st) => {
 
 let rec nonExpansive = (env, e) => {
   match(e) {
-    EScon(ignored59Field0, ignored59Field1) => { true },
-    EId(ignored60Field0, ignored60Field1) => { true },
-    EFn(ignored61) => { true },
-    ESelect(ignored62Field0, ignored62Field1) => { true },
-    ERecord(ignored63, fields) => {
-      SmlList.all((ignored64, x) => { nonExpansive(env, x) })(fields)
-    },
+    EScon(_, _) => { true },
+    EId(_, _) => { true },
+    EFn(_) => { true },
+    ESelect(_, _) => { true },
+    ERecord(_, fields) => { SmlList.all((_, x) => { nonExpansive(env, x) })(fields) },
     ETuple(es) => { SmlList.all((x) => { nonExpansive(env, x) })(es) },
     EList(es) => { SmlList.all((x) => { nonExpansive(env, x) })(es) },
-    ETyped(x, ignored65) => { nonExpansive(env, x) },
-    EApp(EId(ignored66, id), arg) => {
+    ETyped(x, _) => { nonExpansive(env, x) },
+    EApp(EId(_, id), arg) => {
       match(constructorScheme(Env.value(env, id))) {
-        Some(ignored67) => { nonExpansive(env, arg) },
-        Var(ignored68) => { false }
+        Some(_) => { nonExpansive(env, arg) },
+        _ => { false }
       }
     },
-    Var(ignored69) => { false }
+    _ => { false }
   }
 };
 
@@ -482,13 +493,13 @@ let rec nonExpansive = (env, e) => {
 // Expressions
 
 let rec exp = (ctx, e, st) => {
-  let (env, level, ignored70) = ctx;
+  let (env, level, _) = ctx;
   match(e) {
     EScon(q, c) => { checkConst(q, c, st) },
     EId(q, id) => {
       match(Env.value(env, id)) {
         Some(entry) => {
-          let (scheme, ignored71) = entry;
+          let (scheme, _) = entry;
           let (t, st') = instantiate(st, level, scheme);
           Ok(t, st')
         },
@@ -496,7 +507,7 @@ let rec exp = (ctx, e, st) => {
       }
     },
     ERecord(q, fields) => {
-      bind(checkRecordLabels(env, q, SmlList.map((l, ignored72) => { l })(fields), st))((ignored73) => (st) => {
+      bind(checkRecordLabels(env, q, SmlList.map((l, _) => { l })(fields), st))((_) => (st) => {
         bind(mapRes(
           ((l, x), st) => { bind(exp(ctx, x, st))((t) => (st) => { Ok((l, t), st) }) },
           fields,
@@ -517,22 +528,22 @@ let rec exp = (ctx, e, st) => {
     EList(es) => {
       let (elem, st0) = fresh(st, KPlain, level);
       bind(foldRes(
-        (ignored74, x, st) => {
+        (_, x, st) => {
           bind(exp(ctx, x, st))((t) => (st) => { unifyAt(st, at(0, expPos(x)), "list element", elem, t) })
         },
         void,
         es,
         st0
-      ))((ignored75) => (st) => { Ok(listTy(elem), st) })
+      ))((_) => (st) => { Ok(listTy(elem), st) })
     },
     ESeq(es) => {
-      bind(foldRes((ignored76, x, st) => { exp(ctx, x, st) }, unitTy, es, st))((t) => (st) => { Ok(t, st) })
+      bind(foldRes((_, x, st) => { exp(ctx, x, st) }, unitTy, es, st))((t) => (st) => { Ok(t, st) })
     },
     ELet(ds, es) => {
-      let State(ignored77, start, ignored78, ignored79, ignored80) = st;
+      let State(_, start, _, _, _) = st;
       bind(decs(ctx, ds, st))((delta) => (st) => {
         bind(foldRes(
-          (ignored81, x, st) => { exp((plus(env, delta), level, scopedOf(ctx)), x, st) },
+          (_, x, st) => { exp((plus(env, delta), level, scopedOf(ctx)), x, st) },
           unitTy,
           es,
           st
@@ -545,10 +556,10 @@ let rec exp = (ctx, e, st) => {
     },
     EApp(EId(q, ([], Var(opr))), a) => {
       match(if (opr == "=") { true } else { opr == "<>" }, st) {
-        (true, State(ignored82, ignored83, ignored84, ignored85, Some(ignored86))) => {
+        (true, State(_, _, _, _, Some(_))) => {
           bind(exp(ctx, a, st))((ta) => (st) => {
             let (operand, st1) = fresh(st, KPlain, level);
-            bind(unifyAt(st1, q, "operands of " ++ opr, tupleTy([operand, operand]), ta))((ignored87) => (st) => {
+            bind(unifyAt(st1, q, "operands of " ++ opr, tupleTy([operand, operand]), ta))((_) => (st) => {
               let State(vars, next, sels, recs, sites) = st;
               Ok(
                 boolTy,
@@ -569,14 +580,14 @@ let rec exp = (ctx, e, st) => {
             })
           })
         },
-        Var(ignored88) => { application(ctx, EId(q, ([], opr)), a, st) }
+        _ => { application(ctx, EId(q, ([], opr)), a, st) }
       }
     },
     EApp(f, a) => { application(ctx, f, a, st) },
     ETyped(x, t) => {
       bind(exp(ctx, x, st))((tx) => (st) => {
         bind(scopedTy(ctx, at(0, expPos(x)), t, st))((t') => (st) => {
-          bind(unifyAt(st, at(0, expPos(x)), "type annotation", t', tx))((ignored89) => (st) => { Ok(t', st) })
+          bind(unifyAt(st, at(0, expPos(x)), "type annotation", t', tx))((_) => (st) => { Ok(t', st) })
         })
       })
     },
@@ -584,10 +595,10 @@ let rec exp = (ctx, e, st) => {
     EOrelse(a, b) => { boolOp(ctx, "orelse", a, b, st) },
     EIf(c, a, b) => {
       bind(exp(ctx, c, st))((tc) => (st) => {
-        bind(unifyAt(st, at(0, expPos(c)), "condition of `if`", boolTy, tc))((ignored90) => (st) => {
+        bind(unifyAt(st, at(0, expPos(c)), "condition of `if`", boolTy, tc))((_) => (st) => {
           bind(exp(ctx, a, st))((ta) => (st) => {
             bind(exp(ctx, b, st))((tb) => (st) => {
-              bind(unifyAt(st, at(0, expPos(b)), "branches of `if` differ", ta, tb))((ignored91) => (st) => { Ok(ta, st) })
+              bind(unifyAt(st, at(0, expPos(b)), "branches of `if` differ", ta, tb))((_) => (st) => { Ok(ta, st) })
             })
           })
         })
@@ -596,7 +607,7 @@ let rec exp = (ctx, e, st) => {
     ECase(x, rules) => {
       bind(exp(ctx, x, st))((tx) => (st) => {
         bind(matchRules(ctx, rules, st))((tp, tr) => (st) => {
-          bind(unifyAt(st, at(0, expPos(x)), "`case` patterns do not fit the value", tp, tx))((ignored92) => (st) => { Ok(tr, st) })
+          bind(unifyAt(st, at(0, expPos(x)), "`case` patterns do not fit the value", tp, tx))((_) => (st) => { Ok(tr, st) })
         })
       })
     },
@@ -607,12 +618,12 @@ let rec exp = (ctx, e, st) => {
 }
 
 and application = (ctx, f, a, st) => {
-  let (ignored93, level, ignored94) = ctx;
+  let (_, level, _) = ctx;
   bind(exp(ctx, f, st))((tf) => (st) => {
     bind(exp(ctx, a, st))((ta) => (st) => {
       let what = match(f) {
-        EId(ignored95, id) => { "argument of " ++ longName(id) },
-        Var(ignored96) => { "function argument" }
+        EId(_, id) => { "argument of " ++ longName(id) },
+        _ => { "function argument" }
       };
       let pos = at(
         0,
@@ -623,11 +634,11 @@ and application = (ctx, f, a, st) => {
       );
       match(prune(st, tf)) {
         TArrow(dom, cod) => {
-          bind(unifyAt(st, pos, what, dom, ta))((ignored97) => (st) => { Ok(cod, st) })
+          bind(unifyAt(st, pos, what, dom, ta))((_) => (st) => { Ok(cod, st) })
         },
-        Var(ignored98) => {
+        _ => {
           let (r, st') = fresh(st, KPlain, level);
-          bind(unifyAt(st', at(pos, expPos(f)), "applied expression", TArrow(ta, r), tf))((ignored99) => (st) => { Ok(r, st) })
+          bind(unifyAt(st', at(pos, expPos(f)), "applied expression", TArrow(ta, r), tf))((_) => (st) => { Ok(r, st) })
         }
       }
     })
@@ -636,9 +647,9 @@ and application = (ctx, f, a, st) => {
 
 and boolOp = (ctx, name, a, b, st) => {
   bind(exp(ctx, a, st))((ta) => (st) => {
-    bind(unifyAt(st, at(0, expPos(a)), "operand of " ++ name, boolTy, ta))((ignored100) => (st) => {
+    bind(unifyAt(st, at(0, expPos(a)), "operand of " ++ name, boolTy, ta))((_) => (st) => {
       bind(exp(ctx, b, st))((tb) => (st) => {
-        bind(unifyAt(st, at(0, expPos(b)), "operand of " ++ name, boolTy, tb))((ignored101) => (st) => { Ok(boolTy, st) })
+        bind(unifyAt(st, at(0, expPos(b)), "operand of " ++ name, boolTy, tb))((_) => (st) => { Ok(boolTy, st) })
       })
     })
   })
@@ -650,9 +661,9 @@ and matchRules = (ctx, rules, st) => {
   let (tp, st1) = fresh(st, KPlain, level);
   let (tr, st2) = fresh(st1, KPlain, level);
   bind(foldRes(
-    (ignored102, (p, x), st) => {
+    (_, (p, x), st) => {
       bind(pat(ctx, p, st))((t, vars) => (st) => {
-        bind(unifyAt(st, at(0, patPos(p)), "patterns of a match differ", tp, t))((ignored103) => (st) => {
+        bind(unifyAt(st, at(0, patPos(p)), "patterns of a match differ", tp, t))((_) => (st) => {
           bind(exp(
             (
               plus(env, withValues(SmlList.map((v, vt) => { (v, (([], vt), SValue)) })(vars))),
@@ -670,7 +681,7 @@ and matchRules = (ctx, rules, st) => {
     void,
     rules,
     st2
-  ))((ignored104) => (st) => { Ok((tp, tr), st) })
+  ))((_) => (st) => { Ok((tp, tr), st) })
 }
 
 // ---------------------------------------------------------------------------------------
@@ -729,16 +740,16 @@ and valDec = ((env, level, scoped), pos, tyvars, plain, recs, st) => {
   let plainBinding = ((p, e), st) => {
     bind(exp(inner, e, st))((te) => (st) => {
       bind(pat(inner, p, st))((tp, vars) => (st) => {
-        bind(unifyAt(st, at(pos, patPos(p)), "value binding", tp, te))((ignored106) => (st) => { Ok((vars, nonExpansive(env, e)), st) })
+        bind(unifyAt(st, at(pos, patPos(p)), "value binding", tp, te))((_) => (st) => { Ok((vars, nonExpansive(env, e)), st) })
       })
     })
   };
   // SubsetML only allows a variable (SML would also let `val rec` rebind a constructor).
-  let recPattern = ((p, ignored107), st) => {
-    let single = (ignored108, vars) => (st) => {
+  let recPattern = ((p, _), st) => {
+    let single = (_, vars) => (st) => {
       match(vars) {
-        [ignored109] => { Ok(vars, st) },
-        Var(ignored110) => {
+        [_] => { Ok(vars, st) },
+        _ => {
           Err(
             "a `val rec` binding must bind a variable, not a constructor",
             at(pos, patPos(p))
@@ -747,9 +758,9 @@ and valDec = ((env, level, scoped), pos, tyvars, plain, recs, st) => {
       }
     };
     match(p) {
-      PId(ignored111, ([], Var(ignored112))) => { bind(pat(inner, p, st))(single) },
-      PTyped(PId(ignored113, ([], Var(ignored114))), ignored115) => { bind(pat(inner, p, st))(single) },
-      Var(ignored116) => {
+      PId(_, ([], _)) => { bind(pat(inner, p, st))(single) },
+      PTyped(PId(_, ([], _)), _) => { bind(pat(inner, p, st))(single) },
+      _ => {
         Err("a `val rec` binding must bind a single variable", at(pos, patPos(p)))
       }
     }
@@ -762,18 +773,18 @@ and valDec = ((env, level, scoped), pos, tyvars, plain, recs, st) => {
         let recEnv = withValues(SmlList.map((v, t) => { (v, (([], t), SValue)) })(SmlList.concat(recVars)));
         let recInner = (plus(env, recEnv), level + 1, List.append(scoped, explicit));
         bind(foldRes(
-          (ignored117, ((ignored118, e), vars), st) => {
+          (_, ((_, e), vars), st) => {
             match(vars) {
-              [(Var(ignored119), Var(t))] => {
+              [(_, Var(t))] => {
                 bind(exp(recInner, e, st))((te) => (st) => { unifyAt(st, at(pos, expPos(e)), "recursive binding", t, te) })
               },
-              Var(ignored120) => { Ok(void, st) }
+              _ => { Ok(void, st) }
             }
           },
           void,
           SmlListPair.zip(recs, recVars),
           st
-        ))((ignored121) => (st) => {
+        ))((_) => (st) => {
           let results = List.append(plainResults, SmlList.map((vars) => { (vars, true) })(recVars));
           closeValBindings(level, explicit, pos, results, st)
         })
@@ -785,14 +796,14 @@ and valDec = ((env, level, scoped), pos, tyvars, plain, recs, st) => {
 /* Closes a `val`'s bindings: each variable's scheme, given whether its expression may be
    generalized. */
 and closeValBindings = (level, explicit, pos, results, st) => {
-  let names = concatMap((vars, ignored122) => { SmlList.map((x, ignored123) => { x })(vars) }, results);
+  let names = concatMap((vars, _) => { SmlList.map((x, _) => { x })(vars) }, results);
   match(SmlList.find((x) => {
     SubsetList.length(SmlList.filter((y) => { y == x })(names)) > 1
   })(names), SmlList.find((x) => { member(x, unbindable) })(names)) {
-    (Some(x), Var(ignored124)) => { Err("`" ++ x ++ "` is bound twice in this declaration", pos) },
-    (Var(ignored125), Some(x)) => { Err("`" ++ x ++ "` cannot be rebound", pos) },
+    (Some(x), _) => { Err("`" ++ x ++ "` is bound twice in this declaration", pos) },
+    (_, Some(x)) => { Err("`" ++ x ++ "` cannot be rebound", pos) },
     (None, None) => {
-      bind(closeDeclaration(level, st))((ignored126) => (st) => {
+      bind(closeDeclaration(level, st))((_) => (st) => {
         bind(foldRes(
           (acc, (vars, generalizable), st) => {
             foldRes(
@@ -818,7 +829,7 @@ and closeValBindings = (level, explicit, pos, results, st) => {
 /* Settles what the declaration's context must settle (spec §10): pending `# lab`
    selections, and overloaded type variables, which default to int (Appendix E). */
 and closeDeclaration = (level, st) => {
-  bind(settleSelections(level, st))((ignored127) => (st) => { Ok(void, st) })
+  bind(settleSelections(level, st))((_) => (st) => { Ok(void, st) })
 }
 
 and settleSelections = (level, st) => {
@@ -828,18 +839,18 @@ and settleSelections = (level, st) => {
     let (q, l, r, lab, f) = sel;
     match(prune(st, r)) {
       TRecord(fields) => {
-        match(SmlList.find((l', ignored128) => { l' == lab })(fields)) {
+        match(SmlList.find((l', _) => { l' == lab })(fields)) {
           Some(entry) => {
-            let (ignored129, ft) = entry;
-            bind(unifyAt(st, q, "field " ++ lab, ft, f))((ignored130) => (st) => { Ok((pending, true), st) })
+            let (_, ft) = entry;
+            bind(unifyAt(st, q, "field " ++ lab, ft, f))((_) => (st) => { Ok((pending, true), st) })
           },
           None => {
             Err("the record has no field " ++ lab ++ ": " ++ show(st, r), q)
           }
         }
       },
-      TVar(ignored131) => { Ok((List.append(pending, [sel]), progress), st) },
-      Var(ignored132) => {
+      TVar(_) => { Ok((List.append(pending, [sel]), progress), st) },
+      _ => {
         Err("`#" ++ lab ++ "` is applied to a non-record: " ++ show(st, r), q)
       }
     }
@@ -847,24 +858,24 @@ and settleSelections = (level, st) => {
   let rec loop = (st) => {
     let State(vs, nx, sels, rs, eq) = st;
     bind(foldRes(step, ([], false), sels, State(vs, nx, [], rs, eq)))((pending, progress) => (st) => {
-      let State(vs', nx', ignored133, rs', eq') = st;
+      let State(vs', nx', _, rs', eq') = st;
       if (progress) { loop(State(vs', nx', pending, rs', eq')) } else { Ok(pending, State(vs', nx', pending, rs', eq')) }
     })
   };
   bind(loop(State(vars, next, sels, recs, eqs)))((pending) => (st) => {
-    match(SmlList.find((ignored134, ignored135, r, ignored136, ignored137) => {
+    match(SmlList.find((_, _, r, _, _) => {
       match(prune(st, r)) {
         TVar(v) => {
           match(lookup(st, v)) {
-            Free(ignored138, l) => { l > level },
-            Bound(ignored139) => { false }
+            Free(_, l) => { l > level },
+            Bound(_) => { false }
           }
         },
-        Var(ignored140) => { false }
+        _ => { false }
       }
     })(pending)) {
       Some(sel) => {
-        let (q, ignored141, ignored142, lab, ignored143) = sel;
+        let (q, _, _, lab, _) = sel;
         Err(
           "cannot determine the record type for `#" ++ lab ++ "`; add a type annotation",
           q
@@ -881,20 +892,20 @@ and closeBinding = (level, explicit, generalizable, pos, x, t, st) => {
      (Appendix E), which SubsetML omits (spec §9.3). */
   let unresolved = SmlList.exists((v) => {
     match(lookup(st, v)) {
-      Free(KClass(ignored144), l) => { l > level },
-      Var(ignored145) => { false }
+      Free(KClass(_), l) => { l > level },
+      _ => { false }
     }
   })(freeVars(st, t));
   let rigid = SmlList.filter((v) => { member(v, explicit) })(rigidNames(resolve(st, t)));
   match(unresolved, generalizable, rigid) {
-    (true, Var(ignored146), Var(ignored147)) => {
+    (true, _, _) => {
       Err(
         "the type of an overloaded operation in `" ++ x ++ "` is not determined: SML would make it int, " ++ "which SubsetML omits; add a type annotation such as (x : real)",
         pos
       )
     },
-    (false, true, Var(ignored148)) => { Ok((x, generalize(st, level, explicit, t)), st) },
-    (false, false, [v, ..ignored149]) => {
+    (false, true, _) => { Ok((x, generalize(st, level, explicit, t)), st) },
+    (false, false, [v, .._]) => {
       Err(
         "type variable " ++ v ++ " cannot be generalized: the value is expansive (Definition, section 4.8)",
         pos
@@ -907,16 +918,16 @@ and closeBinding = (level, explicit, generalizable, pos, x, t, st) => {
 and rigidNames = (t) => {
   match(t) {
     TRigid(v) => { [v] },
-    TCon(ignored150, ts) => { concatMap(rigidNames, ts) },
+    TCon(_, ts) => { concatMap(rigidNames, ts) },
     TArrow(a, b) => { List.append(rigidNames(a), rigidNames(b)) },
-    TRecord(fields) => { concatMap((ignored151, a) => { rigidNames(a) }, fields) },
-    Var(ignored152) => { [] }
+    TRecord(fields) => { concatMap((_, a) => { rigidNames(a) }, fields) },
+    _ => { [] }
   }
 }
 
 // `type`: Definition §4.10 rule 17, plus spec R2 for record types.
-and typeDec = ((env, ignored153, ignored154), pos, binds, st) => {
-  let names = SmlList.map((ignored155, name, ignored156) => { name })(binds);
+and typeDec = ((env, _, _), pos, binds, st) => {
+  let names = SmlList.map((_, name, _) => { name })(binds);
   let dup = SmlList.find((n) => {
     SubsetList.length(SmlList.filter((m) => { m == n })(names)) > 1
   })(names);
@@ -928,9 +939,9 @@ and typeDec = ((env, ignored153, ignored154), pos, binds, st) => {
           bind(paramScope(pos, params, st))((tyvar) => (st) => {
             bind(elabTy(env, tyvar, pos, t, st))((body) => (st) => {
               bind(match(t) {
-                TyRecord(ignored157) => { recordDeclared(pos, body, st) },
-                Var(ignored158) => { Ok(void, st) }
-              })((ignored159) => (st) => {
+                TyRecord(_) => { recordDeclared(pos, body, st) },
+                _ => { Ok(void, st) }
+              })((_) => (st) => {
                 Ok(List.append(acc, [(name, TyStr(SubsetList.length(params), body, []))]), st)
               })
             })
@@ -952,7 +963,7 @@ and paramScope = (pos, params, st) => {
     Some(v) => { Err("type parameter " ++ v ++ " appears twice", pos) },
     None => {
       let rec index = match {
-        (Var(ignored160), [], Var(ignored161)) => { None },
+        (_, [], _) => { None },
         (Var(v), [w, ..rest], Var(i)) => { if (v == w) { Some(TGen(i)) } else { index(v, rest, i + 1) } }
       };
       Ok((v) => { index(v, params, 0) }, st)
@@ -963,7 +974,7 @@ and paramScope = (pos, params, st) => {
 and recordDeclared = (pos, body, st) => {
   match(body) {
     TRecord(fields) => {
-      let labels = SmlList.map((l, ignored162) => { l })(fields);
+      let labels = SmlList.map((l, _) => { l })(fields);
       let State(vars, next, sels, recs, eqs) = st;
       if (member(labels, recs)) {
         Err(
@@ -972,26 +983,23 @@ and recordDeclared = (pos, body, st) => {
         )
       } else { Ok(void, State(vars, next, sels, [labels, ..recs], eqs)) }
     },
-    Var(ignored163) => { Ok(void, st) }
+    _ => { Ok(void, st) }
   }
 }
 
 // `datatype`: Definition §4.10 rule 19 and §4.9 for the equality attribute.
-and datatypeDec = ((env, ignored164, ignored165), pos, binds, st) => {
-  let names = SmlList.map((ignored166, name, ignored167) => { name })(binds);
-  let cons = concatMap(
-    (ignored168, ignored169, cs) => { SmlList.map((ignored170, c, ignored171) => { c })(cs) },
-    binds
-  );
+and datatypeDec = ((env, _, _), pos, binds, st) => {
+  let names = SmlList.map((_, name, _) => { name })(binds);
+  let cons = concatMap((_, _, cs) => { SmlList.map((_, c, _) => { c })(cs) }, binds);
   let dupIn = (xs) => {
     SmlList.find((n) => { SubsetList.length(SmlList.filter((m) => { m == n })(xs)) > 1 })(xs)
   };
   // Fresh type names, first assuming every one admits equality.
-  let (stamps, st1) = SmlList.foldl((ignored172, (acc, st)) => {
+  let (stamps, st1) = SmlList.foldl((_, (acc, st)) => {
     let (s, st') = freshStamp(st);
     (List.append(acc, [s]), st')
   })([], st)(binds);
-  let nameFor = (eqs, (params, name, ignored173), s) => { (s, name, SubsetList.length(params), memberReal(s, eqs)) };
+  let nameFor = (eqs, (params, name, _), s) => { (s, name, SubsetList.length(params), memberReal(s, eqs)) };
   let tyFor = (tn) => {
     let SubsetResult.Ok(args) = SubsetList.tabulate(arityOf(tn), TGen);
     TCon(tn, args)
@@ -1004,7 +1012,7 @@ and datatypeDec = ((env, ignored164, ignored165), pos, binds, st) => {
       withTypes(SmlList.map((tn) => { (nameOf(tn), TyStr(arityOf(tn), tyFor(tn), [])) })(group))
     );
     bind(mapRes(
-      (((params, ignored174, cs), tn), st) => {
+      (((params, _, cs), tn), st) => {
         bind(paramScope(pos, params, st))((tyvar) => (st) => {
           bind(mapRes(
             ((cp, c, arg), st) => {
@@ -1027,21 +1035,21 @@ and datatypeDec = ((env, ignored164, ignored165), pos, binds, st) => {
   // Whether a type admits equality, assuming `eqs` for the group (Definition §4.9).
   let rec admits = (eqs, t) => {
     match(t) {
-      TCon((Var(s), Var(ignored175), Var(ignored176), Var(eq)), args) => {
+      TCon((Var(s), _, _, Var(eq)), args) => {
         if (if (memberReal(s, stamps)) { memberReal(s, eqs) } else { eq }) { SmlList.all((a) => { admits(eqs, a) })(args) } else { false }
       },
-      TArrow(ignored177, ignoredArrowResult) => { false },
-      TRecord(fields) => { SmlList.all((ignored178, a) => { admits(eqs, a) })(fields) },
-      TGen(ignored179) => { true },
-      Var(ignored180) => { false }
+      TArrow(_, _) => { false },
+      TRecord(fields) => { SmlList.all((_, a) => { admits(eqs, a) })(fields) },
+      TGen(_) => { true },
+      _ => { false }
     }
   };
   let rec fixpoint = (eqs, st) => {
     bind(elabCons(eqs, st))((group) => (st) => {
       let eqs' = SmlList.filter((s) => {
-        SmlList.all(((s', ignored181, ignored182, ignored183), cs) => {
+        SmlList.all(((s', _, _, _), cs) => {
           if ((s': Number) != s) { true } else {
-            SmlList.all((ignored184, arg) => {
+            SmlList.all((_, arg) => {
               match(arg) {
                 None => { true },
                 Some(t) => { admits(eqs, t) }
@@ -1054,15 +1062,15 @@ and datatypeDec = ((env, ignored164, ignored165), pos, binds, st) => {
     })
   };
   match(dupIn(names), dupIn(cons), SmlList.find((c) => { if (member(c, unbindable)) { true } else { c == "it" } })(cons)) {
-    (Some(n), Var(ignored185), Var(ignored186)) => { Err("type " ++ n ++ " is bound twice", pos) },
-    (Var(ignored187), Some(c), Var(ignored188)) => { Err("constructor " ++ c ++ " is bound twice", pos) },
-    (Var(ignored189), Var(ignored190), Some(c)) => { Err("`" ++ c ++ "` cannot be bound by a datatype", pos) },
-    Var(ignored191) => {
+    (Some(n), _, _) => { Err("type " ++ n ++ " is bound twice", pos) },
+    (_, Some(c), _) => { Err("constructor " ++ c ++ " is bound twice", pos) },
+    (_, _, Some(c)) => { Err("`" ++ c ++ "` cannot be bound by a datatype", pos) },
+    _ => {
       bind(fixpoint(stamps, st1))((group) => (st) => {
         let conEntries = concatMap(
           (tn, cs) => {
             SmlList.map((c, arg) => {
-              let SubsetResult.Ok(kinds) = SubsetList.tabulate(arityOf(tn), (ignored192) => { KPlain });
+              let SubsetResult.Ok(kinds) = SubsetList.tabulate(arityOf(tn), (_) => { KPlain });
               match(arg) {
                 None => { (c, ((kinds, tyFor(tn)), SCon)) },
                 Some(t) => { (c, ((kinds, TArrow(t, tyFor(tn))), SCon)) }
@@ -1077,12 +1085,12 @@ and datatypeDec = ((env, ignored164, ignored165), pos, binds, st) => {
             TyStr(
               arityOf(tn),
               tyFor(tn),
-              SmlList.map((c, ignored193) => {
+              SmlList.map((c, _) => {
                 (
                   c,
                   {
                     let Some(entry) = assoc(c, conEntries);
-                    let (scheme, ignored194) = entry;
+                    let (scheme, _) = entry;
                     scheme
                   }
                 )
@@ -1102,7 +1110,7 @@ and datatypeDec = ((env, ignored164, ignored165), pos, binds, st) => {
 let strdec = (env, sd, st) => {
   match(sd) {
     SDec(d) => { dec((env, 0, []), d, st) },
-    SStructure(ignored195, binds) => {
+    SStructure(_, binds) => {
       foldRes(
         (delta, (name, ds), st) => {
           bind(decs((env, 0, []), ds, st))((body) => (st) => { Ok(plus(delta, withStructure(name, body, false)), st) })
@@ -1133,14 +1141,19 @@ let topdec = (env, td, st) => {
   }
 };
 
-// Elaborates a file's phrases in order, extending the environment.
-let program = (env, phrases, st) => {
+// Return only declarations owned by this file, without its incoming environment.
+let programExports = (env, phrases, st) => {
   foldRes(
-    (env, td, st) => {
-      bind(topdec(env, td, st))((delta) => (st) => { Ok(plus(env, delta), st) })
+    (owned, td, st) => {
+      bind(topdec(plus(env, owned), td, st))((delta) => (st) => { Ok(plus(owned, delta), st) })
     },
-    env,
+    empty,
     phrases,
     st
   )
+};
+
+// The existing explicit-file workflow extends the supplied environment.
+let program = (env, phrases, st) => {
+  bind(programExports(env, phrases, st))((owned) => (st) => { Ok(plus(env, owned), st) })
 };

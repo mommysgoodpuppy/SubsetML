@@ -31,6 +31,17 @@ below), and WmParse reads it back.
 Going back, a Workman module becomes a structure named after its file, and namespace imports are
 dropped (SML names structures without importing them).
 
+Supply dependency source files together with their consumers when translating. The current
+translator discovers program structures from the input files; it does not discover dependencies
+from sibling files or existing generated modules. Translating only `src/main.sml` therefore
+omits its module imports. For the compiler, use `make wm` to regenerate the complete graph and
+stage its host adapters, then `wm check src/main.wm` or
+`wm run src/main.wm -- check FILE...` to check or execute it.
+Single-entry `check` now follows [explicit comment imports](module-loading-plan.md) with
+Workman-aligned canonical identity and private dependency scope. Graph-driven translation and
+backend-generated build artifacts remain later steps; translation still requires the explicit
+source list described above.
+
 Current portable library modules (`SmlList`, `SmlListPair`, `SmlOption`, `SmlChar`) are translated and imported just
 like other program structures. Their consumers need no host implementation of these functions
 and no special translation rule. These are building blocks for the custom SubsetML Basis;
@@ -188,7 +199,7 @@ The source byte comparator orders unsigned codes and does not depend on target s
 
 The CLI host adapter follows the same staging rule: `src/subset_host.sml` provides typed
 checker/round-trip declarations; native builds select `lib/subset_host.sml` after SubsetResult,
-and `make wm` stages `lib/subset_host.wm` plus its local JavaScript adapter. The six operations
-are shared through the source SubsetIo/SubsetProcess wrappers. Reverse translation and
+and `make wm` stages `lib/subset_host.wm` plus its local JavaScript adapter. The six CLI operations and
+filesystem canonicalization are shared through the source SubsetIo/SubsetProcess wrappers. Reverse translation and
 bootstrap checks use the generated declarations before staging either foreign adapter.
 The generated CLI accepts arguments through `wm run src/main.wm -- COMMAND ...`.

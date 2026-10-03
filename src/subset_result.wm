@@ -1,4 +1,5 @@
-// Custom Basis Result. Data comes first; errors are ordinary datatype values.
+/* Custom Basis Result. Core operations take data first; procedure adapters are curried.
+   Errors are ordinary datatype values. */
 
 type Result<a, e> = Ok<a> | Err<e>;
 
@@ -21,6 +22,13 @@ let andThen = (value, f) => {
     Ok(x) => { f(x) },
     Err(error) => { Err(error) }
   }
+};
+
+// Procedure adapters are curried so a stage can be named before it is called.
+let via = (transform) => (wrapped) => { andThen(wrapped, transform) };
+
+let viaError = (inject) => (transform) => (wrapped) => {
+  andThen(wrapped, (value) => { mapError(transform(value), inject) })
 };
 
 let getOr = (value, fallback) => {

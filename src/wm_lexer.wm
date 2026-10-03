@@ -1,3 +1,14 @@
+/* @subsetml
+from "./syntax.sml" import * as Syntax;
+from "./sml_list.sml" import * as SmlList;
+from "./subset_char.sml" import * as SubsetChar;
+from "./subset_source.sml" import * as SubsetSource;
+from "./subset_result.sml" import * as SubsetResult;
+from "./subset_string.sml" import * as SubsetString;
+from "./compiler_text.sml" import * as CompilerText;
+from "./lexer.sml" import * as Lexer;
+*/
+
 /* Lexical analysis of Workman source, following frontend-v3's lexical design
    (../wm-mini/tooling/frontend-v3/lexical-design.md), for the fragment that corresponds to
    SubsetML. Identifiers may also contain primes, which only SML fallbacks produce. */

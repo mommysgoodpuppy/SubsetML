@@ -19,6 +19,8 @@ migration, see the [SubsetML Basis documentation](docs/basis.md), with the
 [minimal byte/Unicode text design](docs/text-design.md) documented alongside it.
 The Basis docs describe the [error procedure pattern](docs/basis.md#error-procedures),
 with a runnable [errordemo.sml](errordemo.sml) and a comparison to Workman's error ergonomics.
+The [source module-loading plan](docs/module-loading-plan.md) describes implemented comment-based
+entry-file checking with Workman-aligned resolution, and the remaining backend generation work.
 
 SubsetML is implemented in SubsetML. The sources in `src/` are SubsetML, so for now MLton builds
 them, and `make selfcheck` has the implementation check its own source.
@@ -32,15 +34,17 @@ them, and `make selfcheck` has the implementation check its own source.
 | Elaboration (`src/elab.sml`): types, equality, overloading, value restriction, explicit type variables, records (R2, R3, `#lab`), B1, F2 | done; match exhaustiveness warnings missing |
 | Evaluation / backends | not started |
 
-`check` type-checks the files in order as one program, against the current bootstrap compatibility environment
-in `src/basis.sml`. `tests/edge/` checks language conformance under that environment; it does
-not establish SML Basis Library support.
+Single-entry `check` loads the explicit import graph and checks each module against the initial
+environment plus its declared dependencies. Multiple supplied files retain legacy sequential
+checking against the bootstrap compatibility environment in `src/basis.sml`. `tests/edge/` checks
+language conformance under that environment; it does not establish SML Basis Library support.
 
 ## Usage
 
 ```sh
 make                              # builds bin/subsetml with MLton
-bin/subsetml check FILE...        # reports the first error in each file
+bin/subsetml check ENTRY.sml      # loads explicit comment imports and checks the module graph
+bin/subsetml check FILE1 FILE2 ...# legacy source-list checking in declaration order
 bin/subsetml parse FILE...        # prints the abstract syntax
 bin/subsetml fmt FILE...          # reprints as SubsetML
 bin/subsetml wm OUTDIR FILE...    # translates to Workman (one module per file)

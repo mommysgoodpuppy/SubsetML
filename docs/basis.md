@@ -41,10 +41,11 @@ and the earlier `Sml` ports. They are ordinary program modules, not checker-prov
 Load them before a program when checking or building SML. The translator generates their
 Workman implementations and normal imports; there is no independently maintained WM version.
 
-Multi-argument operations use **data-first tuple arguments**, for example
+Core multi-argument operations use **data-first tuple arguments**, for example
 `SubsetList.map (xs, f)` and `SubsetList.foldLeft (xs, initial, f)`. Unary operations take their
 value directly. Fold callbacks take `(element, accumulator)`; paired-list callbacks take
-`(leftElement, rightElement)`. These conventions deliberately differ from the SML Basis.
+`(leftElement, rightElement)`. Procedure adapters use curried arguments to define reusable
+stages, as described below. These conventions deliberately differ from the SML Basis.
 
 ### Result and optional values
 
@@ -56,6 +57,8 @@ ordinary values chosen by each operation or its caller. There is no unsafe unwra
 | `SubsetResult.map (result, f)` | Transform Ok; preserve Err without calling f. |
 | `SubsetResult.mapError (result, f)` | Transform Err; preserve Ok without calling f. |
 | `SubsetResult.andThen (result, f)` | Call a Result-producing f only for Ok. |
+| `SubsetResult.via transform result` | Adapt a Result-producing transformation; call it only for Ok and preserve Err. |
+| `SubsetResult.viaError inject transform result` | As via, mapping only the transformation's new error through inject. |
 | `SubsetResult.getOr (result, fallback)` | Return the successful value or the supplied fallback. |
 | `SubsetResult.isOk result` | Test the constructor. |
 | `SubsetResult.toOption result` | Ok becomes SOME; Err becomes NONE, explicitly discarding its error. |
@@ -77,7 +80,7 @@ passes that value through named transformations, and returns a Result for its ca
 This is a coding pattern, not a language construct. It avoids deeply nested `andThen` callbacks
 without exceptions, early-return syntax or new host operations.
 
-The runnable [errordemo.sml](../errordemo.sml) defines two local adapters:
+`SubsetResult` implements two procedure adapters in ordinary source:
 
 ```sml
 val via = fn transform => fn wrapped =>
@@ -88,8 +91,10 @@ val viaError = fn inject => fn transform => fn wrapped =>
     SubsetResult.mapError (transform value, inject))
 ```
 
-These are ordinary curried functions. They are local prototypes in the demo, not currently
-exports of `SubsetResult`; the core data-first `andThen` and `mapError` APIs remain unchanged.
+These are ordinary curried functions exported by `SubsetResult`. Currying lets a procedure
+name its transformations before applying them to data; the core data-first `andThen` and
+`mapError` APIs remain unchanged. The runnable [errordemo.sml](../errordemo.sml) uses these
+exports, locally named `via` and `viaError`.
 
 - `via transform` adapts a function from an unwrapped value to a Result into a function from
   one Result to another. It calls `transform` only on success and preserves an existing error.
@@ -133,6 +138,17 @@ a partial assertion: Err causes a pattern-match failure. This procedure pattern 
 make such assertions safe or remove their exhaustiveness warnings. It also does not change
 the stack requirements of recursive AST algorithms.
 
+The compiler's [file-loading procedure](../src/main.sml) also uses these adapters. `Main.load`
+returns a Result with `ReadFailure`, `LexFailure` or `ParseFailure`; it performs no reporting or
+process exit. Errors retain the path and native I/O cause, or the source text, message and byte
+position. The CLI renders them at the boundary as file-read messages, `lex error` or `parse
+error` diagnostics with 1-based line/column positions. In the explicit source-list workflow it
+reports loading errors from every requested file before running the next phase. Single-entry
+checking follows the import graph and stops at the first loading, resolution or checking error.
+`Parser.parseTokens` preserves the existing file checks after lexing; `Parser.parse` remains
+available with its previous combined lexer/parser result. Other compiler error paths are still
+being migrated.
+
 #### Differences from Workman ergonomics
 
 The pattern follows wm-mini's [carrier-oriented procedure design](../../wm-mini/docs/carriers.md).
@@ -140,11 +156,11 @@ Its Result adapters have the same propagation behavior, but SubsetML uses ordina
 
 | Workman facility | SubsetML form or scope |
 |---|---|
-| `Monad.via Result transform` | The demo's Result-specific `via transform`; no carrier record is required. |
-| `Monad.viaError Result inject transform` | The demo's `viaError inject transform`. |
+| `Monad.via Result transform` | `SubsetResult.via transform`; no carrier record is required. |
+| `Monad.viaError Result inject transform` | `SubsetResult.viaError inject transform`. |
 | `head :> read :> parse :> compile` | Sequential `val` bindings and ordinary function application. SubsetML has no pipeline operator. |
 | `Result\|a, b\|` carrier tuple lifting | No corresponding syntax. Use ordinary source helpers built from `andThen` and `map`, keeping deferred work inside callbacks when it must short-circuit. |
-| Carrier-generic `Monad` operations | The demo specializes to Result. A generic carrier abstraction is not needed for this pattern. |
+| Carrier-generic `Monad` operations | The custom adapters specialize to Result. A generic carrier abstraction is not needed for this pattern. |
 | `Task` and safe foreign-call error wrapping | Outside this demo and the current custom Result API. Host failures enter through the explicit adapters, such as `SubsetIo`; the pattern supplies no asynchronous runtime or exception catching. |
 
 Workman's pipeline and tuple-lift syntax are conveniences around carrier composition;
@@ -229,6 +245,7 @@ occurs. Use the source UTF codecs explicitly for text. Its error type is
 | Operation | Contract |
 |---|---|
 | `readFile path` | Ok complete file bytes, or an error. |
+| `canonicalPath path` | Ok a validated native byte string identifying the absolute filesystem path, resolving symlinks; or an error. |
 | `writeFile (bytes, path)` | Create/truncate and write the complete payload; return Ok unit on success. Parent directories must already exist. |
 | `writeStdout bytes`, `writeStderr bytes` | Write exactly the supplied bytes; return Ok unit on success. |
 | `errorText error` | Diagnostic byte string; host messages are target-dependent. |
@@ -251,9 +268,11 @@ encodes Deno's Unicode argument and error-message text as UTF-8 bytes; the nativ
 preserves OS byte strings. Neither adapter silently decodes file contents. These target
 marshalling conventions are not SubsetML's language string representation requirements.
 
-The six operations live in `SubsetHost`; the public `SubsetIo` and `SubsetProcess` wrappers
-are source code. Together with native-string extraction, the current compiler needs seven
-explicit host entry points beyond language support. Embeddings can omit the CLI profile.
+The six CLI operations and one canonical-path operation live in `SubsetHost`; the public
+`SubsetIo` and `SubsetProcess` wrappers are source code. Together with native-string extraction,
+the current compiler needs eight explicit host entry points beyond language support. Embeddings
+can omit the CLI/filesystem profiles. Canonicalization is host-dependent; lexical path cleanup
+cannot discover symlink identity. See the [module-loading plan](module-loading-plan.md).
 
 ### Paired lists
 
@@ -603,7 +622,7 @@ scalar codes. JavaScript representation is not a language requirement. Bytes, Un
 and source/editor offsets retain separate contracts and the language's 8-bit semantics.
 
 See [text-design.md](text-design.md) for the adapters and performance tradeoffs. The generated
-compiler uses this text boundary plus the six CLI host operations; it checks, translates and
+compiler uses this text boundary plus six CLI operations and filesystem canonicalization; it checks, translates and
 round-trips its own SubsetML source graph.
 
 ### Comparison with wm-mini frontend-v3

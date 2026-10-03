@@ -57,7 +57,9 @@ variable or wildcard into those fields.
 
 ## Ignored pattern fields
 
-The current Workman frontend can treat `_` in binder positions as a name and reject repeated
-occurrences in one pattern. Compiler patterns use distinct unused names where this occurs,
-for example `Operand ignoredValue :: ignoredRest`. This is a target limitation; SubsetML
-wildcards remain valid and never bind values.
+Use `_` for unused pattern fields, for example `Operand _ :: _` or
+`State (vars, _, _, _, _)`. Each occurrence is an independent wildcard and binds no value;
+repeated wildcards are valid in both SubsetML and generated Workman.
+
+The earlier Workman frontend bug that treated some wildcards as duplicate variable binders
+has been fixed. The compiler sources no longer use numbered `ignored` bindings as a workaround.

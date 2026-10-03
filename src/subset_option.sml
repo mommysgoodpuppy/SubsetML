@@ -1,3 +1,7 @@
+(* @subsetml
+from "./subset_result.sml" import * as SubsetResult;
+*)
+
 (* Custom Basis optional values. Absence is normal; callers choose errors explicitly. *)
 structure SubsetOption = struct
 

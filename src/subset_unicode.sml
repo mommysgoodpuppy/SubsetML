@@ -1,3 +1,9 @@
+(* @subsetml
+from "./subset_result.sml" import * as SubsetResult;
+from "./subset_list.sml" import * as SubsetList;
+from "./subset_char.sml" import * as SubsetChar;
+*)
+
 (* Shared source-only Unicode arithmetic and codec errors. No host numeric library. *)
 structure SubsetUnicode = struct
   datatype reason = InvalidScalar | InvalidByte | InvalidLeadingByte | InvalidContinuation

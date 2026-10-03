@@ -2,6 +2,7 @@
 structure SubsetHost = struct
   fun protect f = SubsetResult.Ok (f ())
     handle error => SubsetResult.Err (General.exnMessage error)
+  fun canonicalPath path = protect (fn () => OS.FileSys.fullPath path)
   fun readFile path = protect (fn () =>
     let
       val input = BinIO.openIn path

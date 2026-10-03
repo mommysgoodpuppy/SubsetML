@@ -1,3 +1,13 @@
+/* @subsetml
+from "./syntax.sml" import * as Syntax;
+from "./sml_list.sml" import * as SmlList;
+from "./subset_char.sml" import * as SubsetChar;
+from "./subset_result.sml" import * as SubsetResult;
+from "./subset_source.sml" import * as SubsetSource;
+from "./subset_string.sml" import * as SubsetString;
+from "./compiler_text.sml" import * as CompilerText;
+*/
+
 // Lexical analysis (docs/spec.md §2, Definition §2).
 
 from "./syntax.wm" import * as Syntax;

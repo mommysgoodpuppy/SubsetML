@@ -1,3 +1,7 @@
+(* @subsetml
+from "./src/subset_result.sml" import * as SubsetResult;
+*)
+
 (* Procedure-style error propagation in ordinary SubsetML.
    Build: mlton -output /tmp/errordemo errordemo.mlb
    Input reading/decoding are toy operations;
@@ -8,13 +12,8 @@ structure Errordemo = struct
     | ParseFailure of string
     | ValidationFailure of string
 
-  (* Local prototypes; the Basis itself is unchanged. *)
-  val via = fn transform => fn wrapped =>
-    SubsetResult.andThen (wrapped, transform)
-
-  val viaError = fn inject => fn transform => fn wrapped =>
-    SubsetResult.andThen (wrapped, fn value =>
-      SubsetResult.mapError (transform value, inject))
+  val via = SubsetResult.via
+  val viaError = SubsetResult.viaError
 
   val readInput = fn input =>
     if input = "missing" then SubsetResult.Err "input unavailable"

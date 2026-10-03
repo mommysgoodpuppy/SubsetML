@@ -1,3 +1,16 @@
+(* @subsetml
+from "./syntax.sml" import * as Syntax;
+from "./doc.sml" import * as Doc;
+from "./compiler_text.sml" import * as CompilerText;
+from "./subset_char.sml" import * as SubsetChar;
+from "./subset_string.sml" import * as SubsetString;
+from "./subset_list.sml" import * as SubsetList;
+from "./sml_list.sml" import * as SmlList;
+from "./subset_result.sml" import * as SubsetResult;
+from "./parser.sml" import * as Parser;
+from "./sml_print.sml" import * as SmlPrint;
+*)
+
 (* Prints abstract syntax as Workman source, following the frontend-v3 spelling
    (../wm-mini/tooling/frontend-v3/lexical-design.md). The mapping is designed to be read back
    by WmParse; docs/translation.md lists every rule.
@@ -295,7 +308,7 @@ structure WmPrint = struct
           (* `-3` would read back as a negative literal, so a literal operand keeps parentheses. *)
           (7.0, cat (atom (p, "-"),
                    case (e, level >= 9.0) of
-                     (EScon (ignoredPos, ignoredConstant), ignoredLevel) => cats [text "(", d, text ")"]
+                     (EScon (_, _), _) => cats [text "(", d, text ")"]
                    | (_, true) => d
                    | (_, false) => cats [text "(", d, text ")"]))
         end
@@ -391,13 +404,13 @@ structure WmPrint = struct
     case d of
       DVal (p, [], plain, []) => andGroup (atom (p, "let "), SmlList.map binding plain)
     | DVal (p, [], [], recs) => andGroup (atom (p, "let rec "), SmlList.map binding recs)
-    | DVal (ignoredPos, ignoredVariables, ignoredPlain, ignoredRecursive) => fallback d
+    | DVal (_, _, _, _) => fallback d
     | DType (p, [(vs, tycon, TyRecord fields)]) =>
         cats [atom (p, "record "), text (capitalize tycon ^ typeParams vs ^ " = "),
               group ("{", ",", "}", SmlList.map (fn (l, t) => cats [text (l ^ ": "), ty t]) fields),
               text ";"]
     | DType (p, binds) =>
-        if SmlList.exists (fn (ignoredVariables, ignoredName, t) => case t of TyRecord _ => true | _ => false) binds
+        if SmlList.exists (fn (_, _, t) => case t of TyRecord _ => true | _ => false) binds
         then fallback d
         else
           andGroup (atom (p, "type "),

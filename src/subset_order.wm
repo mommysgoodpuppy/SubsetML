@@ -1,3 +1,7 @@
+/* @subsetml
+from "./subset_result.sml" import * as SubsetResult;
+*/
+
 // Custom ordering is ordinary source data, shared with generated Workman.
 
 from "./subset_result.wm" import * as SubsetResult;

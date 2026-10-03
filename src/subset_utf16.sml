@@ -1,3 +1,10 @@
+(* @subsetml
+from "./subset_unicode.sml" import * as SubsetUnicode;
+from "./subset_list.sml" import * as SubsetList;
+from "./subset_result.sml" import * as SubsetResult;
+from "./subset_char.sml" import * as SubsetChar;
+*)
+
 (* Strict UTF-16 byte codecs. Endianness is explicit; BOMs are ordinary scalars. *)
 structure SubsetUtf16 = struct
   datatype endian = LittleEndian | BigEndian

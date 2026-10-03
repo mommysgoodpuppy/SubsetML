@@ -1,3 +1,10 @@
+(* @subsetml
+from "./subset_result.sml" import * as SubsetResult;
+from "./subset_char.sml" import * as SubsetChar;
+from "./subset_list.sml" import * as SubsetList;
+from "./subset_order.sml" import * as SubsetOrder;
+*)
+
 (* Byte sequences and immutable sequential readers; no native-string access. *)
 structure SubsetBytes = struct
   datatype error = InvalidIndex | OutOfBounds | NonByte of real

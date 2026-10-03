@@ -11,7 +11,7 @@ structure SmlPrinter = struct
         andalso SmlPrint.scon (Syntax.SChar byte) = "#\"" ^ expected ^ "\""
         andalso Print.scon (Syntax.SChar byte) = SmlPrint.scon (Syntax.SChar byte)
         andalso (case Lexer.lex (SmlPrint.scon (Syntax.SChar byte)) of
-          Lexer.Tokens ([(Lexer.TScon (Syntax.SChar actual), ignoredFirstPos), (Lexer.TEOF, ignoredLastPos)], []) => actual = byte
+          Lexer.Tokens ([(Lexer.TScon (Syntax.SChar actual), _), (Lexer.TEOF, _)], []) => actual = byte
         | Lexer.Tokens (tokens, comments) => false | Lexer.LexError (message, offset) => false))
   val strings =
     case SubsetString.toNative SubsetChar.byteChars of
@@ -22,7 +22,7 @@ structure SmlPrinter = struct
         andalso SmlPrint.scon (Syntax.SString value) = "\"" ^ SmlEscapeExpected.all ^ "\""
         andalso Print.scon (Syntax.SString value) = SmlPrint.scon (Syntax.SString value)
         andalso (case Lexer.lex (SmlPrint.scon (Syntax.SString value)) of
-          Lexer.Tokens ([(Lexer.TScon (Syntax.SString actual), ignoredFirstPos), (Lexer.TEOF, ignoredLastPos)], []) => actual = value
+          Lexer.Tokens ([(Lexer.TScon (Syntax.SString actual), _), (Lexer.TEOF, _)], []) => actual = value
         | Lexer.Tokens (tokens, comments) => false | Lexer.LexError (message, offset) => false)
         andalso escaped (SubsetSmlEscape.escapeBytes [], "")
         andalso escaped (SubsetSmlEscape.escapeString "", "")

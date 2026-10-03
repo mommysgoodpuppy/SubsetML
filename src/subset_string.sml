@@ -1,3 +1,11 @@
+(* @subsetml
+from "./subset_result.sml" import * as SubsetResult;
+from "./subset_list.sml" import * as SubsetList;
+from "./subset_char.sml" import * as SubsetChar;
+from "./subset_text_host.sml" import * as SubsetTextHost;
+from "./subset_bytes.sml" import * as SubsetBytes;
+*)
+
 (* Native byte-string boundary. Only extraction is intrinsic; reconstruction is source. *)
 structure SubsetString = struct
   datatype error = NonByte of real

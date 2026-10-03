@@ -1,3 +1,8 @@
+/* @subsetml
+from "./subset_result.sml" import * as SubsetResult;
+from "./subset_list.sml" import * as SubsetList;
+*/
+
 /* Custom Basis paired lists. Unequal lengths are reported, never silently truncated.
    Mapping validates lengths before invoking any user callback. */
 

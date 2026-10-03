@@ -23,8 +23,8 @@ current Workman operator `<` cannot compare characters.
 ## A practical first budget
 
 With native immutable strings and hardware real numbers, the implemented compiler CLI uses
-**7 library entry points beyond language operators**: one native-string extraction operation
-and six host/process operations. Extra numeric entry points remain candidates for a broader
+**8 library entry points beyond language operators**: one native-string extraction operation,
+six host/process operations, and filesystem path canonicalization. Extra numeric entry points remain candidates for a broader
 library, rather than requirements of the current compiler. Counted individually, the families are:
 
 | Family | Candidate operations | Count | What source can derive |
@@ -32,6 +32,11 @@ library, rather than requirements of the current compiler. Counted individually,
 | Text representation | native string to numeric codes | 1 | slices, explode/implode wrappers, concatenation, search, splitting, escaping, code-based comparisons |
 | Numeric support | floor, finite-value test, real formatting | 0–3 additional | length/index loops, min/max, checked index validation, integer division/modulo with defined ranges; source formatting may replace the formatter |
 | Host/process | arguments, read whole file, write whole file, write stdout, write stderr, exit | 6 implemented | the compiler's command-line driver and diagnostics |
+| Filesystem identity | canonical absolute path, resolving symlinks | 1 implemented | import graph traversal and caching; lexical normalization remains source code |
+
+The [module-loading implementation](module-loading-plan.md) uses the canonical-path operation
+to preserve Workman's filesystem module identity, including symlinks. It is included in the
+eight-entry-point count. Graph traversal and import handling remain source code.
 
 The numeric row is provisional: floor and finite testing may be provided as language/runtime
 intrinsics, and formatting may be source code. Moving a function between the language and
@@ -54,7 +59,7 @@ so the six host entry points belong to a command-line profile rather than every 
 
 ## Evidence from the current compiler
 
-The compiler uses source implementations for library algorithms and seven explicit host entry
+The compiler uses source implementations for library algorithms and eight explicit host entry
 points. Its dependencies separate as follows; these observations describe this compiler, not
 all SML implementations.
 

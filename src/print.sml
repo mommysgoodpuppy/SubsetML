@@ -1,3 +1,11 @@
+(* @subsetml
+from "./syntax.sml" import * as Syntax;
+from "./subset_string.sml" import * as SubsetString;
+from "./subset_list.sml" import * as SubsetList;
+from "./compiler_text.sml" import * as CompilerText;
+from "./sml_list.sml" import * as SmlList;
+*)
+
 (* Prints abstract syntax as S-expressions, for tests and debugging. *)
 structure Print = struct
 

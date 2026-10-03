@@ -1,3 +1,15 @@
+(* @subsetml
+from "./types.sml" import * as Types;
+from "./env.sml" import * as Env;
+from "./subset_result.sml" import * as SubsetResult;
+from "./subset_list.sml" import * as SubsetList;
+from "./lexer.sml" import * as Lexer;
+from "./unify.sml" import * as Unify;
+from "./parser.sml" import * as Parser;
+from "./elab.sml" import * as Elab;
+from "./sml_list.sml" import * as SmlList;
+*)
+
 (* Bootstrap compatibility environment used to check and build the compiler today.
    This table still contains SML-shaped host interfaces; it is not the custom SubsetML Basis
    API and does not imply support for the SML Basis Library. The custom library will choose
@@ -219,19 +231,19 @@ structure Basis = struct
   (* The scheme of a type written in SubsetML syntax, or the reason it is malformed. *)
   val scheme = fn (env, text) =>
     case Lexer.lex text of
-      Lexer.LexError (msg, ignored1) => Unify.Err (msg, 0.0)
-    | Lexer.Tokens (ts, ignored2) =>
+      Lexer.LexError (msg, _) => Unify.Err (msg, 0.0)
+    | Lexer.Tokens (ts, _) =>
         case Parser.parseTy ts of
           Parser.Fail (message, pos) => Unify.Err (message, pos)
-        | Parser.Done (t, ignored3) =>
+        | Parser.Done (t, _) =>
             let
               val vars = Elab.distinct (Elab.tyVarsOf t)
               val rec index = fn
-                  (ignored4, [], ignored5) => NONE
+                  (_, [], _) => NONE
                 | (v, w :: rest, i) => if v = w then SOME (TGen i) else index (v, rest, i + 1.0)
             in
               Unify.bind (Elab.elabTy (env, fn v => index (v, vars, 0.0), 0.0, t, Unify.initial)) (fn body => fn st =>
-                Unify.Ok ((SmlList.map (fn ignored6 => KPlain) vars, body), st))
+                Unify.Ok ((SmlList.map (fn _ => KPlain) vars, body), st))
             end
 
   (* Puts `inner` at `path` inside `outer`, creating structures on the way. *)
@@ -246,7 +258,7 @@ structure Basis = struct
               SOME entry => let val (e, basis) = entry in e end
             | NONE => empty
         in
-          Env.Env ((name, (nest (existing, rest, inner), true)) :: SmlList.filter (fn (n, ignored7) => n <> name) strs, tys, vals)
+          Env.Env ((name, (nest (existing, rest, inner), true)) :: SmlList.filter (fn (n, _) => n <> name) strs, tys, vals)
         end
 
   (* The initial environment, or the first malformed entry. *)
@@ -257,7 +269,7 @@ structure Basis = struct
              SmlList.map conEntry (boolCons @ listCons @ optionCons @ orderCons) @ special)
       (* The structures' types, so that value types can name them (TextIO.instream). *)
       val typesEnv =
-        SmlList.foldl (fn ((path, tys, ignored8), env) =>
+        SmlList.foldl (fn ((path, tys, _), env) =>
                       nest (env, path, withTypes (SmlList.map (fn (n, tn) => (n, tyStr tn)) tys)))
           topEnv structures
       val values = fn (scope, entries) =>
@@ -266,24 +278,24 @@ structure Basis = struct
                         Unify.Err (message, pos) => Unify.Err (message, pos)
                       | Unify.Ok (vals, st) =>
                           case scheme (scope, text) of
-                            Unify.Ok (s, ignored9) => Unify.Ok (vals @ [(name, (s, SValue))], st)
-                          | Unify.Err (msg, ignored10) => Unify.Err ("basis entry " ^ name ^ ": " ^ msg, 0.0))
+                            Unify.Ok (s, _) => Unify.Ok (vals @ [(name, (s, SValue))], st)
+                          | Unify.Err (msg, _) => Unify.Err ("basis entry " ^ name ^ ": " ^ msg, 0.0))
           (Unify.Ok ([], Unify.initial)) entries
       (* Values are elaborated where their structure's types are in scope. *)
       val scopeOf = fn path =>
         case structureAt (typesEnv, path) of
-          SOME entry => let val (inner, ignored11) = entry in plus (typesEnv, inner) end
+          SOME entry => let val (inner, _) = entry in plus (typesEnv, inner) end
         | NONE => typesEnv
     in
       case values (typesEnv, topValues) of
         Unify.Err (message, pos) => Unify.Err (message, pos)
-      | Unify.Ok (tops, ignored12) =>
-          SmlList.foldl (fn ((path, ignored13, entries), acc) =>
+      | Unify.Ok (tops, _) =>
+          SmlList.foldl (fn ((path, _, entries), acc) =>
                         case acc of
                           Unify.Err (message, pos) => Unify.Err (message, pos)
                         | Unify.Ok (env, st) =>
                             case values (scopeOf path, entries) of
-                              Unify.Ok (vals, ignored14) => Unify.Ok (nest (env, path, withValues vals), st)
+                              Unify.Ok (vals, _) => Unify.Ok (nest (env, path, withValues vals), st)
                             | Unify.Err (message, pos) => Unify.Err (message, pos))
             (Unify.Ok (plus (typesEnv, withValues tops), Unify.initial)) structures
     end

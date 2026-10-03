@@ -1,3 +1,16 @@
+(* @subsetml
+from "./syntax.sml" import * as Syntax;
+from "./wm_lexer.sml" import * as WmLexer;
+from "./subset_string.sml" import * as SubsetString;
+from "./sml_list.sml" import * as SmlList;
+from "./compiler_text.sml" import * as CompilerText;
+from "./subset_char.sml" import * as SubsetChar;
+from "./wm_print.sml" import * as WmPrint;
+from "./subset_list.sml" import * as SubsetList;
+from "./parser.sml" import * as Parser;
+from "./sml_option.sml" import * as SmlOption;
+*)
+
 (* Parsing Workman source into SubsetML abstract syntax: the reverse of WmPrint.
 
    It accepts the Workman fragment that corresponds to SubsetML, plus the SML fallbacks that
@@ -20,26 +33,26 @@ structure WmParse = struct
     | Fail (message, pos) => Fail (message, pos)
 
   val peek = fn
-      t :: ignored1 => t
+      t :: _ => t
     | [] => (WEOF, 0.0)
 
   val advance = fn
-      ignored2 :: rest => rest
+      _ :: rest => rest
     | [] => []
 
-  val posOf = fn ts => let val (ignored3, p) = peek ts in p end
+  val posOf = fn ts => let val (_, p) = peek ts in p end
 
   val isKey = fn (k, ts) =>
     case peek ts of
-      (WKey k', ignored4) => k = k'
-    | ignored5 => false
+      (WKey k', _) => k = k'
+    | _ => false
 
   val describe = fn
       WKey k => "`" ^ k ^ "`"
     | WName path => "`" ^ SubsetString.concatWith (path, ".") ^ "`"
     | WSelect l => "`#" ^ l ^ "`"
-    | WScon ignored6 => "a literal"
-    | WSml ignored7 => "an SML declaration"
+    | WScon _ => "a literal"
+    | WSml _ => "an SML declaration"
     | WEOF => "end of input"
 
   val expected = fn (what, ts) =>
@@ -65,9 +78,9 @@ structure WmParse = struct
 
   (* `open items close` *)
   val delimited = fn (openK, item, sep, close, ts) =>
-    bind (expect (openK, ts)) (fn ignored8 => fn ts =>
+    bind (expect (openK, ts)) (fn _ => fn ts =>
       bind (separated (item, sep, close, ts)) (fn xs => fn ts =>
-        bind (expect (close, ts)) (fn ignored9 => fn ts => Done (xs, ts))))
+        bind (expect (close, ts)) (fn _ => fn ts => Done (xs, ts))))
 
   (* --------------------------------------------------------------------------------------- *)
   (* Names (the inverse of WmPrint's) *)
@@ -81,8 +94,8 @@ structure WmParse = struct
       ([], "None") => ([], "NONE")
     | ([], "Some") => ([], "SOME")
     | id =>
-        (case SmlList.find (fn (ignored10, wm) => wm = id) WmPrint.numNames of
-           SOME entry => let val (sml, ignoredMapping) = entry in sml end
+        (case SmlList.find (fn (_, wm) => wm = id) WmPrint.numNames of
+           SOME entry => let val (sml, _) = entry in sml end
          | NONE => id)
 
   val tyConName = fn
@@ -111,7 +124,7 @@ structure WmParse = struct
     let
       val base =
         case SmlList.rev (CompilerText.fields (file, fn c => c = #"/")) of
-          last :: ignored11 => last
+          last :: _ => last
         | [] => file
       val stem = if CompilerText.isSuffix (base, ".wm") then CompilerText.slice (base, 0.0, CompilerText.size base - 3.0) else base
     in
@@ -130,19 +143,19 @@ structure WmParse = struct
 
   and parseTypeAtom = fn ts =>
     case peek ts of
-      (WKey "(", ignored12) =>
+      (WKey "(", _) =>
         bind (delimited ("(", parseType, ",", ")", ts)) (fn types => fn ts =>
           case types of
             [single] => Done (single, ts)
           | [] => expected ("a type", ts)
-          | ignored13 => Done (TyTuple types, ts))
-    | (WName [v], ignored14) =>
+          | _ => Done (TyTuple types, ts))
+    | (WName [v], _) =>
         if isUpperName v then typeName ([], v, advance ts) else Done (TyVar ("'" ^ v), advance ts)
-    | (WName path, ignored15) =>
+    | (WName path, _) =>
         (case SmlList.rev path of
            last :: rest => typeName (SmlList.rev rest, last, advance ts)
          | [] => expected ("a type", ts))
-    | ignored16 => expected ("a type", ts)
+    | _ => expected ("a type", ts)
 
   and typeName = fn (quals, name, ts) =>
     if isKey ("<", ts) then
@@ -157,13 +170,13 @@ structure WmParse = struct
   val number = fn c =>
     case c of
       SInt s => SReal (s ^ ".0")
-    | ignored17 => c
+    | _ => c
 
   val negativeLiteral = fn (minusPos, ts) =>
     case peek ts of
       (WScon (SInt s), p) => if Real.== (p, minusPos + 1.0) then SOME (SReal ("~" ^ s ^ ".0")) else NONE
     | (WScon (SReal s), p) => if Real.== (p, minusPos + 1.0) then SOME (SReal ("~" ^ s)) else NONE
-    | ignored18 => NONE
+    | _ => NONE
 
   (* Builds `h1 :: ... :: tail`. *)
   val consPat = fn (p, items, tail) =>
@@ -174,16 +187,16 @@ structure WmParse = struct
     let
       val rec go = fn (acc, ts) =>
         case peek ts of
-          (WKey "]", ignored19) => Done ((SmlList.rev acc, NONE), advance ts)
-        | (WKey "..", ignored20) =>
+          (WKey "]", _) => Done ((SmlList.rev acc, NONE), advance ts)
+        | (WKey "..", _) =>
             bind (item (advance ts)) (fn t => fn ts =>
-              bind (expect ("]", if isKey (",", ts) then advance ts else ts)) (fn ignored21 => fn ts =>
+              bind (expect ("]", if isKey (",", ts) then advance ts else ts)) (fn _ => fn ts =>
                 Done ((SmlList.rev acc, SOME t), ts)))
-        | ignored22 =>
+        | _ =>
             (case item ts of
                Done (x, rest) =>
                  if isKey (",", rest) then go (x :: acc, advance rest)
-                 else bind (expect ("]", rest)) (fn ignored23 => fn rest => Done ((SmlList.rev (x :: acc), NONE), rest))
+                 else bind (expect ("]", rest)) (fn _ => fn rest => Done ((SmlList.rev (x :: acc), NONE), rest))
              | Fail (message, offset) => Fail (message, offset))
     in
       go ([], ts)
@@ -192,17 +205,17 @@ structure WmParse = struct
   val rec parsePat = fn (inMatch, binds, ts) =>
     let val child = fn b => fn ts => parseAnnotated (inMatch, b orelse not inMatch, ts) in
       case peek ts of
-        (WKey "_", ignored24) => Done (PWild, advance ts)
-      | (WKey "void", ignored25) => Done (PTuple [], advance ts)
+        (WKey "_", _) => Done (PWild, advance ts)
+      | (WKey "void", _) => Done (PTuple [], advance ts)
       | (WKey "true", p) => Done (PId (p, ([], "true")), advance ts)
       | (WKey "false", p) => Done (PId (p, ([], "false")), advance ts)
-      | (WScon (SInt ignored26), p) => Fail ("real constants may not occur in patterns", p)
-      | (WScon (SReal ignored27), p) => Fail ("real constants may not occur in patterns", p)
+      | (WScon (SInt _), p) => Fail ("real constants may not occur in patterns", p)
+      | (WScon (SReal _), p) => Fail ("real constants may not occur in patterns", p)
       | (WScon c, p) => Done (PScon (p, c), advance ts)
       | (WKey "-", p) =>
           (case negativeLiteral (p, advance ts) of
              SOME (SInt s) => Done (PScon (p, SInt s), advance (advance ts))
-           | ignored28 => expected ("a pattern", ts))
+           | _ => expected ("a pattern", ts))
       | (WKey ".{", p) =>
           let
             val field = fn ts =>
@@ -211,45 +224,45 @@ structure WmParse = struct
                   if isKey ("=", advance ts) then
                     bind (child false (advance (advance ts))) (fn q => fn ts => Done ((l, q), ts))
                   else Done ((l, PId (lp, ([], l))), advance ts)
-              | ignored29 => expected ("a record field", ts)
+              | _ => expected ("a record field", ts)
           in
             bind (separated (field, ",", "}", advance ts)) (fn fields => fn ts =>
-              bind (expect ("}", ts)) (fn ignored30 => fn ts => Done (PRecord (p, fields), ts)))
+              bind (expect ("}", ts)) (fn _ => fn ts => Done (PRecord (p, fields), ts)))
           end
       | (WKey "[", p) =>
           bind (listItems (child true, advance ts)) (fn (items, tail) => fn ts =>
             case tail of
               NONE => Done (PList items, ts)
             | SOME t => Done (consPat (p, items, t), ts))
-      | (WKey "(", ignored31) =>
+      | (WKey "(", _) =>
           bind (delimited ("(", child false, ",", ")", ts)) (fn ps => fn ts =>
             case ps of
               [single] => Done (single, ts)
-            | ignored32 => Done (PTuple ps, ts))
-      | (WName ["Var"], ignored33) =>
+            | _ => Done (PTuple ps, ts))
+      | (WName ["Var"], _) =>
           (case (peek (advance ts), peek (advance (advance ts)), peek (advance (advance (advance ts)))) of
-             ((WKey "(", ignored34), (WName [x], p), (WKey ")", ignored35)) =>
+             ((WKey "(", _), (WName [x], p), (WKey ")", _)) =>
                Done (PId (p, ([], x)), advance (advance (advance (advance ts))))
-           | ignored36 => expected ("`Var(name)`", ts))
+           | _ => expected ("`Var(name)`", ts))
       | (WName path, p) =>
           let
             val name :: reversedQuals = SubsetList.reverse path
             val quals = SubsetList.reverse reversedQuals
           in
             case (isUpperName name, binds, SmlList.null quals) of
-              (true, ignored37, ignored38) =>
+              (true, _, _) =>
                 if isKey ("(", advance ts) then
                   bind (delimited ("(", child true, ",", ")", advance ts)) (fn args => fn ts =>
                     case args of
                       [single] => Done (PApp (p, valueName (quals, name), single), ts)
-                    | ignored39 => Done (PApp (p, valueName (quals, name), PTuple args), ts))
+                    | _ => Done (PApp (p, valueName (quals, name), PTuple args), ts))
                 else Done (PId (p, valueName (quals, name)), advance ts)
             | (false, true, true) => Done (PId (p, ([], name)), advance ts)
-            | (false, ignored40, ignored41) =>
+            | (false, _, _) =>
                 Fail ("`" ^ SubsetString.concatWith (path, ".") ^ "` here is a pinned value in Workman, "
                       ^ "which SubsetML patterns cannot express; write Var(" ^ name ^ ") to bind", p)
           end
-      | ignored42 => expected ("a pattern", ts)
+      | _ => expected ("a pattern", ts)
     end
 
   (* A pattern that may carry a type annotation, as inside parentheses. *)
@@ -267,14 +280,14 @@ structure WmParse = struct
     let
       val rec scan = fn (depth, ts) =>
         case peek ts of
-          (WEOF, ignored43) => false
-        | (WKey k, ignored44) =>
+          (WEOF, _) => false
+        | (WKey k, _) =>
             if k = "(" orelse k = "[" orelse k = "{" orelse k = ".{" then scan (depth + 1.0, advance ts)
             else
               (if k = ")" orelse k = "]" orelse k = "}" then
                  (if Real.== (depth, 1.0) then isKey ("=>", advance ts) else scan (depth - 1.0, advance ts))
                else scan (depth, advance ts))
-        | ignored45 => scan (depth, advance ts)
+        | _ => scan (depth, advance ts)
     in
       isKey ("(", ts) andalso scan (0.0, ts)
     end
@@ -294,7 +307,7 @@ structure WmParse = struct
     | "*" => SOME 6.0
     | "/" => SOME 6.0
     | "%" => SOME 6.0
-    | ignored46 => NONE
+    | _ => NONE
 
   val smlOperator = fn
       "==" => "="
@@ -305,9 +318,9 @@ structure WmParse = struct
   (* The SML operators WmPrint keeps where Workman has none. *)
   val fallbackOperator = fn ts =>
     case peek ts of
-      (WKey "@", ignored47) => SOME "@"
-    | (WName [s], ignored48) => if s = "div" orelse s = "mod" orelse s = "o" orelse s = "before" then SOME s else NONE
-    | ignored49 => NONE
+      (WKey "@", _) => SOME "@"
+    | (WName [s], _) => if s = "div" orelse s = "mod" orelse s = "o" orelse s = "before" then SOME s else NONE
+    | _ => NONE
 
   val infixApp = fn (opr, p, l, r) => EApp (EId (p, ([], opr)), ETuple [l, r])
 
@@ -316,7 +329,7 @@ structure WmParse = struct
 
   val startsDecl = fn ts =>
     isKey ("let", ts) orelse isKey ("type", ts) orelse isKey ("record", ts)
-    orelse (case peek ts of (WSml ignored50, ignored51) => true | ignored52 => false)
+    orelse (case peek ts of (WSml _, _) => true | _ => false)
 
   datatype item =
       IDec of dec
@@ -337,23 +350,23 @@ structure WmParse = struct
         case (after, terminated) of
           ([], true) => es @ [ETuple []]
         | ([], false) => es
-        | (ignored53, ignored54) => es @ [blockExp (after, terminated)]
+        | (_, _) => es @ [blockExp (after, terminated)]
     in
       case (ds, body) of
         ([], [single]) => single
-        | ignored55 => ELet (ds, body)
+        | _ => ELet (ds, body)
     end
 
   val rec parseExp = fn ts =>
     case peek ts of
-      (WKey "if", ignored56) =>
-        bind (expect ("(", advance ts)) (fn ignored57 => fn ts =>
+      (WKey "if", _) =>
+        bind (expect ("(", advance ts)) (fn _ => fn ts =>
           bind (parseExp ts) (fn c => fn ts =>
-            bind (expect (")", ts)) (fn ignored58 => fn ts =>
+            bind (expect (")", ts)) (fn _ => fn ts =>
               bind (parseBlock ts) (fn a => fn ts =>
-                bind (expect ("else", ts)) (fn ignored59 => fn ts =>
+                bind (expect ("else", ts)) (fn _ => fn ts =>
                   bind (parseBlock ts) (fn b => fn ts => Done (EIf (c, a, b), ts)))))))
-    | (WKey "match", ignored60) =>
+    | (WKey "match", _) =>
         if isKey ("{", advance ts) then
           bind (parseArms (advance ts)) (fn rules => fn ts => Done (EFn rules, ts))
         else
@@ -363,9 +376,9 @@ structure WmParse = struct
                bind (parseArms ts) (fn rules => fn ts =>
                  case values of
                    [single] => Done (ECase (single, rules), ts)
-                 | ignored61 => Done (ECase (ETuple values, rules), ts))))
-    | (WKey "(", ignored62) => if lambdaAhead ts then parseLambda ts else parseFallback ts
-    | ignored63 => parseFallback ts
+                 | _ => Done (ECase (ETuple values, rules), ts))))
+    | (WKey "(", _) => if lambdaAhead ts then parseLambda ts else parseFallback ts
+    | _ => parseFallback ts
 
   (* `match(x, y) => { arms }`: a function of its named parameters. *)
   and parseMatchFunction = fn ts =>
@@ -373,20 +386,20 @@ structure WmParse = struct
       val name = fn ts =>
         case peek ts of
           (WName [x], p) => Done ((p, x), advance ts)
-        | ignored64 => expected ("a parameter name", ts)
+        | _ => expected ("a parameter name", ts)
     in
       bind (delimited ("(", name, ",", ")", ts)) (fn names => fn ts =>
-        bind (expect ("=>", ts)) (fn ignored65 => fn ts =>
+        bind (expect ("=>", ts)) (fn _ => fn ts =>
           bind (parseArms ts) (fn rules => fn ts =>
             let
               val param =
                 case names of
                   [(p, x)] => PId (p, ([], x))
-                | ignored66 => PTuple (SmlList.map (fn (p, x) => PId (p, ([], x))) names)
+                | _ => PTuple (SmlList.map (fn (p, x) => PId (p, ([], x))) names)
               val value =
                 case names of
                   [(p, x)] => EId (p, ([], x))
-                | ignored67 => ETuple (SmlList.map (fn (p, x) => EId (p, ([], x))) names)
+                | _ => ETuple (SmlList.map (fn (p, x) => EId (p, ([], x))) names)
             in
               Done (EFn [(param, ECase (value, rules))], ts)
             end)))
@@ -401,13 +414,13 @@ structure WmParse = struct
           else Done (p, ts))
     in
       bind (delimited ("(", param, ",", ")", ts)) (fn ps => fn ts =>
-        bind (expect ("=>", ts)) (fn ignored68 => fn ts =>
+        bind (expect ("=>", ts)) (fn _ => fn ts =>
           bind (if lambdaAhead ts then parseLambda ts else parseBlock ts) (fn body => fn ts =>
             let
               val p =
                 case ps of
                   [single] => single
-                | ignored69 => PTuple ps
+                | _ => PTuple ps
             in
               Done (EFn [(p, body)], ts)
             end)))
@@ -417,7 +430,7 @@ structure WmParse = struct
     let
       val arm = fn ts =>
         bind (parseAnnotated (true, false, ts)) (fn p => fn ts =>
-          bind (expect ("=>", ts)) (fn ignored70 => fn ts =>
+          bind (expect ("=>", ts)) (fn _ => fn ts =>
             bind (parseBlock ts) (fn e => fn ts => Done ((p, e), ts))))
     in
       delimited ("{", arm, ",", "}", ts)
@@ -427,16 +440,16 @@ structure WmParse = struct
     let
       val rec items = fn (acc, ts) =>
         case peek ts of
-          (WKey "}", ignored71) => Done ((SmlList.rev acc, true), advance ts)
-        | ignored72 =>
+          (WKey "}", _) => Done ((SmlList.rev acc, true), advance ts)
+        | _ =>
             if startsDecl ts then
               bind (parseDecl ts) (fn ds => fn ts => items (SmlList.map IDec ds @ acc, ts))
             else
               bind (parseExp ts) (fn e => fn ts =>
                 if isKey (";", ts) then items (IExp e :: acc, advance ts)
-                else bind (expect ("}", ts)) (fn ignored73 => fn ts => Done ((SmlList.rev (IExp e :: acc), false), ts)))
+                else bind (expect ("}", ts)) (fn _ => fn ts => Done ((SmlList.rev (IExp e :: acc), false), ts)))
     in
-      bind (expect ("{", ts)) (fn ignored74 => fn ts =>
+      bind (expect ("{", ts)) (fn _ => fn ts =>
         bind (items ([], ts)) (fn (parts, terminated) => fn ts =>
           (* An empty block or one ending in `;` yields void. *)
           Done (blockExp (parts, terminated orelse SmlList.null parts), ts)))
@@ -473,15 +486,15 @@ structure WmParse = struct
                               | "||" => ECase (ETuple [l, r],
                                   [(PTuple [PId (p, ([], "false")), PId (p, ([], "false"))], EId (p, ([], "false"))),
                                    (PWild, EId (p, ([], "true")))])
-                              | ignored75 =>
+                              | _ =>
                                   case (opr, l) of
                                     ("==", ETyped (x, TyCon ([], ([], "real")))) =>
                                       EApp (EId (p, (["Real"], "==")), ETuple [x, r])
                                   | ("!=", ETyped (x, TyCon ([], ([], "real")))) =>
                                       EApp (EId (p, (["Real"], "!=")), ETuple [x, r])
-                                  | ignored76 => infixApp (smlOperator opr, p, l, r), ts)))
+                                  | _ => infixApp (smlOperator opr, p, l, r), ts)))
              | NONE => Done (l, ts))
-        | ignored77 => Done (l, ts)
+        | _ => Done (l, ts)
     in
       bind (parseUnary ts) (fn l => fn ts => more (l, ts))
     end
@@ -493,7 +506,7 @@ structure WmParse = struct
         (case negativeLiteral (p, advance ts) of
            SOME c => Done (EScon (p, c), advance (advance ts))
          | NONE => bind (parseUnary (advance ts)) (fn e => fn ts => Done (EApp (EId (p, ([], "~")), e), ts)))
-    | ignored78 => parsePostfix ts
+    | _ => parsePostfix ts
 
   (* A primary expression followed by calls. *)
   and parsePostfix = fn ts =>
@@ -504,8 +517,8 @@ structure WmParse = struct
             case (f, args) of
               (* WmPrint's spelling of SML `@`; the SML Basis has no List.append. *)
               (EId (p, (["List"], "append")), [l, r]) => calls (infixApp ("@", p, l, r), ts)
-            | (ignored79, [single]) => calls (EApp (f, single), ts)
-            | ignored80 => calls (EApp (f, ETuple args), ts))
+            | (_, [single]) => calls (EApp (f, single), ts)
+            | _ => calls (EApp (f, ETuple args), ts))
         else Done (f, ts)
     in
       bind (parsePrimary ts) (fn e => fn ts => calls (e, ts))
@@ -516,7 +529,7 @@ structure WmParse = struct
       (WScon c, p) => Done (EScon (p, number c), advance ts)
     | (WKey "true", p) => Done (EId (p, ([], "true")), advance ts)
     | (WKey "false", p) => Done (EId (p, ([], "false")), advance ts)
-    | (WKey "void", ignored81) => Done (ETuple [], advance ts)
+    | (WKey "void", _) => Done (ETuple [], advance ts)
     | (WKey "~", p) => Done (EId (p, ([], "~")), advance ts)
     | (WName path, p) => Done (pathExp (p, path), advance ts)
     | (WSelect l, p) =>
@@ -536,28 +549,28 @@ structure WmParse = struct
                 if isKey ("=", advance ts) then
                   bind (parseExp (advance (advance ts))) (fn e => fn ts => Done ((l, e), ts))
                 else Done ((l, EId (lp, ([], l))), advance ts)
-            | ignored82 => expected ("a record field", ts)
+            | _ => expected ("a record field", ts)
         in
           bind (separated (field, ",", "}", advance ts)) (fn fields => fn ts =>
-            bind (expect ("}", ts)) (fn ignored83 => fn ts => Done (ERecord (p, fields), ts)))
+            bind (expect ("}", ts)) (fn _ => fn ts => Done (ERecord (p, fields), ts)))
         end
-    | (WKey "{", ignored84) => parseBlock ts
-    | (WKey "(", ignored85) =>
+    | (WKey "{", _) => parseBlock ts
+    | (WKey "(", _) =>
         bind (parseExp (advance ts)) (fn first => fn ts =>
           case peek ts of
-            (WKey ":", ignored86) =>
+            (WKey ":", _) =>
               bind (parseType (advance ts)) (fn t => fn ts =>
-                bind (expect (")", ts)) (fn ignored87 => fn ts => Done (ETyped (first, t), ts)))
-          | (WKey ",", ignored88) =>
+                bind (expect (")", ts)) (fn _ => fn ts => Done (ETyped (first, t), ts)))
+          | (WKey ",", _) =>
               bind (separated (parseExp, ",", ")", advance ts)) (fn rest => fn ts =>
-                bind (expect (")", ts)) (fn ignored89 => fn ts => Done (ETuple (first :: rest), ts)))
-          | (WKey ";", ignored90) =>
+                bind (expect (")", ts)) (fn _ => fn ts => Done (ETuple (first :: rest), ts)))
+          | (WKey ";", _) =>
               bind (separated (parseExp, ";", ")", advance ts)) (fn rest => fn ts =>
-                bind (expect (")", ts)) (fn ignored91 => fn ts => Done (ESeq (first :: rest), ts)))
-          | ignored92 => bind (expect (")", ts)) (fn ignored93 => fn ts => Done (first, ts)))
-    | (WKey "if", ignored94) => parseExp ts
-    | (WKey "match", ignored95) => parseExp ts
-    | ignored96 => expected ("an expression", ts)
+                bind (expect (")", ts)) (fn _ => fn ts => Done (ESeq (first :: rest), ts)))
+          | _ => bind (expect (")", ts)) (fn _ => fn ts => Done (first, ts)))
+    | (WKey "if", _) => parseExp ts
+    | (WKey "match", _) => parseExp ts
+    | _ => expected ("an expression", ts)
 
   (* --------------------------------------------------------------------------------------- *)
   (* Declarations. A namespace import (`import * as X`) yields no declaration: SML refers to
@@ -566,21 +579,21 @@ structure WmParse = struct
   and parseDecl = fn ts =>
     let val p = posOf ts in
       case peek ts of
-        (WSml text, ignored97) =>
+        (WSml text, _) =>
           (case Parser.parse text of
-             Parser.Program (prog, ignored98) =>
+             Parser.Program (prog, _) =>
                Done (SmlList.concat (SmlList.map (fn
-                         TopDecs sds => SmlList.concat (SmlList.map (fn SDec d => [d] | SStructure (ignored99Field0, ignored99Field1) => []) sds)
-                       | TopExp (ignored100Field0, ignored100Field1) => []) prog), advance ts)
+                         TopDecs sds => SmlList.concat (SmlList.map (fn SDec d => [d] | SStructure (_, _) => []) sds)
+                       | TopExp (_, _) => []) prog), advance ts)
            | Parser.ParseError (msg, q) => Fail ("in an SML declaration: " ^ msg, p + q))
-      | (WKey "let", ignored101) =>
+      | (WKey "let", _) =>
           let
             val isRec = isKey ("rec", advance ts)
             val binding = fn ts =>
               bind (parsePat (false, true, ts)) (fn pat => fn ts =>
                 let
                   val rhs = fn (pat, ts) =>
-                    bind (expect ("=", ts)) (fn ignored102 => fn ts =>
+                    bind (expect ("=", ts)) (fn _ => fn ts =>
                       bind (parseExp ts) (fn e => fn ts => Done ((pat, e), ts)))
                 in
                   if isKey (":", ts) then
@@ -594,44 +607,44 @@ structure WmParse = struct
                 else Done ([b], ts))
           in
             bind (bindings (if isRec then advance (advance ts) else advance ts)) (fn bs => fn ts =>
-              bind (expect (";", ts)) (fn ignored103 => fn ts =>
+              bind (expect (";", ts)) (fn _ => fn ts =>
                 if isRec then
-                  (if SmlList.all (fn (ignored104, e) => case e of EFn ignored105 => true | ignored106 => false) bs
+                  (if SmlList.all (fn (_, e) => case e of EFn _ => true | _ => false) bs
                    then Done ([DVal (p, [], [], bs)], ts)
                    else Fail ("the right side of a `let rec` binding must be a function", p))
                 else Done ([DVal (p, [], bs, [])], ts)))
           end
-      | (WKey "type", ignored107) => parseTypeDecl (p, advance ts)
-      | (WKey "record", ignored108) =>
+      | (WKey "type", _) => parseTypeDecl (p, advance ts)
+      | (WKey "record", _) =>
           (case peek (advance ts) of
-             (WName [name], ignored109) =>
+             (WName [name], _) =>
                bind (typeParams (advance (advance ts))) (fn vs => fn ts =>
-                 bind (expect ("=", ts)) (fn ignored110 => fn ts =>
+                 bind (expect ("=", ts)) (fn _ => fn ts =>
                    let
                      val field = fn ts =>
                        case peek ts of
-                         (WName [l], ignored111) =>
-                           bind (expect (":", advance ts)) (fn ignored112 => fn ts =>
+                         (WName [l], _) =>
+                           bind (expect (":", advance ts)) (fn _ => fn ts =>
                              bind (parseType ts) (fn t => fn ts => Done ((l, t), ts)))
-                       | ignored113 => expected ("a record field", ts)
+                       | _ => expected ("a record field", ts)
                    in
                      bind (delimited ("{", field, ",", "}", ts)) (fn fields => fn ts =>
-                       bind (expect (";", ts)) (fn ignored114 => fn ts =>
+                       bind (expect (";", ts)) (fn _ => fn ts =>
                          Done ([DType (p, [(vs, decapitalize name, TyRecord fields)])], ts)))
                    end))
-           | ignored115 => expected ("a record name", advance ts))
-      | (WKey "from", ignored116) =>
+           | _ => expected ("a record name", advance ts))
+      | (WKey "from", _) =>
           (case (peek (advance ts), peek (advance (advance ts)), peek (advance (advance (advance ts)))) of
-             ((WScon (SString file), ignored117), (WKey "import", ignored118), (WKey "*", ignored119)) =>
+             ((WScon (SString file), _), (WKey "import", _), (WKey "*", _)) =>
                let val rest = advance (advance (advance (advance ts))) in
                  if isKey ("as", rest) then
-                   bind (expect (";", advance (advance rest))) (fn ignored120 => fn ts => Done ([], ts))
+                   bind (expect (";", advance (advance rest))) (fn _ => fn ts => Done ([], ts))
                  else
-                   bind (expect (";", rest)) (fn ignored121 => fn ts =>
+                   bind (expect (";", rest)) (fn _ => fn ts =>
                      Done ([DOpen (p, [[structureName file]])], ts))
                end
-           | ignored122 => Fail ("only `from \"./file.wm\" import *` imports have a SubsetML counterpart", p))
-      | ignored123 => expected ("a declaration", ts)
+           | _ => Fail ("only `from \"./file.wm\" import *` imports have a SubsetML counterpart", p))
+      | _ => expected ("a declaration", ts)
     end
 
   (* `<a, b>` after a type name. *)
@@ -639,8 +652,8 @@ structure WmParse = struct
     if isKey ("<", ts) then
       delimited ("<", fn ts =>
                    case peek ts of
-                     (WName [v], ignored124) => Done ("'" ^ v, advance ts)
-                   | ignored125 => expected ("a type parameter", ts), ",", ">", ts)
+                     (WName [v], _) => Done ("'" ^ v, advance ts)
+                   | _ => expected ("a type parameter", ts), ",", ">", ts)
     else Done ([], ts)
 
   (* `type` bindings: aliases, or datatypes when the body has `|`. *)
@@ -656,18 +669,18 @@ structure WmParse = struct
                  bind (delimited ("<", parseType, ",", ">", advance ts)) (fn args => fn ts =>
                    case args of
                      [single] => Done ((cp, c, SOME single), ts)
-                   | ignored126 => Done ((cp, c, SOME (TyTuple args)), ts))
+                   | _ => Done ((cp, c, SOME (TyTuple args)), ts))
                else Done ((cp, c, NONE), advance ts))
-        | ignored127 => expected ("a constructor", ts)
+        | _ => expected ("a constructor", ts)
       val rec members = fn (acc, ts) =>
         if isKey ("|", ts) then
           bind (constructor (advance ts)) (fn c => fn ts => members (c :: acc, ts))
         else Done (SmlList.rev acc, ts)
       val binding = fn ts =>
         case peek ts of
-          (WName [name], ignored128) =>
+          (WName [name], _) =>
             bind (typeParams (advance ts)) (fn vs => fn ts =>
-              bind (expect ("=", ts)) (fn ignored129 => fn body =>
+              bind (expect ("=", ts)) (fn _ => fn body =>
                 if isKey ("|", body) then
                   bind (members ([], body)) (fn cons => fn ts => Done ((vs, decapitalize name, NONE, cons), ts))
                 else
@@ -678,19 +691,19 @@ structure WmParse = struct
                         bind (members ([first], ts)) (fn cons => fn ts =>
                           Done ((vs, decapitalize name, NONE, cons), ts)))
                     else Done ((vs, decapitalize name, SOME t, []), ts))))
-        | ignored130 => expected ("a type name", ts)
+        | _ => expected ("a type name", ts)
       val rec bindings = fn ts =>
         bind (binding ts) (fn b => fn ts =>
           if isKey ("and", ts) then bind (bindings (advance ts)) (fn bs => fn ts => Done (b :: bs, ts))
           else Done ([b], ts))
     in
       bind (bindings ts) (fn bs => fn ts =>
-        bind (expect (";", ts)) (fn ignored131 => fn ts =>
-          case (SmlList.all (fn (ignored132, ignored133, alias, ignored134) => SmlOption.isSome alias) bs,
-                SmlList.all (fn (ignored135, ignored136, alias, ignored137) => not (SmlOption.isSome alias)) bs) of
-            (true, ignored138) => Done ([DType (p, SmlList.map (fn (vs, n, alias, ignored139) => let val SOME t = alias in (vs, n, t) end) bs)], ts)
-          | (ignored140, true) => Done ([DDatatype (p, SmlList.map (fn (vs, n, ignored141, cons) => (vs, n, cons)) bs)], ts)
-          | ignored142 => Fail ("SubsetML cannot mix type aliases and datatypes in one group", p)))
+        bind (expect (";", ts)) (fn _ => fn ts =>
+          case (SmlList.all (fn (_, _, alias, _) => SmlOption.isSome alias) bs,
+                SmlList.all (fn (_, _, alias, _) => not (SmlOption.isSome alias)) bs) of
+            (true, _) => Done ([DType (p, SmlList.map (fn (vs, n, alias, _) => let val SOME t = alias in (vs, n, t) end) bs)], ts)
+          | (_, true) => Done ([DDatatype (p, SmlList.map (fn (vs, n, _, cons) => (vs, n, cons)) bs)], ts)
+          | _ => Fail ("SubsetML cannot mix type aliases and datatypes in one group", p)))
     end
 
   (* --------------------------------------------------------------------------------------- *)
@@ -707,16 +720,16 @@ structure WmParse = struct
         let
           val rec items = fn (decs, exps, ts) =>
             case peek ts of
-              (WEOF, ignored143) => Done ((SmlList.rev decs, SmlList.rev exps), ts)
-            | ignored144 =>
+              (WEOF, _) => Done ((SmlList.rev decs, SmlList.rev exps), ts)
+            | _ =>
                 if startsDecl ts orelse isKey ("from", ts)
                 then bind (parseDecl ts) (fn ds => fn ts => items (SmlList.revAppend (ds, decs), exps, ts))
                 else
                   bind (parseExp ts) (fn e => fn ts =>
-                    bind (expect (";", ts)) (fn ignored145 => fn ts => items (DVal (0.0, [], [(PId (0.0, ([], "it")), e)], []) :: decs, exps, ts)))
+                    bind (expect (";", ts)) (fn _ => fn ts => items (DVal (0.0, [], [(PId (0.0, ([], "it")), e)], []) :: decs, exps, ts)))
         in
           case items ([], [], ts) of
-            Done ((decs, exps), ignored146) => Module (decs, exps, comments)
+            Done ((decs, exps), _) => Module (decs, exps, comments)
           | Fail (message, pos) => ParseError (message, pos)
         end
 

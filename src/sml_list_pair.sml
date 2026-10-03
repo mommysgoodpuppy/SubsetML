@@ -1,3 +1,7 @@
+(* @subsetml
+from "./sml_list.sml" import * as SmlList;
+*)
+
 (* Portable paired-list algorithms for the custom SubsetML Basis.
    Current signatures follow their SML origins and stop at the shorter list.
    Checked variants and Result-based APIs remain to be designed (docs/basis.md). *)

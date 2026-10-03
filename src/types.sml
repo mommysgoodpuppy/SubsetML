@@ -1,3 +1,11 @@
+(* @subsetml
+from "./subset_list.sml" import * as SubsetList;
+from "./compiler_text.sml" import * as CompilerText;
+from "./subset_char.sml" import * as SubsetChar;
+from "./sml_list.sml" import * as SmlList;
+from "./subset_result.sml" import * as SubsetResult;
+*)
+
 (* Semantic types (Definition §4.2), as the type checker represents them. *)
 structure Types = struct
 

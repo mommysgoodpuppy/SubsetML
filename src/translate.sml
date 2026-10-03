@@ -1,3 +1,19 @@
+(* @subsetml
+from "./syntax.sml" import * as Syntax;
+from "./sml_list.sml" import * as SmlList;
+from "./compiler_text.sml" import * as CompilerText;
+from "./subset_char.sml" import * as SubsetChar;
+from "./doc.sml" import * as Doc;
+from "./wm_print.sml" import * as WmPrint;
+from "./unify.sml" import * as Unify;
+from "./types.sml" import * as Types;
+from "./elab.sml" import * as Elab;
+from "./basis.sml" import * as Basis;
+from "./wm_parse.sml" import * as WmParse;
+from "./wm_lexer.sml" import * as WmLexer;
+from "./sml_print.sml" import * as SmlPrint;
+*)
+
 (* Whole-file translation. By spec M1 a file has at most one structure, so each SubsetML file
    becomes one Workman module: `structure FooBar` in foo_bar.sml becomes foo_bar.wm, and the
    file's other top-level declarations join the module. *)
@@ -10,32 +26,32 @@ structure Translate = struct
 
   val head = fn
       [] => []
-    | q :: ignored1 => [q]
+    | q :: _ => [q]
 
   val concatMap = fn (f, xs) => SmlList.concat (SmlList.map f xs)
 
   val rec tyQuals = fn
-      TyVar ignored2 => []
-    | TyCon (args, (qs, ignored3)) => head qs @ concatMap (tyQuals, args)
+      TyVar _ => []
+    | TyCon (args, (qs, _)) => head qs @ concatMap (tyQuals, args)
     | TyTuple ts => concatMap (tyQuals, ts)
     | TyArrow (a, b) => tyQuals a @ tyQuals b
-    | TyRecord fields => concatMap (fn (ignored4, t) => tyQuals t, fields)
+    | TyRecord fields => concatMap (fn (_, t) => tyQuals t, fields)
 
   val rec patQuals = fn
       PWild => []
-    | PScon (ignored5Field0, ignored5Field1) => []
-    | PId (ignored6, (qs, ignored7)) => head qs
-    | PRecord (ignored8, fields) => concatMap (fn (ignored9, p) => patQuals p, fields)
+    | PScon (_, _) => []
+    | PId (_, (qs, _)) => head qs
+    | PRecord (_, fields) => concatMap (fn (_, p) => patQuals p, fields)
     | PTuple ps => concatMap (patQuals, ps)
     | PList ps => concatMap (patQuals, ps)
-    | PApp (ignored10, (qs, ignored11), p) => head qs @ patQuals p
+    | PApp (_, (qs, _), p) => head qs @ patQuals p
     | PTyped (p, t) => patQuals p @ tyQuals t
 
   val rec expQuals = fn
-      EScon (ignored12Field0, ignored12Field1) => []
-    | EId (ignored13, (qs, ignored14)) => head qs
-    | ERecord (ignored15, fields) => concatMap (fn (ignored16, e) => expQuals e, fields)
-    | ESelect (ignored17Field0, ignored17Field1) => []
+      EScon (_, _) => []
+    | EId (_, (qs, _)) => head qs
+    | ERecord (_, fields) => concatMap (fn (_, e) => expQuals e, fields)
+    | ESelect (_, _) => []
     | ETuple es => concatMap (expQuals, es)
     | EList es => concatMap (expQuals, es)
     | ESeq es => concatMap (expQuals, es)
@@ -51,18 +67,18 @@ structure Translate = struct
   and ruleQuals = fn rules => concatMap (fn (p, e) => patQuals p @ expQuals e, rules)
 
   and decQuals = fn
-      DVal (ignored18, ignored19, plain, recs) => ruleQuals (plain @ recs)
-    | DType (ignored20, binds) => concatMap (fn (ignored21, ignored22, t) => tyQuals t, binds)
-    | DDatatype (ignored23, binds) =>
-        concatMap (fn (ignored24, ignored25, cons) =>
-                     concatMap (fn (ignored26, ignored27, NONE) => [] | (ignored28, ignored29, SOME t) => tyQuals t, cons), binds)
-    | DOpen (ignored30, ids) => concatMap (head, ids)
+      DVal (_, _, plain, recs) => ruleQuals (plain @ recs)
+    | DType (_, binds) => concatMap (fn (_, _, t) => tyQuals t, binds)
+    | DDatatype (_, binds) =>
+        concatMap (fn (_, _, cons) =>
+                     concatMap (fn (_, _, NONE) => [] | (_, _, SOME t) => tyQuals t, cons), binds)
+    | DOpen (_, ids) => concatMap (head, ids)
 
   val decPos = fn
-      DVal (p, ignored31, ignored32, ignored33) => p
-    | DType (p, ignored34) => p
-    | DDatatype (p, ignored35) => p
-    | DOpen (p, ignored36) => p
+      DVal (p, _, _, _) => p
+    | DType (p, _) => p
+    | DDatatype (p, _) => p
+    | DOpen (p, _) => p
 
   (* --------------------------------------------------------------------------------------- *)
   (* Dropping a qualifier. Outside its structure, `Main.main` refers to a binding of the same
@@ -71,11 +87,11 @@ structure Translate = struct
   val unqualify = fn (self, id) =>
     case id of
       (q :: rest, x) => if q = self then (rest, x) else id
-    | ignored37 => id
+    | _ => id
 
   val rec tyStrip = fn (self, t) =>
     case t of
-      TyVar ignored38 => t
+      TyVar _ => t
     | TyCon (args, id) => TyCon (SmlList.map (fn a => tyStrip (self, a)) args, unqualify (self, id))
     | TyTuple ts => TyTuple (SmlList.map (fn a => tyStrip (self, a)) ts)
     | TyArrow (a, b) => TyArrow (tyStrip (self, a), tyStrip (self, b))
@@ -90,7 +106,7 @@ structure Translate = struct
       | PList ps => PList (SmlList.map go ps)
       | PApp (pos, id, q) => PApp (pos, unqualify (self, id), go q)
       | PTyped (q, t) => PTyped (go q, tyStrip (self, t))
-      | ignored39 => p
+      | _ => p
     end
 
   val rec expStrip = fn (self, e) =>
@@ -112,7 +128,7 @@ structure Translate = struct
       | EIf (c, a, b) => EIf (go c, go a, go b)
       | ECase (x, rs) => ECase (go x, rules rs)
       | EFn rs => EFn (rules rs)
-      | ignored40 => e
+      | _ => e
     end
 
   and decStrip = fn (self, d) =>
@@ -124,7 +140,7 @@ structure Translate = struct
           DDatatype (pos, SmlList.map (fn (vs, n, cons) =>
             (vs, n, SmlList.map (fn (cp, c, NONE) => (cp, c, NONE)
                                | (cp, c, SOME t) => (cp, c, SOME (tyStrip (self, t)))) cons)) binds)
-      | DOpen (ignored41Field0, ignored41Field1) => d
+      | DOpen (_, _) => d
     end
 
   (* --------------------------------------------------------------------------------------- *)
@@ -139,18 +155,18 @@ structure Translate = struct
   (* Every identifier written in a phrase, with the nearest known position. *)
   val rec patNames = fn (pos, p) =>
     case p of
-      PId (q, (ignored42, x)) => [(q, x)]
+      PId (q, (_, x)) => [(q, x)]
     | PRecord (q, fields) => concatMap (fn (l, f) => (q, l) :: patNames (q, f), fields)
     | PTuple ps => concatMap (fn f => patNames (pos, f), ps)
     | PList ps => concatMap (fn f => patNames (pos, f), ps)
-    | PApp (q, (ignored43, c), f) => (q, c) :: patNames (q, f)
-    | PTyped (f, ignored44) => patNames (pos, f)
-    | ignored45 => []
+    | PApp (q, (_, c), f) => (q, c) :: patNames (q, f)
+    | PTyped (f, _) => patNames (pos, f)
+    | _ => []
 
   val rec expNames = fn (pos, e) =>
     let val go = fn x => expNames (pos, x) in
       case e of
-        EId (q, (ignored46, x)) => [(q, x)]
+        EId (q, (_, x)) => [(q, x)]
       | ERecord (q, fields) => concatMap (fn (l, x) => (q, l) :: expNames (q, x), fields)
       | ESelect (q, l) => [(q, l)]
       | ETuple es => concatMap (go, es)
@@ -158,23 +174,23 @@ structure Translate = struct
       | ESeq es => concatMap (go, es)
       | ELet (ds, es) => concatMap (decNames, ds) @ concatMap (go, es)
       | EApp (f, a) => go f @ go a
-      | ETyped (x, ignored47) => go x
+      | ETyped (x, _) => go x
       | EAndalso (a, b) => go a @ go b
       | EOrelse (a, b) => go a @ go b
       | EIf (c, a, b) => go c @ go a @ go b
       | ECase (x, rules) => go x @ ruleNames (pos, rules)
       | EFn rules => ruleNames (pos, rules)
-      | EScon (ignored48Field0, ignored48Field1) => []
+      | EScon (_, _) => []
     end
 
   and ruleNames = fn (pos, rules) => concatMap (fn (p, e) => patNames (pos, p) @ expNames (pos, e), rules)
 
   and decNames = fn
-      DVal (pos, ignored49, plain, recs) => ruleNames (pos, plain @ recs)
-    | DType (pos, binds) => SmlList.map (fn (ignored50, tycon, ignored51) => (pos, tycon)) binds
+      DVal (pos, _, plain, recs) => ruleNames (pos, plain @ recs)
+    | DType (pos, binds) => SmlList.map (fn (_, tycon, _) => (pos, tycon)) binds
     | DDatatype (pos, binds) =>
-        concatMap (fn (ignored52, tycon, cons) => (pos, tycon) :: SmlList.map (fn (cp, c, ignored53) => (cp, c)) cons, binds)
-    | DOpen (ignored54Field0, ignored54Field1) => []
+        concatMap (fn (_, tycon, cons) => (pos, tycon) :: SmlList.map (fn (cp, c, _) => (cp, c)) cons, binds)
+    | DOpen (_, _) => []
 
   (* Warnings for one module's declarations and expressions. *)
   val conventionWarnings = fn (decs, exps) =>
@@ -185,17 +201,17 @@ structure Translate = struct
         else []
       val casing = fn
           DType (pos, binds) =>
-            concatMap (fn (ignored55, tycon, ignored56) =>
+            concatMap (fn (_, tycon, _) =>
                          if isUpper tycon then [(pos, "type `" ^ tycon ^ "` should start lowercase")] else [],
                        binds)
         | DDatatype (pos, binds) =>
-            concatMap (fn (ignored57, tycon, cons) =>
+            concatMap (fn (_, tycon, cons) =>
                          (if isUpper tycon then [(pos, "type `" ^ tycon ^ "` should start lowercase")] else [])
-                         @ concatMap (fn (cp, c, ignored58) =>
+                         @ concatMap (fn (cp, c, _) =>
                                         if isUpper c then []
                                         else [(cp, "constructor `" ^ c ^ "` should start uppercase")], cons),
                        binds)
-        | ignored59 => []
+        | _ => []
     in
       concatMap (keyword, concatMap (decNames, decs) @ concatMap (fn e => expNames (0.0, e), exps))
       @ concatMap (casing, decs)
@@ -212,7 +228,7 @@ structure Translate = struct
     let
       val file =
         case SmlList.rev (CompilerText.fields (path, fn c => c = #"/")) of
-          last :: ignored60 => last
+          last :: _ => last
         | [] => path
     in
       if CompilerText.isSuffix (file, ".sml") then CompilerText.slice (file, 0.0, CompilerText.size file - 4.0) else file
@@ -221,8 +237,8 @@ structure Translate = struct
   (* The file's structure name, or "" when it has none. *)
   val structureOf = fn prog =>
     concatMap (fn
-        TopDecs sds => concatMap (fn SStructure (ignored61, binds) => SmlList.map (fn (name, ignored62) => name) binds | SDec ignored63 => [], sds)
-      | TopExp (ignored64Field0, ignored64Field1) => [], prog)
+        TopDecs sds => concatMap (fn SStructure (_, binds) => SmlList.map (fn (name, _) => name) binds | SDec _ => [], sds)
+      | TopExp (_, _) => [], prog)
 
   datatype result =
       Output of string * string * (pos * string) list   (* file name, contents, warnings *)
@@ -234,13 +250,13 @@ structure Translate = struct
     let
       val self =
         case structureOf prog of
-          name :: ignored65 => name
+          name :: _ => name
         | [] => ""
       val phrases =
         concatMap (fn
             TopDecs sds =>
               concatMap (fn
-                  SStructure (ignored66, binds) => concatMap (fn (ignored67, ds) => SmlList.map (fn d => TopDecs [SDec d]) ds, binds)
+                  SStructure (_, binds) => concatMap (fn (_, ds) => SmlList.map (fn d => TopDecs [SDec d]) ds, binds)
                 | SDec d => [TopDecs [SDec (decStrip (self, d))]], sds)
           | TopExp (p, e) => [TopDecs [SDec
               (DVal (p, [], [(PId (p, ([], "it")), expStrip (self, e))], []))]], prog)
@@ -250,9 +266,9 @@ structure Translate = struct
 
   (* The declarations and expressions of a module's phrases. *)
   val parts = fn phrases =>
-    (concatMap (fn TopDecs sds => concatMap (fn SDec d => [d] | SStructure (ignored68Field0, ignored68Field1) => [], sds)
-                 | TopExp (ignored69Field0, ignored69Field1) => [], phrases),
-     concatMap (fn TopExp (ignored70, e) => [e] | TopDecs ignored71 => [], phrases))
+    (concatMap (fn TopDecs sds => concatMap (fn SDec d => [d] | SStructure (_, _) => [], sds)
+                 | TopExp (_, _) => [], phrases),
+     concatMap (fn TopExp (_, e) => [e] | TopDecs _ => [], phrases))
 
   (* Translates one parsed file. `structures` names every structure of the program. *)
   val toWm = fn (structures, path, src, prog, comments) =>
@@ -262,8 +278,8 @@ structure Translate = struct
       val used = distinct (concatMap (decQuals, decs) @ concatMap (expQuals, exps))
       val start =
         case prog of
-          TopDecs (SStructure (p, ignored72) :: ignored73) :: ignored74 => p
-        | ignored75 => 0.0
+          TopDecs (SStructure (p, _) :: _) :: _ => p
+        | _ => 0.0
       val imports =
         SmlList.map (fn q => Doc.atom (start, "from \"./" ^ WmPrint.fileName q ^ "\" import * as " ^ q ^ ";"))
           (SmlList.filter (fn q => q <> self andalso SmlList.exists (fn s => s = q) structures) used)
@@ -271,7 +287,7 @@ structure Translate = struct
       val body =
         case imports of
           [] => doc
-        | ignored76 => Doc.stack [Doc.stack imports, Doc.text "", doc]
+        | _ => Doc.stack [Doc.stack imports, Doc.text "", doc]
       val expected = WmPrint.fileName self
     in
       if self <> "" andalso expected <> baseName path ^ ".wm" then
@@ -301,7 +317,7 @@ structure Translate = struct
          | EIf (c, a, b) => EIf (go c, go a, go b)
          | ECase (x, rs) => ECase (go x, rules rs)
          | EFn rs => EFn (rules rs)
-         | ignored77 => e)
+         | _ => e)
     end
 
   and mapDec = fn (f, d) =>
@@ -310,7 +326,7 @@ structure Translate = struct
         let val rules = fn rs => SmlList.map (fn (pat, e) => (pat, mapExp (f, e))) rs in
           DVal (p, vs, rules plain, rules recs)
         end
-    | ignored78 => d
+    | _ => d
 
   val mapProgram = fn (f, prog) =>
     SmlList.map (fn
@@ -324,19 +340,19 @@ structure Translate = struct
      rewritten; a second, strict elaboration rejects every remaining invalid SML equality. *)
   val realEquality = fn (st, prog) =>
     let
-      val Unify.State (ignored79, ignored80, ignored81, ignored82, sites) = st
-      val positions = SmlList.map (fn (p, ignored83) => p)
-        (SmlList.filter (fn (ignored84, t) =>
+      val Unify.State (_, _, _, _, sites) = st
+      val positions = SmlList.map (fn (p, _) => p)
+        (SmlList.filter (fn (_, t) =>
            case Unify.prune (st, t) of
              Types.TCon (n, []) => Unify.sameName (n, Types.realName)
-           | ignored85 => false) (case sites of SOME xs => xs | NONE => []))
+           | _ => false) (case sites of SOME xs => xs | NONE => []))
       val rewrite = fn e =>
         case e of
           EApp (EId (p, ([], opr)), a) =>
             if (opr = "=" orelse opr = "<>") andalso SmlList.exists (fn q => Real.== (p, q)) positions
             then EApp (EId (p, (["Real"], if opr = "=" then "==" else "!=")), a)
             else e
-        | ignored86 => e
+        | _ => e
     in
       mapProgram (rewrite, prog)
     end
@@ -345,17 +361,17 @@ structure Translate = struct
      recovery starts with its dependency closure, so unrelated input files remain independent. *)
   val recover = fn (modules, target) =>
     let
-      val nameOfModule = fn (ignored87, ignored88, prog, ignored89) =>
-        case structureOf prog of n :: ignored90 => n | [] => ""
+      val nameOfModule = fn (_, _, prog, _) =>
+        case structureOf prog of n :: _ => n | [] => ""
       val rec decDeps = fn d =>
         case d of
-          DOpen (ignored91, ids) => concatMap (head, ids)
-        | ignored92 => decQuals d
-      val deps = fn (ignored93, ignored94, prog, ignored95) =>
+          DOpen (_, ids) => concatMap (head, ids)
+        | _ => decQuals d
+      val deps = fn (_, _, prog, _) =>
         distinct (concatMap (fn
             TopDecs sds => concatMap (fn SDec d => decDeps d
-              | SStructure (ignored96, bs) => concatMap (fn (ignored97, ds) => concatMap (decDeps, ds), bs), sds)
-          | TopExp (ignored98, e) => expQuals e, prog))
+              | SStructure (_, bs) => concatMap (fn (_, ds) => concatMap (decDeps, ds), bs), sds)
+          | TopExp (_, e) => expQuals e, prog))
       val rec order = fn (item, visiting, done, acc) =>
         let val name = nameOfModule item in
           if SmlList.exists (fn n => n = name) done then Unify.Ok ((done, acc), Unify.initial)
@@ -368,27 +384,27 @@ structure Translate = struct
               val rec walk = fn
                   ([], done, acc) => Unify.Ok ((name :: done, acc @ [item]), Unify.initial)
                 | (m :: rest, done, acc) =>
-                    Unify.bind (order (m, name :: visiting, done, acc)) (fn (done, acc) => fn ignored99 =>
+                    Unify.bind (order (m, name :: visiting, done, acc)) (fn (done, acc) => fn _ =>
                       walk (rest, done, acc))
             in walk (needed, done, acc) end)
         end
       val rec elaborate = fn
-          (ignored100, [], st, acc) => Unify.Ok (acc, st)
+          (_, [], st, acc) => Unify.Ok (acc, st)
         | (env, (path, src, prog, comments) :: rest, st, acc) =>
-            let val Unify.State (vars, next, sels, recs, ignored101) = st in
+            let val Unify.State (vars, next, sels, recs, _) = st in
               Unify.bind (Elab.program (env, prog, Unify.State (vars, next, sels, recs, SOME [])))
                 (fn env => fn st => elaborate (env, rest, st,
                   acc @ [(path, src, realEquality (st, prog), comments)]))
             end
       val rec strict = fn
-          (ignored102, [], st) => Unify.Ok ((), st)
-        | (env, (ignored103, ignored104, prog, ignored105) :: rest, st) =>
+          (_, [], st) => Unify.Ok ((), st)
+        | (env, (_, _, prog, _) :: rest, st) =>
             Unify.bind (Elab.program (env, prog, st)) (fn env => fn st => strict (env, rest, st))
     in
-      Unify.bind (order (target, [], [], [])) (fn (ignored106, ordered) => fn ignored107 =>
-        Unify.bind Basis.initial (fn basis => fn ignored108 =>
-          Unify.bind (elaborate (basis, ordered, Unify.lenient, [])) (fn rewritten => fn ignored109 =>
-            Unify.bind (strict (basis, rewritten, Unify.initial)) (fn ignored110 => fn st =>
+      Unify.bind (order (target, [], [], [])) (fn (_, ordered) => fn _ =>
+        Unify.bind Basis.initial (fn basis => fn _ =>
+          Unify.bind (elaborate (basis, ordered, Unify.lenient, [])) (fn rewritten => fn _ =>
+            Unify.bind (strict (basis, rewritten, Unify.initial)) (fn _ => fn st =>
               case SmlList.find (fn m => nameOfModule m = nameOfModule target) rewritten of
                 SOME m => Unify.Ok (m, st)
               | NONE => Unify.Err ("missing translated module", 0.0)))))
@@ -402,8 +418,8 @@ structure Translate = struct
          between an import and the first declaration stay inside the structure. *)
       val first =
         case WmLexer.lex src of
-          WmLexer.Tokens ((WmLexer.WKey "from", p) :: ignored111, ignored112) => SOME p
-        | ignored113 => (case decs of d :: ignored114 => SOME (decPos d) | [] => NONE)
+          WmLexer.Tokens ((WmLexer.WKey "from", p) :: _, _) => SOME p
+        | _ => (case decs of d :: _ => SOME (decPos d) | [] => NONE)
       val structureLine =
         case first of
           SOME p => Doc.atom (p, "structure " ^ name ^ " = struct")
@@ -416,7 +432,7 @@ structure Translate = struct
       val doc =
         case expDocs of
           [] => structureDoc
-        | ignored115 => Doc.stack (Doc.cat (structureDoc, Doc.text ";") :: expDocs)
+        | _ => Doc.stack (Doc.cat (structureDoc, Doc.text ";") :: expDocs)
     in
       Doc.render (src, comments, SmlPrint.commentStyle, doc)
     end

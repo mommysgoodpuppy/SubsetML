@@ -1,6 +1,12 @@
-(* Checker/round-trip declarations for the six host operations.
+(* @subsetml
+from "./subset_result.sml" import * as SubsetResult;
+*)
+
+(* Checker/round-trip declarations for the CLI and filesystem identity operations.
    Native builds and staged Workman graphs replace this module with their adapters. *)
 structure SubsetHost = struct
+  val canonicalPath = fn (path : string) =>
+    (SubsetResult.Err "host adapter not staged" : (string, string) SubsetResult.result)
   val readFile = fn (path : string) =>
     (SubsetResult.Err "host adapter not staged" : (string, string) SubsetResult.result)
   val writeFile = fn (data : string, path : string) =>

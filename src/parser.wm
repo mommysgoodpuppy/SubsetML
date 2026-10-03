@@ -1,3 +1,16 @@
+/* @subsetml
+from "./syntax.sml" import * as Syntax;
+from "./lexer.sml" import * as Lexer;
+from "./sml_option.sml" import * as SmlOption;
+from "./subset_string.sml" import * as SubsetString;
+from "./compiler_text.sml" import * as CompilerText;
+from "./subset_char.sml" import * as SubsetChar;
+from "./subset_list.sml" import * as SubsetList;
+from "./sml_list.sml" import * as SmlList;
+from "./subset_order.sml" import * as SubsetOrder;
+from "./subset_result.sml" import * as SubsetResult;
+*/
+
 /* Parsing (docs/spec.md §3, §4, §7, §8; Definition §2, §3, Appendix B).
 
    SubsetML has no exceptions, so every parsing function returns a `res`: either the parsed value
@@ -256,7 +269,7 @@ let rec climb = (make, lhs, rest, minPrec) => {
       if (precedence(opr) < minPrec) { (lhs, rest) } else {
         let rec absorb = (rhs, more) => {
           match(more) {
-            [(Var(opr2), Var(ignoredPos), Var(ignoredOperand)), ..ignoredRest] => {
+            [(Var(opr2), _, _), .._] => {
               // Precedences are finite constants, so Unordered cannot occur.
               match(SubsetOrder.compareReal(precedence(opr2), precedence(opr)), rightAssoc(opr2)) {
                 (SubsetResult.Ok(SubsetOrder.Greater), _) => { absorb(climb(make, rhs, more, precedence(opr) + 1)) },
@@ -297,7 +310,7 @@ let resolve = (group, make, items, start) => {
           }
         }
       },
-      [Operand(ignoredOperand), ..ignoredRest] => { Fail("internal error in infix resolution", start) }
+      [Operand(_), .._] => { Fail("internal error in infix resolution", start) }
     }
   };
   match(operands(items, [])) {
@@ -339,7 +352,7 @@ let infixPat = (opr, p, l, r) => { PApp(p, ([], opr), PTuple([l, r])) };
 let startsTyCon = (ts) => {
   match(peek(ts)) {
     (TId(s), _) => { if (isAlnumId(s)) { !isInfix(s) } else { false } },
-    (TLong(ignoredQualifiers, ignoredName), Var(ignoredPos)) => { true },
+    (TLong(_, _), _) => { true },
     _ => { false }
   }
 };
@@ -444,8 +457,8 @@ let startsAtPat = (ts) => {
       if (if (if (k == "_") { true } else { k == "(" }) { true } else { k == "[" }) { true } else { k == "{" }
     },
     (TId(s), _) => { !isInfix(s) },
-    (TLong(ignoredQualifiers, ignoredName), Var(ignoredPos)) => { true },
-    (TScon(ignoredConstant), Var(ignoredPos)) => { true },
+    (TLong(_, _), _) => { true },
+    (TScon(_), _) => { true },
     _ => { false }
   }
 };
@@ -480,7 +493,7 @@ and parseInfixPat = (ts) => {
   let group = match {
     [x] => { Done(x, []) },
     [PId(p, c), arg] => { Done(PApp(p, c, arg), []) },
-    [ignoredFirst, ignoredSecond] => {
+    [_, _] => {
       Fail("only a constructor can be applied in a pattern", start)
     },
     _ => { Fail("too many atomic patterns in a row", start) }
@@ -567,8 +580,8 @@ let startsAtExp = (ts) => {
       if (if (if (if (k == "(") { true } else { k == "[" }) { true } else { k == "{" }) { true } else { k == "#" }) { true } else { k == "let" }
     },
     (TId(s), _) => { !isInfix(s) },
-    (TLong(ignoredQualifiers, ignoredName), Var(ignoredPos)) => { true },
-    (TScon(ignoredConstant), Var(ignoredPos)) => { true },
+    (TLong(_, _), _) => { true },
+    (TScon(_), _) => { true },
     _ => { false }
   }
 };
@@ -775,10 +788,7 @@ and parseMatch = (ts) => {
 and parseTyVarSeq = (ts) => {
   match(peek(ts), peek(advance(ts))) {
     ((TTyVar(v), _), _) => { Done([v], advance(ts)) },
-    (
-      (TKey("("), Var(ignoredFirstPos)),
-      (TTyVar(ignoredVariable), Var(ignoredSecondPos))
-    ) => {
+    ((TKey("("), _), (TTyVar(_), _)) => {
       let tyvar = (ts) => {
         match(peek(ts)) {
           (TTyVar(v), _) => { Done(v, advance(ts)) },
@@ -823,7 +833,7 @@ and parseDec = (ts) => {
               bind(longStrId(ts))((id) => (ts) => { more([id, ..acc], ts) })
             } else { Done(SmlList.rev(acc), ts) }
           },
-          (TLong(ignoredQualifiers, ignoredName), Var(ignoredPos)) => {
+          (TLong(_, _), _) => {
             bind(longStrId(ts))((id) => (ts) => { more([id, ..acc], ts) })
           },
           _ => { Done(SmlList.rev(acc), ts) }
@@ -980,32 +990,35 @@ let checkFile = (prog) => {
         SDec(_) => { [] }
       })(sds))
     },
-    TopExp(ignoredPos, ignoredExpression) => { [] }
+    TopExp(_, _) => { [] }
   })(prog));
   match(structures) {
-    [ignoredFirst, second, ..ignoredRest] => { Some("a file may contain only one structure", second) },
+    [_, second, .._] => { Some("a file may contain only one structure", second) },
     _ => { None }
   }
 };
 
 type Result = Program<List<Topdec>, List<Comment>> | ParseError<String, Pos>;
 
+// A separate token entry point lets procedures preserve lexical vs parse failures.
+let parseTokens = (ts, comments) => {
+  match(parseProgram(ts)) {
+    Done(prog, _) => {
+      match(checkFile(prog)) {
+        None => { Program(prog, comments) },
+        Some(error) => {
+          let (message, offset) = error;
+          ParseError(message, offset)
+        }
+      }
+    },
+    Fail(message, offset) => { ParseError(message, offset) }
+  }
+};
+
 let parse = (src) => {
   match(Lexer.lex(src)) {
     LexError(message, offset) => { ParseError(message, offset) },
-    Tokens(ts, comments) => {
-      match(parseProgram(ts)) {
-        Done(prog, _) => {
-          match(checkFile(prog)) {
-            None => { Program(prog, comments) },
-            Some(error) => {
-              let (message, offset) = error;
-              ParseError(message, offset)
-            }
-          }
-        },
-        Fail(message, offset) => { ParseError(message, offset) }
-      }
-    }
+    Tokens(ts, comments) => { parseTokens(ts, comments) }
   }
 };

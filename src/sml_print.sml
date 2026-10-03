@@ -1,3 +1,13 @@
+(* @subsetml
+from "./syntax.sml" import * as Syntax;
+from "./doc.sml" import * as Doc;
+from "./subset_string.sml" import * as SubsetString;
+from "./subset_list.sml" import * as SubsetList;
+from "./compiler_text.sml" import * as CompilerText;
+from "./sml_list.sml" import * as SmlList;
+from "./parser.sml" import * as Parser;
+*)
+
 (* Prints abstract syntax as SubsetML source. Used for the wm-to-SML direction and for the
    constructs that have no Workman form. Parentheses follow the precedence of the parser. *)
 structure SmlPrint = struct
@@ -61,9 +71,9 @@ structure SmlPrint = struct
 
   (* An expression whose last part is a match, which would capture a following `|`. *)
   val rec endsInMatch = fn
-      ECase (ignoredExpression, ignoredRules) => true
+      ECase (_, _) => true
     | EFn _ => true
-    | EIf (ignoredCondition, ignoredThen, b) => endsInMatch b
+    | EIf (_, _, b) => endsInMatch b
     | _ => false
 
   val tyvarseq = fn
@@ -107,7 +117,7 @@ structure SmlPrint = struct
           (* A nested `if` in the else branch keeps its parentheses (spec C1). *)
           val elseDoc =
             case b of
-              EIf (ignoredCondition, ignoredThen, ignoredElse) => parenAt (1.0, expL b)
+              EIf (_, _, _) => parenAt (1.0, expL b)
             | _ => exp b
           val oneLine = cats [text "if ", exp c, text " then ", exp a, text " else ", elseDoc]
         in

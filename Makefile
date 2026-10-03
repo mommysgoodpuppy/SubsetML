@@ -6,7 +6,7 @@ CUSTOM_BASIS = src/subset_result.sml src/subset_host.sml src/subset_option.sml s
 SRCS = $(TEXT_HOST) $(CUSTOM_BASIS) src/sml_list.sml src/sml_list_pair.sml src/sml_option.sml src/syntax.sml src/compiler_text.sml src/lexer.sml src/parser.sml src/print.sml src/int_map.sml src/types.sml \
        src/unify.sml src/env.sml src/elab.sml src/basis.sml src/doc.sml \
        src/sml_print.sml src/wm_print.sml src/wm_lexer.sml \
-       src/wm_parse.sml src/normalize.sml src/translate.sml src/main.sml
+       src/wm_parse.sml src/normalize.sml src/translate.sml src/module_imports.sml src/module_project.sml src/main.sml
 
 bin/subsetml: $(SRCS) src/subsetml.mlb lib/num.sml lib/subset_text_host.sml lib/subset_host.sml
 	mkdir -p bin
@@ -16,9 +16,9 @@ bin/subsetml: $(SRCS) src/subsetml.mlb lib/num.sml lib/subset_text_host.sml lib/
 selfcheck: bin/subsetml
 	bin/subsetml check $(SRCS)
 
-# Run the generated compiler against its complete source graph.
+# Run the generated compiler through its explicit entry-file import graph.
 wm-selfcheck: wm
-	wm run src/main.wm -- check $(SRCS)
+	wm run src/main.wm -- check src/main.sml
 
 test: bin/subsetml selfcheck
 	sh tests/run.sh
@@ -35,6 +35,7 @@ test: bin/subsetml selfcheck
 	sh tests/kernel-portable.sh
 	sh tests/io-portable.sh
 	sh tests/cli-portable.sh
+	sh tests/module-loading.sh
 
 clean:
 	rm -rf bin build

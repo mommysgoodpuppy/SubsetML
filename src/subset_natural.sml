@@ -1,3 +1,9 @@
+(* @subsetml
+from "./subset_list.sml" import * as SubsetList;
+from "./subset_result.sml" import * as SubsetResult;
+from "./subset_string.sml" import * as SubsetString;
+*)
+
 (* Exact nonnegative integer arithmetic over the current real-number profile. *)
 structure SubsetNatural = struct
   datatype error = InvalidNatural | InvalidDivisor

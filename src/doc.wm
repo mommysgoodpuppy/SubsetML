@@ -1,3 +1,16 @@
+/* @subsetml
+from "./syntax.sml" import * as Syntax;
+from "./sml_list.sml" import * as SmlList;
+from "./sml_option.sml" import * as SmlOption;
+from "./compiler_text.sml" import * as CompilerText;
+from "./subset_list.sml" import * as SubsetList;
+from "./subset_bytes.sml" import * as SubsetBytes;
+from "./subset_char.sml" import * as SubsetChar;
+from "./subset_result.sml" import * as SubsetResult;
+from "./subset_source.sml" import * as SubsetSource;
+from "./subset_string.sml" import * as SubsetString;
+*/
+
 /* Layout shared by the source printers.
 
    A document is a non-empty list of lines. Each line has an indentation relative to the
@@ -62,7 +75,7 @@ let stack = (ds) => { SmlList.concat(ds) };
 
 // The text of a one-line document.
 let flat = match {
-  [(Var(ignoredIndent), Var(t), Var(ignoredTag))] => { Some(t) },
+  [(_, Var(t), _)] => { Some(t) },
   _ => { None }
 };
 
@@ -194,7 +207,7 @@ let render = (src, comments, style, lines) => {
   let rec flush = (acc, lastTag, ind, limit, cs) => {
     match(cs) {
       [c, ..rest] => {
-        let (p, ignoredBody, ignoredTrailing) = c;
+        let (p, _, _) = c;
         if (p < limit) {
           flush(emitComment(acc, lastTag, ind, c), p, ind, limit, rest)
         } else { (acc, lastTag, cs) }
@@ -215,7 +228,7 @@ let render = (src, comments, style, lines) => {
   let rec go = (ls, acc, lastTag, cs, seenCode) => {
     match(ls) {
       [] => {
-        let (acc', ignoredTag, ignoredComments) = flush(acc, lastTag, 0, SubsetSource.length(src) + 1, cs);
+        let (acc', _, _) = flush(acc, lastTag, 0, SubsetSource.length(src) + 1, cs);
         acc'
       },
       [(Var(ind), Var(t), None), ..rest] => {

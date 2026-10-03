@@ -1,4 +1,5 @@
-(* Custom Basis Result. Data comes first; errors are ordinary datatype values. *)
+(* Custom Basis Result. Core operations take data first; procedure adapters are curried.
+   Errors are ordinary datatype values. *)
 structure SubsetResult = struct
 
   datatype ('a, 'e) result = Ok of 'a | Err of 'e
@@ -11,6 +12,12 @@ structure SubsetResult = struct
 
   val andThen = fn (value, f) =>
     case value of Ok x => f x | Err error => Err error
+
+  (* Procedure adapters are curried so a stage can be named before it is called. *)
+  val via = fn transform => fn wrapped => andThen (wrapped, transform)
+
+  val viaError = fn inject => fn transform => fn wrapped =>
+    andThen (wrapped, fn value => mapError (transform value, inject))
 
   val getOr = fn (value, fallback) =>
     case value of Ok x => x | Err error => fallback

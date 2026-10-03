@@ -1,3 +1,15 @@
+/* @subsetml
+from "./types.sml" import * as Types;
+from "./env.sml" import * as Env;
+from "./subset_result.sml" import * as SubsetResult;
+from "./subset_list.sml" import * as SubsetList;
+from "./lexer.sml" import * as Lexer;
+from "./unify.sml" import * as Unify;
+from "./parser.sml" import * as Parser;
+from "./elab.sml" import * as Elab;
+from "./sml_list.sml" import * as SmlList;
+*/
+
 /* Bootstrap compatibility environment used to check and build the compiler today.
    This table still contains SML-shaped host interfaces; it is not the custom SubsetML Basis
    API and does not imply support for the SML Basis Library. The custom library will choose
@@ -294,19 +306,17 @@ let special = [
 // The scheme of a type written in SubsetML syntax, or the reason it is malformed.
 let scheme = (env, text) => {
   match(Lexer.lex(text)) {
-    Lexer.LexError(msg, ignored1) => { Unify.Err(msg, 0) },
-    Lexer.Tokens(ts, ignored2) => {
+    Lexer.LexError(msg, _) => { Unify.Err(msg, 0) },
+    Lexer.Tokens(ts, _) => {
       match(Parser.parseTy(ts)) {
         Parser.Fail(message, pos) => { Unify.Err(message, pos) },
-        Parser.Done(t, ignored3) => {
+        Parser.Done(t, _) => {
           let vars = Elab.distinct(Elab.tyVarsOf(t));
           let rec index = match {
-            (Var(ignored4), [], Var(ignored5)) => { None },
+            (_, [], _) => { None },
             (Var(v), [w, ..rest], Var(i)) => { if (v == w) { Some(TGen(i)) } else { index(v, rest, i + 1) } }
           };
-          Unify.bind(Elab.elabTy(env, (v) => { index(v, vars, 0) }, 0, t, Unify.initial))((body) => (st) => {
-            Unify.Ok((SmlList.map((ignored6) => { KPlain })(vars), body), st)
-          })
+          Unify.bind(Elab.elabTy(env, (v) => { index(v, vars, 0) }, 0, t, Unify.initial))((body) => (st) => { Unify.Ok((SmlList.map((_) => { KPlain })(vars), body), st) })
         }
       }
     }
@@ -329,7 +339,7 @@ let rec nest = (outer, path, inner) => {
       Env.Env(
         [
           (name, (nest(existing, rest, inner), true)),
-          ..SmlList.filter((n, ignored7) => { n != name })(strs)
+          ..SmlList.filter((n, _) => { n != name })(strs)
         ],
         tys,
         vals
@@ -349,7 +359,7 @@ let initial = {
     )
   );
   // The structures' types, so that value types can name them (TextIO.instream).
-  let typesEnv = SmlList.foldl(((path, tys, ignored8), env) => {
+  let typesEnv = SmlList.foldl(((path, tys, _), env) => {
     nest(env, path, withTypes(SmlList.map((n, tn) => { (n, tyStr(tn)) })(tys)))
   })(topEnv)(structures);
   let values = (scope, entries) => {
@@ -358,8 +368,8 @@ let initial = {
         Unify.Err(message, pos) => { Unify.Err(message, pos) },
         Unify.Ok(vals, st) => {
           match(scheme(scope, text)) {
-            Unify.Ok(s, ignored9) => { Unify.Ok(List.append(vals, [(name, (s, SValue))]), st) },
-            Unify.Err(msg, ignored10) => { Unify.Err("basis entry " ++ name ++ ": " ++ msg, 0) }
+            Unify.Ok(s, _) => { Unify.Ok(List.append(vals, [(name, (s, SValue))]), st) },
+            Unify.Err(msg, _) => { Unify.Err("basis entry " ++ name ++ ": " ++ msg, 0) }
           }
         }
       }
@@ -369,7 +379,7 @@ let initial = {
   let scopeOf = (path) => {
     match(structureAt(typesEnv, path)) {
       Some(entry) => {
-        let (inner, ignored11) = entry;
+        let (inner, _) = entry;
         plus(typesEnv, inner)
       },
       None => { typesEnv }
@@ -377,13 +387,13 @@ let initial = {
   };
   match(values(typesEnv, topValues)) {
     Unify.Err(message, pos) => { Unify.Err(message, pos) },
-    Unify.Ok(tops, ignored12) => {
-      SmlList.foldl(((path, ignored13, entries), acc) => {
+    Unify.Ok(tops, _) => {
+      SmlList.foldl(((path, _, entries), acc) => {
         match(acc) {
           Unify.Err(message, pos) => { Unify.Err(message, pos) },
           Unify.Ok(env, st) => {
             match(values(scopeOf(path), entries)) {
-              Unify.Ok(vals, ignored14) => { Unify.Ok(nest(env, path, withValues(vals)), st) },
+              Unify.Ok(vals, _) => { Unify.Ok(nest(env, path, withValues(vals)), st) },
               Unify.Err(message, pos) => { Unify.Err(message, pos) }
             }
           }

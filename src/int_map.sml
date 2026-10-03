@@ -1,3 +1,7 @@
+(* @subsetml
+from "./subset_natural.sml" import * as SubsetNatural;
+*)
+
 (* Persistent maps from non-negative integers (held in reals: SubsetML omits int for now), as
    a binary trie on the key's bits, lowest bit first. SubsetML has no references, so the type
    checker threads its substitution through one of these. Lookup and insertion take time

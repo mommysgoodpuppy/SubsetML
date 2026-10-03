@@ -1,3 +1,10 @@
+(* @subsetml
+from "./subset_result.sml" import * as SubsetResult;
+from "./subset_host.sml" import * as SubsetHost;
+from "./subset_io.sml" import * as SubsetIo;
+from "./subset_list.sml" import * as SubsetList;
+*)
+
 (* Process arguments are host byte strings; exit accepts success/failure only. *)
 structure SubsetProcess = struct
   val arguments = fn () =>

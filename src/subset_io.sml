@@ -1,3 +1,10 @@
+(* @subsetml
+from "./subset_result.sml" import * as SubsetResult;
+from "./subset_string.sml" import * as SubsetString;
+from "./subset_list.sml" import * as SubsetList;
+from "./subset_host.sml" import * as SubsetHost;
+*)
+
 (* Whole-file byte I/O. Conversion and validation are ordinary source algorithms. *)
 structure SubsetIo = struct
   datatype error = HostError of string | NonByte of real | InvalidPath
@@ -17,6 +24,11 @@ structure SubsetIo = struct
   val readFile = fn file =>
     SubsetResult.andThen (path file, fn valid =>
       SubsetResult.andThen (host (SubsetHost.readFile valid), bytes))
+  (* Filesystem identity, not lexical path cleanup. Validate both byte boundaries. *)
+  val canonicalPath = fn file =>
+    SubsetResult.andThen (path file, fn valid =>
+      SubsetResult.andThen (host (SubsetHost.canonicalPath valid), fn resolved =>
+        SubsetResult.map (bytes resolved, fn _ => resolved)))
   val writeFile = fn (data, file) =>
     SubsetResult.andThen (path file, fn valid =>
       SubsetResult.andThen (native data, fn text => host (SubsetHost.writeFile (text, valid))))
