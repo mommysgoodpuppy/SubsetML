@@ -44,7 +44,7 @@ let good = pick(Wrap([1, 2, 4])) == 4 && pick(Wrap([1, 3, 4])) == 14
     subprocess.run([compiler, 'check', out / 'use.sml'], check=True)
     run = root / 'run.sml'
     run.write_text('val _ = if Use.good then () else OS.Process.exit OS.Process.failure\n'
-                   'val _ = ((Use.partial 0.0; OS.Process.exit OS.Process.failure) handle Match => ())\n')
+                   'val _ = ((Use.partial 0; OS.Process.exit OS.Process.failure) handle Match => ())\n')
     mlb = root / 'test.mlb'
     mlb.write_text('$(SML_LIB)/basis/basis.mlb\n' + '\n'.join(str(p) for p in [out / 'constants.sml', out / 'use.sml', run]) + '\n')
     subprocess.run(['mlton', '-output', root / 'test', mlb], check=True)
@@ -53,7 +53,7 @@ let good = pick(Wrap([1, 2, 4])) == 4 && pick(Wrap([1, 3, 4])) == 14
     use.write_text('let function = (x) => { x };\nlet bad = match { function => { true }, _ => { false } };\n')
     rejected = subprocess.run([compiler, 'sml', out, use], capture_output=True)
     assert rejected.returncode != 0, rejected
-    use.write_text('let [1] = [1];\n')
+    use.write_text('let [1.0] = [1.0];\n')
     rejected = subprocess.run([compiler, 'sml', out, use], capture_output=True)
     assert rejected.returncode != 0 and b'binding patterns' in rejected.stdout + rejected.stderr, rejected
 print('patterns: numeric/pinned nested fallthrough, scope, equality, once-only subject and Match passed')

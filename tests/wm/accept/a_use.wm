@@ -1,6 +1,6 @@
 from "./z_numbers.wm" import * as ZNumbers;
-let numeric = ZNumbers.same(2) && !ZNumbers.different(2);
+let numeric = ZNumbers.same(2.0) && !ZNumbers.different(2.0);
 let strings = ZNumbers.generic("a", "a");
 let lists = ["a"] == ["a"];
-ZNumbers.same(2);
+ZNumbers.same(2.0);
 let after = it && numeric && strings && lists;

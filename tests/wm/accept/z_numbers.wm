@@ -1,8 +1,8 @@
-let base = 2;
+let base = 2.0;
 let same = (x) => { (x: Number) == base };
-let different = (x) => { x != 2 };
+let different = (x) => { x != 2.0 };
 let fraction = -1.5e-3;
 let large = Number.toString(1000000000000);
 let width = String.size("two");
-let items = List.tabulate(2, (i) => { i });
+let items = List.tabulate(2.0, (i) => { i });
 let generic = (x, y) => { x == y };

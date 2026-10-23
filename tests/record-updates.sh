@@ -6,7 +6,7 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir "$tmp/sml" "$tmp/reject"
 cat > "$tmp/records.wm" <<'WM'
-record Point = { x: Number, y: Number };
+record Point = { x: I32, y: I32 };
 record Box<T> = { value: T };
 WM
 cat > "$tmp/updates.wm" <<'WM'
@@ -43,12 +43,12 @@ reject() {
   if ! rg -q "$2" "$tmp/error"; then cat "$tmp/error"; exit 1; fi
   [ -z "$(ls -A "$tmp/reject")" ]
 }
-reject 'let bad = () => { record Local = { x: Number }; Local { x = 1 } };' 'record layout declarations must be top-level'
+reject 'let bad = () => { record Local = { x: I32 }; Local { x = 1 } };' 'record layout declarations must be top-level'
 reject 'let bad = .{..value, x = 3};' 'record updates must name their record type'
 reject 'let bad = Missing { x = 3 };' 'unknown record layout'
 reject 'let bad = Records.Point { x = 3 };' 'missing record field y'
 reject 'let bad = Records.Point { x = 3, x = 4, y = 2 };' 'duplicate record field x'
 reject 'let bad = Records.Point { x = 3, z = 4 };' 'has no field z'
-reject 'let bad = Records.Point { x = "wrong", ..Records.Point { x = 1, y = 2 } };' 'expected real|type annotation'
+reject 'let bad = Records.Point { x = "wrong", ..Records.Point { x = 1, y = 2 } };' 'expected int|type annotation|argument'
 reject 'let bad = Records.Box { ..Records.Box { value = "text" }, value = true };' 'argument|expected'
 echo 'named record updates: ok'

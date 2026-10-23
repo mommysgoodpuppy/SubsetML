@@ -152,18 +152,12 @@ let escapeChar = (quote, c) => {
   }
 };
 
-let withoutRealSuffix = (s) => {
-  match(SubsetList.reverse(CompilerText.characters(s))) {
-    ['0', '.', ..rest] => { CompilerText.stringOf(SubsetList.reverse(rest)) },
-    Var(bytes) => { CompilerText.stringOf(SubsetList.reverse(bytes)) }
-  }
-};
-
 /* Workman integer literals are overloaded and default to Number, so an SML int constant is
-   ascribed. The reader turns `(n: I32)` back into the constant. */
+   ascribed. The reader turns `(n: I32)` back into the constant. A real keeps its fraction,
+   since the reader takes a bare integer literal as int. */
 let scon = match {
   SInt(s) => { "(" ++ minus(s) ++ ": I32)" },
-  SReal(s) => { minus(withoutRealSuffix(s)) },
+  SReal(s) => { minus(s) },
   SString(s) => {
     "\"" ++ SubsetString.concat(SubsetList.map(CompilerText.characters(s), (c) => { escapeChar('"', c) })) ++ "\""
   },

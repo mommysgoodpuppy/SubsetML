@@ -193,9 +193,10 @@ Reverse translation now supports numeric literal and pinned value patterns in ma
 including nested tuples, lists, records and constructor arguments. It resolves constructors
 before lowering, evaluates the subject once, and uses branch-local checks with continuations
 for fallthrough. Pins capture the outer resolved value before the pattern's binders enter scope.
-Numeric literals use `Real.==`; pinned comparisons use the existing inferred equality pass.
-Function pins and non-equality values remain errors. Numeric/pinned `let` binding patterns are
-outside this profile and are diagnosed explicitly; use a match instead.
+Integer literals are ordinary SML constant patterns. Real literals use `Real.==`; pinned
+comparisons use the existing inferred equality pass. Function pins and non-equality values remain
+errors. Real and pinned `let` binding patterns are outside this profile and are diagnosed
+explicitly; use a match instead.
 
 The compiler-only `PPinned` representation does not add syntax to authored SubsetML. It must
 be eliminated before target checking. Ordinary SML round trips use the same resolution pass,
@@ -409,10 +410,14 @@ either default:
 | `int` | `I32` |
 | `42`, `~5`, `0x7f` (expression or pattern) | `(42: I32)`, `(-5: I32)`, `(0x7f: I32)` |
 | `a div b`, `a mod b`, `div` | `I32.div(a, b)`, `I32.mod(a, b)`, `I32.div` |
-| `42.0` | `42` |
+| `42.0` | `42.0` |
 
-Every int constant is ascribed; the reader turns `(n: I32)` back into the constant, so
-`SML → Workman → SML` is unchanged. A bare Workman number is always `real`. A numeric
+Every int constant is ascribed, and every real keeps its fraction, so `SML → Workman → SML`
+is unchanged. Reading hand-written Workman, a bare integer literal is `int` when it fits in
+`I32`, and `real` otherwise; `1.0` and `1e3` are `real`. This matches Workman wherever the
+literal's context is `I32`. Where the context is `Number`, write the literal as `1.0`, or the
+native build fails to type-check; it never computes a different value. `(n: I32)` is still
+read as an int constant. A numeric
 operation whose type only the default decides, such as `fn (a, b) => a + b`, is
 rejected in both directions; annotate an operand as `int` or `real`. `Int.*` and
 `abs` have no Workman mapping yet.

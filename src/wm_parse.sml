@@ -167,19 +167,22 @@ structure WmParse = struct
   (* Patterns. As in WmPrint, `inMatch` marks a match arm and `binds` whether a bare name binds
      at this position. *)
 
+  (* A bare Workman integer literal is an SML int when it fits in I32 and real otherwise, so
+     `1` is int and `1.0` is real. Workman itself types `1` from context and defaults it to
+     Number, so Number code read here must spell its integral constants `1.0`. *)
   val number = fn c =>
     case c of
-      SInt s => SReal (s ^ ".0")
+      SInt s => if CompilerText.int32Literal s then c else SReal (s ^ ".0")
     | _ => c
 
   val negativeLiteral = fn (minusPos, ts) =>
     case peek ts of
-      (WScon (SInt s), p) => if (p = minusPos + 1) then SOME (SReal ("~" ^ s ^ ".0")) else NONE
+      (WScon (SInt s), p) => if (p = minusPos + 1) then SOME (number (SInt ("~" ^ s))) else NONE
     | (WScon (SReal s), p) => if (p = minusPos + 1) then SOME (SReal ("~" ^ s)) else NONE
     | _ => NONE
 
   (* The text of an integer literal at the start of `ts`, `-` included: `(n: I32)` is an SML int
-     constant, while every other Workman number is real. *)
+     constant even outside the range a bare literal reads as int. *)
   val integerText = fn ts =>
     case peek ts of
       (WScon (SInt s), _) => SOME s

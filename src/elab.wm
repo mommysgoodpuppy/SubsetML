@@ -27,7 +27,6 @@ from "./sml_list.wm" import * as SmlList;
 from "./subset_string.wm" import * as SubsetString;
 from "./subset_list.wm" import * as SubsetList;
 from "./compiler_text.wm" import * as CompilerText;
-from "./subset_char.wm" import * as SubsetChar;
 from "./sml_list_pair.wm" import * as SmlListPair;
 from "./subset_result.wm" import * as SubsetResult;
 
@@ -327,50 +326,10 @@ let constTy = match {
   SChar(_) => { charTy }
 };
 
-/* Compare normalized digit spellings instead of accumulating a magnitude:
-   the absolute value of minInt cannot itself fit in a signed integer. */
-let int32Literal = (text) => {
-  let (negative, digits) = match(CompilerText.characters(text)) {
-    ['~', ..rest] => { (true, rest) },
-    Var(rest) => { (false, rest) }
-  };
-  let (hex, digits) = match(digits) {
-    ['0', 'x', ..rest] => { (true, rest) },
-    Var(rest) => { (false, rest) }
-  };
-  let bound = CompilerText.characters(if (hex) { if (negative) { "80000000" } else { "7fffffff" } } else { if (negative) { "2147483648" } else { "2147483647" } });
-  let alphabet = CompilerText.characters("0123456789abcdef");
-  let rec digit = (c, cs, n) => {
-    match(cs) {
-      [] => { (16: I32) },
-      [d, ..rest] => {
-        if (SubsetChar.toLower(c) == d) { n } else { digit(c, rest, n + (1: I32)) }
-      }
-    }
-  };
-  let normalized = SubsetList.dropWhile(digits, (c) => { c == '0' });
-  let rec within = (cs, bs) => {
-    match(cs, bs) {
-      ([], []) => { true },
-      ([c, ..rest], [b, ..limit]) => {
-        let x = digit(c, alphabet, (0: I32));
-        let y = digit(b, alphabet, (0: I32));
-        if (x < y) { true } else { if (x == y) { within(rest, limit) } else { false } }
-      },
-      _ => { false }
-    }
-  };
-  let size = SubsetList.length(normalized);
-  let limitSize = SubsetList.length(bound);
-  if (size < limitSize) { true } else {
-    if (size == limitSize) { within(normalized, bound) } else { false }
-  }
-};
-
 let checkConst = (pos, c, st) => {
   match(c) {
     SInt(text) => {
-      if (int32Literal(text)) { Ok(intTy, st) } else {
+      if (CompilerText.int32Literal(text)) { Ok(intTy, st) } else {
         Err("integer constant outside signed 32-bit range: " ++ text, pos)
       }
     },

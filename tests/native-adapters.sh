@@ -7,13 +7,13 @@ compiler = Path('bin/subsetml').resolve()
 with tempfile.TemporaryDirectory(prefix='subsetml-native-') as directory:
  root = Path(directory); out = root / 'out'; out.mkdir()
  (root / 'a').mkdir(); (root / 'b').mkdir()
- (root / 'result.wm').write_text('type Result = | Ok<Number>;\nlet _ = print("R");\n')
+ (root / 'result.wm').write_text('type Result = | Ok<I32>;\nlet _ = print("R");\n')
  (root / 'a/host.wm').write_text('let value = 99;\n')
  checker = root / 'b/host.wm'
  checker.write_text('from "../result.wm" import * as ExpectedResult;\nlet value = ExpectedResult.Ok(0);\n')
  alias = root / 'checker.wm'; alias.symlink_to('b/host.wm')
  native = root / 'native adapter.sml'
- native.write_text('structure FixedHost = struct\nval _ = print "N"\nval value = ExpectedResult.Ok 7.0\nend\n')
+ native.write_text('structure FixedHost = struct\nval _ = print "N"\nval value = ExpectedResult.Ok 7\nend\n')
  entry = root / 'entry.wm'
  entry.write_text('''from "./a/host.wm" import * as Decoy;
 from "./b/host.wm" import * as Actual;

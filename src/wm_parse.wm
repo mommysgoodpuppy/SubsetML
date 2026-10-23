@@ -212,9 +212,14 @@ and typeName = (quals, name, ts) => {
 /* Patterns. As in WmPrint, `inMatch` marks a match arm and `binds` whether a bare name binds
    at this position. */
 
+/* A bare Workman integer literal is an SML int when it fits in I32 and real otherwise, so
+   `1` is int and `1.0` is real. Workman itself types `1` from context and defaults it to
+   Number, so Number code read here must spell its integral constants `1.0`. */
 let number = (c) => {
   match(c) {
-    SInt(s) => { SReal(s ++ ".0") },
+    SInt(s) => {
+      if (CompilerText.int32Literal(s)) { c } else { SReal(s ++ ".0") }
+    },
     _ => { c }
   }
 };
@@ -222,7 +227,7 @@ let number = (c) => {
 let negativeLiteral = (minusPos, ts) => {
   match(peek(ts)) {
     (WScon(SInt(s)), Var(p)) => {
-      if (p == minusPos + (1: I32)) { Some(SReal("~" ++ s ++ ".0")) } else { None }
+      if (p == minusPos + (1: I32)) { Some(number(SInt("~" ++ s))) } else { None }
     },
     (WScon(SReal(s)), Var(p)) => {
       if (p == minusPos + (1: I32)) { Some(SReal("~" ++ s)) } else { None }
@@ -232,7 +237,7 @@ let negativeLiteral = (minusPos, ts) => {
 };
 
 /* The text of an integer literal at the start of `ts`, `-` included: `(n: I32)` is an SML int
-   constant, while every other Workman number is real. */
+   constant even outside the range a bare literal reads as int. */
 let integerText = (ts) => {
   match(peek(ts)) {
     (WScon(SInt(s)), _) => { Some(s) },

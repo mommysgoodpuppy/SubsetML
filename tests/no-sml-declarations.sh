@@ -8,9 +8,9 @@ with tempfile.TemporaryDirectory(prefix='subsetml-no-embedded-') as directory:
  root = Path(directory); out = root / 'sml'; out.mkdir()
  entry = root / 'entry.wm'
  entry.write_text('''record Fields = {
-  open: Number,
-  val: Number,
-  datatype: Number,
+  open: I32,
+  val: I32,
+  datatype: I32,
 };
 let fields = Fields(1, 2, 3);
 let copied = Fields { ..fields,

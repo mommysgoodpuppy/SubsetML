@@ -7,6 +7,7 @@ from "./subset_order.sml" import * as SubsetOrder;
 from "./subset_list.sml" import * as SubsetList;
 from "./subset_sml_escape.sml" import * as SubsetSmlEscape;
 from "./subset_source.sml" import * as SubsetSource;
+from "./subset_char.sml" import * as SubsetChar;
 *)
 
 (* Compiler-only compatibility helpers while callers migrate to checked Basis APIs.
@@ -46,4 +47,30 @@ structure CompilerText = struct
   val sub = fn (source, index) => let val SubsetResult.Ok c = SubsetSource.at (source, index) in c end
   val substring = fn (source, start, count) =>
     let val SubsetResult.Ok bytes = SubsetSource.slice (source, start, count) in stringOf bytes end
+
+  (* Compare normalized digit spellings instead of accumulating a magnitude:
+     the absolute value of minInt cannot itself fit in a signed integer. *)
+  val int32Literal = fn text =>
+    let
+      val (negative, digits) = case characters text of
+        #"~" :: rest => (true, rest) | rest => (false, rest)
+      val (hex, digits) = case digits of
+        #"0" :: #"x" :: rest => (true, rest) | rest => (false, rest)
+      val bound = characters
+        (if hex then (if negative then "80000000" else "7fffffff")
+         else (if negative then "2147483648" else "2147483647"))
+      val alphabet = characters "0123456789abcdef"
+      val rec digit = fn (c, cs, n) => case cs of
+        [] => 16 | d :: rest => if SubsetChar.toLower c = d then n else digit (c, rest, n + 1)
+      val normalized = SubsetList.dropWhile (digits, fn c => c = #"0")
+      val rec within = fn (cs, bs) => case (cs, bs) of
+        ([], []) => true
+      | (c :: rest, b :: limit) =>
+          let val x = digit (c, alphabet, 0)
+              val y = digit (b, alphabet, 0)
+          in x < y orelse (x = y andalso within (rest, limit)) end
+      | _ => false
+      val size = SubsetList.length normalized
+      val limitSize = SubsetList.length bound
+    in size < limitSize orelse (size = limitSize andalso within (normalized, bound)) end
 end

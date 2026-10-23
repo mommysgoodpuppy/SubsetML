@@ -31,17 +31,17 @@ let mapAlias = copied.map;
 let identity = (x) => { x };
 let pair = .{ left = identity, right = identity };
 let coupled = Layouts.Coupled { ..pair };
-let coupledNumber: Number = coupled.left(1);
+let coupledNumber: I32 = coupled.left(1);
 let coupledText: String = coupled.right("text");
 let wrap = (x) => { Layouts.Wrapped(x) };
 let wrapper = Layouts.Converter { convert = wrap };
 let wrapperCopy = Layouts.Converter { ..wrapper };
-let wrappedNumber: Layouts.Wrapped<Number> = wrapperCopy.convert(1);
+let wrappedNumber: Layouts.Wrapped<I32> = wrapperCopy.convert(1);
 let wrappedText: Layouts.Wrapped<String> = wrapperCopy.convert("text");
 let empty = Layouts.Box { value = [] };
-let numbers: Layouts.Box<List<Number>> = empty;
+let numbers: Layouts.Box<List<I32>> = empty;
 let texts: Layouts.Box<List<String>> = empty;
-let number: Outcome<Number, String> = fnAlias((x) => { Ok(x + 1) })(Ok(1));
+let number: Outcome<I32, String> = fnAlias((x) => { Ok(x + 1) })(Ok(1));
 let text: Outcome<String, Bool> = fnAlias((x) => { Ok(x ++ "!") })(Ok("hi"));
 let flag: Outcome<Bool, String> = mapAlias(Ok("value"), (_) => { true });
 let stringFlag: Outcome<String, Bool> = mapAlias(Ok(true), (_) => { "ok" });
@@ -78,7 +78,7 @@ cat > "$tmp/bad.wm" <<'WM'
 from "./layouts.wm" import * as Layouts;
 let identity = (x) => { x };
 let pair = .{ left = identity, right = identity };
-let fixed: Layouts.Coupled<Number> = pair;
+let fixed: Layouts.Coupled<I32> = pair;
 let bad = Layouts.Coupled { ..fixed };
 let wrong: String = bad.right("text");
 WM
@@ -96,7 +96,7 @@ let fn = (f) => { (r) => { match(r) {
 let saved = fn((x) => { Ok(x) });
 let holder = Layouts.Converter { convert = saved };
 let alias = holder.convert;
-let number: Outcome<Number, String> = alias(Ok(1));
+let number: Outcome<I32, String> = alias(Ok(1));
 let text: Outcome<String, String> = alias(Ok("text"));
 WM
 if "$compiler" sml "$tmp/reject" "$tmp/layouts.wm" "$tmp/bad.wm" > "$tmp/error" 2>&1; then

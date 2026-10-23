@@ -6,7 +6,7 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir "$tmp/out" "$tmp/reject" "$tmp/a" "$tmp/b"
 cat > "$tmp/records.wm" <<'WM'
-type Thing = | Thing<Number>;
+type Thing = | Thing<I32>;
 record Box<T> = { value: T };
 let make = (value) => { Thing(value) };
 WM
@@ -28,14 +28,14 @@ WM
 [ "$(find "$tmp/out" -name '*.sml' | wc -l)" -eq 3 ]
 "$compiler" check "$tmp/out/entry.sml"
 cat > "$tmp/run.sml" <<'SML'
-val _ = if Real.== (Entry.answer, 16.0) then () else OS.Process.exit OS.Process.failure
+val _ = if Entry.answer = 16 then () else OS.Process.exit OS.Process.failure
 SML
 printf '$(SML_LIB)/basis/basis.mlb\n%s\n%s\n%s\n%s\n' \
   "$tmp/out/alias.sml" "$tmp/out/middle.sml" "$tmp/out/entry.sml" "$tmp/run.sml" > "$tmp/test.mlb"
 mlton -output "$tmp/test" "$tmp/test.mlb"
 "$tmp/test"
 cat > "$tmp/a/shared.wm" <<'WM'
-type Thing = | Thing<Number>;
+type Thing = | Thing<I32>;
 let value = Thing(1);
 WM
 cp "$tmp/a/shared.wm" "$tmp/b/shared.wm"

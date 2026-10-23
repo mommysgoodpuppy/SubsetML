@@ -12,6 +12,7 @@ from "./basis.sml" import * as Basis;
 from "./unify.sml" import * as Unify;
 from "./env.sml" import * as Env;
 from "./subset_char.sml" import * as SubsetChar;
+from "./subset_option.sml" import * as SubsetOption;
 from "./subset_string.sml" import * as SubsetString;
 from "./lexer.sml" import * as Lexer;
 */
@@ -24,14 +25,15 @@ from "./syntax.wm" import * as Syntax;
 from "./wm_lexer.wm" import * as WmLexer;
 from "./subset_result.wm" import * as SubsetResult;
 from "./compiler_text.wm" import * as CompilerText;
-from "./module_imports.wm" import * as ModuleImports;
 from "./subset_list.wm" import * as SubsetList;
+from "./subset_char.wm" import * as SubsetChar;
+from "./subset_option.wm" import * as SubsetOption;
+from "./module_imports.wm" import * as ModuleImports;
 from "./subset_io.wm" import * as SubsetIo;
 from "./wm_parse.wm" import * as WmParse;
 from "./basis.wm" import * as Basis;
 from "./unify.wm" import * as Unify;
 from "./env.wm" import * as Env;
-from "./subset_char.wm" import * as SubsetChar;
 from "./subset_string.wm" import * as SubsetString;
 from "./lexer.wm" import * as Lexer;
 
@@ -64,10 +66,43 @@ let edgesOf = match {
   Source(_, edges, _) => { edges }
 };
 
+// "basis/won.wm" names the Basis module subset_won.wm, as in Workman.
+let basisModule = (specifier) => {
+  let count = CompilerText.size(specifier);
+  if (if (if (count > (9: I32)) {
+    CompilerText.slice(specifier, (0: I32), (6: I32)) == "basis/"
+  } else { false }) { CompilerText.isSuffix(specifier, ".wm") } else { false }) {
+    let name = CompilerText.slice(specifier, (6: I32), count - (9: I32));
+    if (SubsetList.all(
+      CompilerText.characters(name),
+      (c) => {
+        if (if (SubsetChar.isLower(c)) { true } else { SubsetChar.isDigit(c) }) { true } else { c == '_' }
+      }
+    )) { Some("subset_" ++ name ++ ".wm") } else { None }
+  } else { None }
+};
+
 let validSpecifier = (specifier) => {
-  if (CompilerText.isSuffix(specifier, ".wm")) {
-    ModuleImports.validPath(CompilerText.slice(specifier, (0: I32), CompilerText.size(specifier) - (3: I32)) ++ ".sml")
-  } else { false }
+  if (SubsetOption.isSome(basisModule(specifier))) { true } else {
+    if (CompilerText.isSuffix(specifier, ".wm")) {
+      ModuleImports.validPath(CompilerText.slice(specifier, (0: I32), CompilerText.size(specifier) - (3: I32)) ++ ".sml")
+    } else { false }
+  }
+};
+
+// basis is the directory holding the generated Basis modules, if the build supplies one.
+let resolve = (basis, referrer, specifier) => {
+  match(basisModule(specifier)) {
+    None => { ModuleProject.resolve(referrer, specifier) },
+    Some(file) => {
+      match(basis) {
+        None => {
+          SubsetResult.Err(SubsetIo.HostError("basis/ imports need --basis DIR"))
+        },
+        Some(directory) => { ModuleProject.identify(directory ++ "/" ++ file) }
+      }
+    }
+  }
 };
 
 /* Discovery reads only the supported import header. Preparation still validates aliases,
@@ -101,7 +136,7 @@ let headerPaths = (path, src, tokens) => {
               failure(
                 path,
                 src,
-                "imports require explicit relative .wm paths in the local source profile",
+                "imports require explicit relative .wm paths or basis/ modules in the local source profile",
                 pos
               )
             } else {
@@ -119,7 +154,7 @@ let headerPaths = (path, src, tokens) => {
   scan(tokens)
 };
 
-let discover = (roots) => {
+let discover = (basis, roots) => {
   let rec visit = (resolved, active, seen) => {
     let ModuleProject.Resolved(id, path) = resolved;
     if (SubsetList.exists(seen, (key, _, _) => { ModuleProject.same(key, id) })) { SubsetResult.Ok(seen) } else {
@@ -140,7 +175,7 @@ let discover = (roots) => {
                     match(paths) {
                       [] => { SubsetResult.Ok(seen) },
                       [(Var(specifier), Var(pos)), ..rest] => {
-                        match(ModuleProject.resolve(resolved, specifier)) {
+                        match(resolve(basis, resolved, specifier)) {
                           SubsetResult.Err(error) => {
                             failure(
                               path,
@@ -265,18 +300,18 @@ let plan = (sources) => {
   }
 };
 
-let prepare = (units, unit) => {
+let prepare = (basis, units, unit) => {
   let Unit(Input(resolved, path, src), _, _) = unit;
   let dependency = (specifier, pos) => {
     if (!validSpecifier(specifier)) {
       failure(
         path,
         src,
-        "imports require explicit relative .wm paths in the local source profile",
+        "imports require explicit relative .wm paths or basis/ modules in the local source profile",
         pos
       )
     } else {
-      match(ModuleProject.resolve(resolved, specifier)) {
+      match(resolve(basis, resolved, specifier)) {
         SubsetResult.Err(error) => {
           failure(
             path,

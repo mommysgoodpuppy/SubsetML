@@ -101,16 +101,12 @@ structure WmPrint = struct
         if c = quote then "\\" ^ CompilerText.str c
         else (if SubsetChar.isPrint c then CompilerText.str c else "\\u00" ^ hex2 (let val SubsetResult.Ok code = SubsetChar.toCode c in code end))
 
-  val withoutRealSuffix = fn s =>
-    case SubsetList.reverse (CompilerText.characters s) of
-      #"0" :: #"." :: rest => CompilerText.stringOf (SubsetList.reverse rest)
-    | bytes => CompilerText.stringOf (SubsetList.reverse bytes)
-
   (* Workman integer literals are overloaded and default to Number, so an SML int constant is
-     ascribed. The reader turns `(n: I32)` back into the constant. *)
+     ascribed. The reader turns `(n: I32)` back into the constant. A real keeps its fraction,
+     since the reader takes a bare integer literal as int. *)
   val scon = fn
       SInt s => "(" ^ minus s ^ ": I32)"
-    | SReal s => minus (withoutRealSuffix s)
+    | SReal s => minus s
     | SString s => "\"" ^ SubsetString.concat (SubsetList.map (CompilerText.characters s,
         fn c => escapeChar (#"\"", c))) ^ "\""
     | SChar c => "'" ^ escapeChar (#"'", c) ^ "'"

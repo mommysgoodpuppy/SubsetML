@@ -31,7 +31,8 @@ from "./sml_target.sml" import * as SmlTarget;
      subsetml fmt FILE...           reprint each file as SubsetML
      subsetml wm OUTDIR FILE...     translate the program's files to Workman modules in OUTDIR
      subsetml sml OUTDIR FILE.wm... translate Workman modules to SubsetML files in OUTDIR
-     subsetml sml-entry OUTDIR ENTRY.wm discover and translate the supported import graph
+     subsetml sml-entry OUTDIR [--basis DIR] ENTRY.wm discover and translate the supported import graph;
+       "basis/x.wm" imports resolve to DIR/subset_x.wm
      subsetml sml OUTDIR --panic-runtime R.wm FILE.wm... select the native panic provider
      subsetml roundtrip FILE...     check that SML -> Workman -> SML preserves each file's syntax */
 
@@ -155,7 +156,7 @@ let sourceErrorText = match {
 
 let usage = () => {
   (
-    eprint("usage: subsetml (check | parse | fmt | roundtrip) FILE...\n       subsetml native OUTDIR FILE.sml...\n       subsetml sml-target (mlton | mlworks) OUTDIR [--adapter CHECKER.sml NATIVE.sml]... FILE.sml...\n       subsetml wm OUTDIR FILE...\n       subsetml sml OUTDIR [--panic-runtime R.wm] FILE.wm...\n       subsetml sml-entry OUTDIR [--panic-runtime R.wm] [--native-adapter CHECKER.wm NATIVE.sml STRUCTURE]... ENTRY.wm\n");
+    eprint("usage: subsetml (check | parse | fmt | roundtrip) FILE...\n       subsetml native OUTDIR FILE.sml...\n       subsetml sml-target (mlton | mlworks) OUTDIR [--adapter CHECKER.sml NATIVE.sml]... FILE.sml...\n       subsetml wm OUTDIR FILE...\n       subsetml sml OUTDIR [--panic-runtime R.wm] FILE.wm...\n       subsetml sml-entry OUTDIR [--basis DIR] [--panic-runtime R.wm] [--native-adapter CHECKER.wm NATIVE.sml STRUCTURE]... ENTRY.wm\n");
     SubsetProcess.exit(false)
   )
 };
@@ -212,7 +213,7 @@ let translate = (outDir, parsed) => {
 
 /* Reverse translation uses the same canonical resolver as SML metadata loading.
    Explicit source lists and entry discovery share preparation, resolution and checking. */
-let fromWmLoaded = (outDir, runtimePath, entryPath, adapterSpecs, sources) => {
+let fromWmLoaded = (outDir, basis, runtimePath, entryPath, adapterSpecs, sources) => {
   let keywordPrefix = Translate.keywordPrefix(sources);
   let rec traverse = (items, f) => {
     match(items) {
@@ -254,7 +255,7 @@ let fromWmLoaded = (outDir, runtimePath, entryPath, adapterSpecs, sources) => {
       )
     };
     SubsetResult.andThen(
-      traverse(units, (unit) => { WmProject.prepare(units, unit) }),
+      traverse(units, (unit) => { WmProject.prepare(basis, units, unit) }),
       (prepared) => {
         SubsetResult.andThen(
           WmProject.order(prepared),
@@ -396,6 +397,7 @@ let fromWmLoaded = (outDir, runtimePath, entryPath, adapterSpecs, sources) => {
 let fromWm = (outDir, runtimePath, files) => {
   fromWmLoaded(
     outDir,
+    None,
     runtimePath,
     None,
     [],
@@ -406,14 +408,17 @@ let fromWm = (outDir, runtimePath, files) => {
   )
 };
 
-let fromWmEntry = (outDir, runtimePath, adapterSpecs, entry) => {
-  match(WmProject.discover(match(runtimePath) {
-    None => { [entry] },
-    Some(runtime) => { [runtime, entry] }
-  })) {
+let fromWmEntry = (outDir, basis, runtimePath, adapterSpecs, entry) => {
+  match(WmProject.discover(
+    basis,
+    match(runtimePath) {
+      None => { [entry] },
+      Some(runtime) => { [runtime, entry] }
+    }
+  )) {
     SubsetResult.Err(WmProject.Error(path, src, message, pos)) => { (eprint(errorLine(path, src, message, pos)); false) },
     SubsetResult.Ok(sources) => {
-      fromWmLoaded(outDir, runtimePath, Some(entry), adapterSpecs, sources)
+      fromWmLoaded(outDir, basis, runtimePath, Some(entry), adapterSpecs, sources)
     }
   }
 };
@@ -604,24 +609,30 @@ let main = () => {
     },
     ["wm", outDir, ..files] => { withParsed(files, (parsed) => { translate(outDir, parsed) }) },
     ["sml-entry", outDir, ..options] => {
-      let rec parse = (remaining, runtime, adapters) => {
+      let rec parse = (remaining, basis, runtime, adapters) => {
         match(remaining) {
           [entry] => {
-            finish(fromWmEntry(outDir, runtime, SmlList.rev(adapters), entry))
+            finish(fromWmEntry(outDir, basis, runtime, SmlList.rev(adapters), entry))
+          },
+          ["--basis", directory, ..rest] => {
+            match(basis) {
+              None => { parse(rest, Some(directory), runtime, adapters) },
+              Some(_) => { usage() }
+            }
           },
           ["--panic-runtime", path, ..rest] => {
             match(runtime) {
-              None => { parse(rest, Some(path), adapters) },
+              None => { parse(rest, basis, Some(path), adapters) },
               Some(_) => { usage() }
             }
           },
           ["--native-adapter", checker, native, exported, ..rest] => {
-            parse(rest, runtime, [(checker, native, exported), ..adapters])
+            parse(rest, basis, runtime, [(checker, native, exported), ..adapters])
           },
           _ => { usage() }
         }
       };
-      parse(options, None, [])
+      parse(options, None, None, [])
     },
     ["sml", outDir, "--panic-runtime", runtime, ..files] => {
       if (SmlList.null(files)) { usage() } else { finish(fromWm(outDir, Some(runtime), files)) }

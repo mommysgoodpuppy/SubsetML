@@ -9,7 +9,7 @@ with tempfile.TemporaryDirectory(prefix='subsetml-record-constructors-') as dire
     out = root / 'sml'
     out.mkdir()
     records = root / 'records.wm'
-    records.write_text('record Point = { z: Number, a: Number };\nrecord Box<T> = { value: T };\n')
+    records.write_text('record Point = { z: I32, a: I32 };\nrecord Box<T> = { value: T };\n')
     use = root / 'use.wm'
     use.write_text('''from "./records.wm" import * as R;
 let mark = (label, value) => { print(label); value };
