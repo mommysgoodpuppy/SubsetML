@@ -24,13 +24,13 @@ from "./sml_list.wm" import * as SmlList;
 let quote = (text) => { "\"" ++ CompilerText.escapeSmlString(text) ++ "\"" };
 let error = (text) => { SubsetResult.Err(text) };
 let identify = (path) => {
-  SubsetResult.mapError(
+  SubsetResult.mapErr(
     ModuleProject.identify(path),
     (failure) => { path ++ ": " ++ SubsetIo.errorText(failure) }
   )
 };
 let read = (path) => {
-  SubsetResult.mapError(
+  SubsetResult.mapErr(
     SubsetResult.map(SubsetIo.readFile(path), CompilerText.stringOf),
     (failure) => { path ++ ": " ++ SubsetIo.errorText(failure) }
   )

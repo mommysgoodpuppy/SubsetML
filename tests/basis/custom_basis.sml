@@ -3,7 +3,7 @@ structure CustomBasis = struct
 
   val names = ["a", "b", "c"]
   val resultOk = SubsetResult.map (SubsetResult.Ok "a", fn x => x ^ "!") = SubsetResult.Ok "a!"
-    andalso SubsetResult.mapError (SubsetResult.Err "bad", fn x => x ^ "!") = SubsetResult.Err "bad!"
+    andalso SubsetResult.mapErr (SubsetResult.Err "bad", fn x => x ^ "!") = SubsetResult.Err "bad!"
     andalso SubsetResult.andThen (SubsetResult.Ok "a", fn x => SubsetResult.Ok (x ^ "!")) = SubsetResult.Ok "a!"
     andalso SubsetResult.via (fn x => SubsetResult.Ok (x ^ "!")) (SubsetResult.Ok "a") = SubsetResult.Ok "a!"
     andalso SubsetResult.viaError SOME (fn x => SubsetResult.Err x) (SubsetResult.Ok "bad") = SubsetResult.Err (SOME "bad")

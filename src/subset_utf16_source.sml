@@ -121,14 +121,14 @@ structure SubsetUtf16Source = struct
 
   val fromScalars = fn scalars =>
     SubsetResult.andThen (
-      SubsetResult.mapError (SubsetUtf16.encode (scalars, SubsetUtf16.LittleEndian), UnicodeError),
+      SubsetResult.mapErr (SubsetUtf16.encode (scalars, SubsetUtf16.LittleEndian), UnicodeError),
       fn bytes => fromUtf16Bytes (bytes, SubsetUtf16.LittleEndian))
   val toScalars = fn source =>
     SubsetResult.andThen (toUtf16Bytes (source, SubsetUtf16.LittleEndian), fn bytes =>
-      SubsetResult.mapError (SubsetUtf16.decode (bytes, SubsetUtf16.LittleEndian), UnicodeError))
+      SubsetResult.mapErr (SubsetUtf16.decode (bytes, SubsetUtf16.LittleEndian), UnicodeError))
   val fromUtf8 = fn bytes =>
-    SubsetResult.andThen (SubsetResult.mapError (SubsetUtf8.decode bytes, UnicodeError), fromScalars)
+    SubsetResult.andThen (SubsetResult.mapErr (SubsetUtf8.decode bytes, UnicodeError), fromScalars)
   val toUtf8 = fn source =>
     SubsetResult.andThen (toScalars source, fn scalars =>
-      SubsetResult.mapError (SubsetUtf8.encode scalars, UnicodeError))
+      SubsetResult.mapErr (SubsetUtf8.encode scalars, UnicodeError))
 end

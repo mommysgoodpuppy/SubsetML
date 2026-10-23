@@ -1,31 +1,33 @@
 // CLI and canonical filesystem identity. Representation adaptation stays at this boundary.
+// The JS calls never throw: each fallible one returns (succeeded, value or message).
 from "./subset_result.wm" import * as SubsetResult;
-from js.module("./subset_host.js") import {
-  canonicalPath as rawCanonicalPath,
-  readFile as rawReadFile,
-  writeFile as rawWriteFile,
-  writeStdout as rawWriteStdout,
-  writeStderr as rawWriteStderr,
-  arguments as rawArguments
+from js.module("./subset_host.js") import unsafe {
+  canonicalPath as rawCanonicalPath: String -> (Bool, String),
+  readFile as rawReadFile: String -> (Bool, String),
+  writeFile as rawWriteFile: (String, String) -> (Bool, String),
+  writeStdout as rawWriteStdout: String -> (Bool, String),
+  writeStderr as rawWriteStderr: String -> (Bool, String),
+  argumentCount: Void -> Number,
+  argument: Number -> String,
+  exit as rawExit: Bool -> Void
 };
-from js.module("./subset_host.js") import unsafe { exit as rawExit: Bool -> Void };
 let convert = (result) => {
-  match(result) {
-    Ok(value) => { SubsetResult.Ok(value) },
-    Err(Js.Error(message)) => { SubsetResult.Err(message) },
-    Err(Js.Unknown) => { SubsetResult.Err("unknown host error") }
-  }
+  let (succeeded, text) = result;
+  if (succeeded) { SubsetResult.Ok(text) } else { SubsetResult.Err(text) }
+};
+let done = (result) => {
+  let (succeeded, message) = result;
+  if (succeeded) { SubsetResult.Ok(void) } else { SubsetResult.Err(message) }
 };
 let readFile = (path) => { convert(rawReadFile(path)) };
 let canonicalPath = (path) => { convert(rawCanonicalPath(path)) };
-let writeFile = (data, path) => { convert(rawWriteFile(data, path)) };
-let writeStdout = (data) => { convert(rawWriteStdout(data)) };
-let writeStderr = (data) => { convert(rawWriteStderr(data)) };
+let writeFile = (data, path) => { done(rawWriteFile(data, path)) };
+let writeStdout = (data) => { done(rawWriteStdout(data)) };
+let writeStderr = (data) => { done(rawWriteStderr(data)) };
 let arguments = () => {
-  match(rawArguments()) {
-    Ok(values) => { SubsetResult.Ok(Js.Array.toList(values)) },
-    Err(Js.Error(message)) => { SubsetResult.Err(message) },
-    Err(Js.Unknown) => { SubsetResult.Err("unknown host error") }
-  }
+  let rec go = (index, acc) => {
+    if (index < 0) { acc } else { go(index - 1, [argument(index), ..acc]) }
+  };
+  SubsetResult.Ok(go(argumentCount() - 1, []))
 };
 let exit = (success) => { rawExit(success) };

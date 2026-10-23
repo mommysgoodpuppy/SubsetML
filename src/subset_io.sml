@@ -9,12 +9,12 @@ from "./subset_host.sml" import * as SubsetHost;
 structure SubsetIo = struct
   datatype error = HostError of string | NonByte of int | InvalidPath
   val bytes = fn value =>
-    SubsetResult.mapError (SubsetString.fromNative value,
+    SubsetResult.mapErr (SubsetString.fromNative value,
       fn SubsetString.NonByte offset => NonByte offset)
   val native = fn value =>
-    SubsetResult.mapError (SubsetString.toNative value,
+    SubsetResult.mapErr (SubsetString.toNative value,
       fn SubsetString.NonByte offset => NonByte offset)
-  val host = fn result => SubsetResult.mapError (result, fn message => HostError message)
+  val host = fn result => SubsetResult.mapErr (result, fn message => HostError message)
 
   (* Paths are byte strings interpreted by the host; NUL cannot name a file. *)
   val path = fn value =>

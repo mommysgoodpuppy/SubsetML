@@ -136,7 +136,7 @@ let discover = (entry, load) => {
       Some(_) => { SubsetResult.Ok(completed) },
       None => {
         SubsetResult.andThen(
-          SubsetResult.mapError(load(display), LoadFailure),
+          SubsetResult.mapErr(load(display), LoadFailure),
           (source) => {
             let Source(path, src, prog, comments) = source;
             match(ModuleImports.parse(firstPosition(prog, src), comments)) {
@@ -208,7 +208,7 @@ let discover = (entry, load) => {
     }
   };
   SubsetResult.andThen(
-    SubsetResult.mapError(identify(entry), (error) => { ResolutionFailure(entry, error) }),
+    SubsetResult.mapErr(identify(entry), (error) => { ResolutionFailure(entry, error) }),
     (root) => {
       let Resolved(rootId, _) = root;
       SubsetResult.map(

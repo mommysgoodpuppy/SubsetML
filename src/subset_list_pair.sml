@@ -33,6 +33,6 @@ structure SubsetListPair = struct
     case zip (left, right) of
       SubsetResult.Err error => SubsetResult.Err LengthMismatch
     | SubsetResult.Ok pairs =>
-        SubsetResult.mapError (SubsetList.traverse (pairs, f), CallbackError)
+        SubsetResult.mapErr (SubsetList.traverse (pairs, f), CallbackError)
 
 end

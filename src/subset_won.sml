@@ -74,7 +74,7 @@ structure SubsetWon = struct
           SubsetResult.Err "value cannot be represented as WON")
     in
 
-      checkRoundTrip (SubsetResult.mapError (decode source, fn error : error => #message error))
+      checkRoundTrip (SubsetResult.mapErr (decode source, fn error : error => #message error))
     end
 
   (* Access steps take and return a Result, so a chain is checked once at its end: *)
@@ -114,7 +114,7 @@ structure SubsetWon = struct
 
   val read = fn source =>
     SubsetResult.map (
-      SubsetResult.mapError (decode source, SubsetWonValue.Malformed),
+      SubsetResult.mapErr (decode source, SubsetWonValue.Malformed),
       fn value => SubsetWonValue.makeNode ([], value)
     )
 

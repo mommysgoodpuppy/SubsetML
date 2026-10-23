@@ -7,7 +7,7 @@ structure SubsetResult = struct
   val map = fn (value, f) =>
     case value of Ok x => Ok (f x) | Err error => Err error
 
-  val mapError = fn (value, f) =>
+  val mapErr = fn (value, f) =>
     case value of Ok x => Ok x | Err error => Err (f error)
 
   val andThen = fn (value, f) =>
@@ -17,7 +17,7 @@ structure SubsetResult = struct
   val via = fn transform => fn wrapped => andThen (wrapped, transform)
 
   val viaError = fn inject => fn transform => fn wrapped =>
-    andThen (wrapped, fn value => mapError (transform value, inject))
+    andThen (wrapped, fn value => mapErr (transform value, inject))
 
   val getOr = fn (value, fallback) =>
     case value of Ok x => x | Err error => fallback

@@ -55,7 +55,7 @@ ordinary values chosen by each operation or its caller. There is no unsafe unwra
 | Operation | Contract |
 |---|---|
 | `SubsetResult.map (result, f)` | Transform Ok; preserve Err without calling f. |
-| `SubsetResult.mapError (result, f)` | Transform Err; preserve Ok without calling f. |
+| `SubsetResult.mapErr (result, f)` | Transform Err; preserve Ok without calling f. |
 | `SubsetResult.andThen (result, f)` | Call a Result-producing f only for Ok. |
 | `SubsetResult.via transform result` | Adapt a Result-producing transformation; call it only for Ok and preserve Err. |
 | `SubsetResult.viaError inject transform result` | As via, mapping only the transformation's new error through inject. |
@@ -88,12 +88,12 @@ val via = fn transform => fn wrapped =>
 
 val viaError = fn inject => fn transform => fn wrapped =>
   SubsetResult.andThen (wrapped, fn value =>
-    SubsetResult.mapError (transform value, inject))
+    SubsetResult.mapErr (transform value, inject))
 ```
 
 These are ordinary curried functions exported by `SubsetResult`. Currying lets a procedure
 name its transformations before applying them to data; the core data-first `andThen` and
-`mapError` APIs remain unchanged. The runnable [errordemo.sml](../errordemo.sml) uses these
+`mapErr` APIs remain unchanged. The runnable [errordemo.sml](../errordemo.sml) uses these
 exports, locally named `via` and `viaError`.
 
 - `via transform` adapts a function from an unwrapped value to a Result into a function from

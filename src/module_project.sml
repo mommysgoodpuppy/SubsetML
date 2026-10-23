@@ -84,7 +84,7 @@ structure ModuleProject = struct
         case find (id, completed) of
           SOME _ => SubsetResult.Ok completed
         | NONE =>
-            SubsetResult.andThen (SubsetResult.mapError (load display, LoadFailure), fn source =>
+            SubsetResult.andThen (SubsetResult.mapErr (load display, LoadFailure), fn source =>
               let val Source (path, src, prog, comments) = source in
                 case ModuleImports.parse (firstPosition (prog, src), comments) of
                   ModuleImports.Error (message, pos) => SubsetResult.Err (ImportFailure (path, src, message, pos))
@@ -115,7 +115,7 @@ structure ModuleProject = struct
               end)
         end
     in
-      SubsetResult.andThen (SubsetResult.mapError (identify entry, fn error => ResolutionFailure (entry, error)), fn root =>
+      SubsetResult.andThen (SubsetResult.mapErr (identify entry, fn error => ResolutionFailure (entry, error)), fn root =>
         let val Resolved (rootId, _) = root in
           SubsetResult.map (visit (root, entry, [], []), fn completed => Graph (rootId, SubsetList.reverse completed))
         end)

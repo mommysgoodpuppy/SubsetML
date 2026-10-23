@@ -428,7 +428,7 @@ structure SubsetWonParser = struct
           finish (skip stop)
         end)
     in
-      requireEnd (parse (SubsetResult.mapError (
+      requireEnd (parse (SubsetResult.mapErr (
         SubsetString.fromNative source,
         fn _ => SubsetWonValue.makeError (0, "expected a byte string")
       )))

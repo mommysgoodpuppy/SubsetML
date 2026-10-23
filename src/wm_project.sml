@@ -62,7 +62,7 @@ structure WmProject = struct
       val rec visit = fn (resolved, active, seen) =>
         let val ModuleProject.Resolved (id, path) = resolved in
           if SubsetList.exists (seen, fn (key, _, _) => ModuleProject.same (key, id)) then SubsetResult.Ok seen
-          else SubsetResult.andThen (SubsetResult.mapError (SubsetIo.readFile path,
+          else SubsetResult.andThen (SubsetResult.mapErr (SubsetIo.readFile path,
             fn error => Error (path, "", SubsetIo.errorText error, 0)), fn bytes =>
             let val src = CompilerText.stringOf bytes in
               case WmLexer.lex src of

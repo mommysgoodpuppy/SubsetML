@@ -9,7 +9,7 @@ from "./subset_list.sml" import * as SubsetList;
 structure SubsetProcess = struct
   val arguments = fn () =>
     SubsetResult.andThen (
-      SubsetResult.mapError (SubsetHost.arguments (), fn message => SubsetIo.HostError message),
+      SubsetResult.mapErr (SubsetHost.arguments (), fn message => SubsetIo.HostError message),
       fn values => SubsetList.traverse (values, fn value =>
         SubsetResult.map (SubsetIo.bytes value, fn bytes => value)))
   (* Exit never returns, including in the portable type system. *)

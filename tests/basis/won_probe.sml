@@ -64,7 +64,7 @@ structure WonProbe = struct
   val access = fn () =>
     let
       val is = fn (found, expected) =>
-        SubsetResult.mapError (found, SubsetWon.problemText) = expected
+        SubsetResult.mapErr (found, SubsetWon.problemText) = expected
       val doc = SubsetWon.read "{server = {port = 8080} items = [1 X<id = 2>(\"y\")] none = null \"odd key\" = true}"
       val items = SubsetWon.get (doc, "items")
       val wrong = SubsetWon.text (SubsetWon.get (items, "x"))

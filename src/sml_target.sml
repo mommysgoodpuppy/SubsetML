@@ -14,9 +14,9 @@ from "./sml_list.sml" import * as SmlList;
 structure SmlTarget = struct
   val quote = fn text => "\"" ^ CompilerText.escapeSmlString text ^ "\""
   val error = fn text => SubsetResult.Err text
-  val identify = fn path => SubsetResult.mapError (ModuleProject.identify path,
+  val identify = fn path => SubsetResult.mapErr (ModuleProject.identify path,
     fn failure => path ^ ": " ^ SubsetIo.errorText failure)
-  val read = fn path => SubsetResult.mapError (
+  val read = fn path => SubsetResult.mapErr (
     SubsetResult.map (SubsetIo.readFile path, CompilerText.stringOf),
     fn failure => path ^ ": " ^ SubsetIo.errorText failure)
   val rec traverse = fn (items, f) => case items of

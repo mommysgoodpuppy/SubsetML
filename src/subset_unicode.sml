@@ -23,6 +23,6 @@ structure SubsetUnicode = struct
     else (if value > 1114111 then OutOfRange else InvalidScalar)
 
   val encodeCodes = fn (codes, index) =>
-    SubsetResult.mapError (SubsetList.traverse (codes, SubsetChar.fromCode),
+    SubsetResult.mapErr (SubsetList.traverse (codes, SubsetChar.fromCode),
       fn error => Error (InvalidByte, index))
 end

@@ -124,7 +124,7 @@ let discover = (roots) => {
     let ModuleProject.Resolved(id, path) = resolved;
     if (SubsetList.exists(seen, (key, _, _) => { ModuleProject.same(key, id) })) { SubsetResult.Ok(seen) } else {
       SubsetResult.andThen(
-        SubsetResult.mapError(
+        SubsetResult.mapErr(
           SubsetIo.readFile(path),
           (error) => { Error(path, "", SubsetIo.errorText(error), (0: I32)) }
         ),
