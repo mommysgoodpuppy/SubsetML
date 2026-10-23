@@ -61,7 +61,7 @@ clean:
 
 # Translates the implementation to Workman, writing each foo.wm next to src/foo.sml for
 # side-by-side reading. Edit .sml sources; text and file/process kernel adapters are staged from lib/.
-wm: bin/subsetml lib/subset_text_host.wm lib/subset_host.wm lib/subset_host.js lib/subset_host.d.ts
+wm: bin/subsetml lib/subset_text_host.wm lib/subset_host.wm lib/subset_host.js
 	bin/subsetml wm src $(SRCS)
 	sh scripts/stage-text-host.sh src
 
