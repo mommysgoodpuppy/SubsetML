@@ -3,15 +3,18 @@ from "./syntax.sml" import * as Syntax;
 from "./sml_list.sml" import * as SmlList;
 from "./compiler_text.sml" import * as CompilerText;
 from "./subset_char.sml" import * as SubsetChar;
-from "./doc.sml" import * as Doc;
-from "./wm_print.sml" import * as WmPrint;
 from "./unify.sml" import * as Unify;
 from "./types.sml" import * as Types;
-from "./elab.sml" import * as Elab;
+from "./doc.sml" import * as Doc;
+from "./wm_print.sml" import * as WmPrint;
 from "./basis.sml" import * as Basis;
-from "./wm_parse.sml" import * as WmParse;
+from "./elab.sml" import * as Elab;
+from "./subset_string.sml" import * as SubsetString;
+from "./backend_names.sml" import * as BackendNames;
+from "./env.sml" import * as Env;
 from "./wm_lexer.sml" import * as WmLexer;
 from "./sml_print.sml" import * as SmlPrint;
+from "./wm_parse.sml" import * as WmParse;
 *)
 
 (* Whole-file translation. By spec M1 a file has at most one structure, so each SubsetML file
@@ -41,6 +44,7 @@ structure Translate = struct
       PWild => []
     | PScon (_, _) => []
     | PId (_, (qs, _)) => head qs
+    | PPinned (_, (qs, _)) => head qs
     | PRecord (_, fields) => concatMap (fn (_, p) => patQuals p, fields)
     | PTuple ps => concatMap (patQuals, ps)
     | PList ps => concatMap (patQuals, ps)
@@ -52,6 +56,7 @@ structure Translate = struct
     | EId (_, (qs, _)) => head qs
     | ERecord (_, fields) => concatMap (fn (_, e) => expQuals e, fields)
     | ESelect (_, _) => []
+    | ECopy (_, source, target, t) => expQuals source @ expQuals target @ tyQuals t
     | ETuple es => concatMap (expQuals, es)
     | EList es => concatMap (expQuals, es)
     | ESeq es => concatMap (expQuals, es)
@@ -123,6 +128,7 @@ structure Translate = struct
       | ELet (ds, es) => ELet (SmlList.map (fn d => decStrip (self, d)) ds, SmlList.map go es)
       | EApp (f, a) => EApp (go f, go a)
       | ETyped (x, t) => ETyped (go x, tyStrip (self, t))
+      | ECopy (p, source, target, t) => ECopy (p, go source, go target, tyStrip (self, t))
       | EAndalso (a, b) => EAndalso (go a, go b)
       | EOrelse (a, b) => EOrelse (go a, go b)
       | EIf (c, a, b) => EIf (go c, go a, go b)
@@ -169,6 +175,7 @@ structure Translate = struct
         EId (q, (_, x)) => [(q, x)]
       | ERecord (q, fields) => concatMap (fn (l, x) => (q, l) :: expNames (q, x), fields)
       | ESelect (q, l) => [(q, l)]
+      | ECopy (_, source, target, _) => go source @ go target
       | ETuple es => concatMap (go, es)
       | EList es => concatMap (go, es)
       | ESeq es => concatMap (go, es)
@@ -213,7 +220,7 @@ structure Translate = struct
                        binds)
         | _ => []
     in
-      concatMap (keyword, concatMap (decNames, decs) @ concatMap (fn e => expNames (0.0, e), exps))
+      concatMap (keyword, concatMap (decNames, decs) @ concatMap (fn e => expNames (0, e), exps))
       @ concatMap (casing, decs)
     end
 
@@ -231,7 +238,7 @@ structure Translate = struct
           last :: _ => last
         | [] => path
     in
-      if CompilerText.isSuffix (file, ".sml") then CompilerText.slice (file, 0.0, CompilerText.size file - 4.0) else file
+      if CompilerText.isSuffix (file, ".sml") then CompilerText.slice (file, 0, CompilerText.size file - 4) else file
     end
 
   (* The file's structure name, or "" when it has none. *)
@@ -270,6 +277,74 @@ structure Translate = struct
                  | TopExp (_, _) => [], phrases),
      concatMap (fn TopExp (_, e) => [e] | TopDecs _ => [], phrases))
 
+  (* Declaration forms without a WM representation are errors, including inside functions.
+     Expression compatibility operators remain supported independently of declarations. *)
+  val declarationGaps = fn (structures, prog) =>
+    let
+      val rec expressions = fn es => concatMap (expression, es)
+      and rules = fn rs => expressions (SmlList.map (fn (_, e) => e) rs) @ concatMap (fn (p, _) => patterns p, rs)
+      and expression = fn e => case e of
+          EScon (_, SInt _) => ["signed 32-bit int (WM support deferred)"]
+        | EScon _ => [] | EId _ => [] | ESelect _ => []
+        | ERecord (_, fields) => expressions (SmlList.map (fn (_, e) => e) fields)
+        | ETuple es => expressions es | EList es => expressions es | ESeq es => expressions es
+        | ELet (ds, es) => concatMap (declaration, ds) @ expressions es
+        | EApp (a, b) => expressions [a, b] | ETyped (e, t) => expression e @ integerType t
+        | EAndalso (a, b) => expressions [a, b] | EOrelse (a, b) => expressions [a, b]
+        | EIf (a, b, c) => expressions [a, b, c]
+        | ECase (e, rs) => expression e @ rules rs | EFn rs => rules rs
+        | ECopy (_, a, b, _) => expressions [a, b]
+      and integerType = fn t => case t of
+          TyCon (_, ([], "int")) => ["signed 32-bit int (WM support deferred)"]
+        | TyCon (ts, _) => concatMap (integerType, ts)
+        | TyTuple ts => concatMap (integerType, ts)
+        | TyArrow (a, b) => integerType a @ integerType b
+        | TyRecord fs => concatMap (fn (_, t) => integerType t, fs)
+        | _ => []
+      and patterns = fn p => case p of
+          PScon (_, SInt _) => ["signed 32-bit int (WM support deferred)"]
+        | PTyped (p, t) => patterns p @ integerType t
+        | PRecord (_, fs) => concatMap (fn (_, p) => patterns p, fs)
+        | PTuple ps => concatMap (patterns, ps) | PList ps => concatMap (patterns, ps)
+        | PApp (_, _, p) => patterns p | _ => []
+      and declaration = fn d => case d of
+          DVal (_, variables, plain, recs) =>
+            (if not (SmlList.null variables) then ["explicit val type variables"]
+             else (if not (SmlList.null plain) andalso not (SmlList.null recs)
+             then ["mixed plain/recursive val bindings"] else [])) @ rules (plain @ recs)
+        | DType (_, binds) => concatMap (fn (_, _, t) => integerType t, binds) @
+            (if (case binds of [] => false | [_] => false | _ => true) andalso
+              SmlList.exists (fn (_, _, t) => case t of TyRecord _ => true | _ => false) binds
+            then ["type groups containing records"] else [])
+        | DDatatype (_, binds) => concatMap (fn (_, _, cs) =>
+            concatMap (fn (_, _, t) => case t of NONE => [] | SOME t => integerType t, cs), binds)
+        | DOpen (_, ids) => if SmlList.all (fn id => SmlList.exists (fn s => [s] = id) structures) ids
+            then [] else ["open of a non-project structure"]
+      val top = fn td => case td of
+          TopExp (_, e) => expression e
+        | TopDecs ds => concatMap (fn SDec d => declaration d
+            | SStructure (_, binds) => concatMap (fn (_, ds) => concatMap (declaration, ds), binds), ds)
+    in concatMap (top, prog) end
+
+  (* The deferred WM execution profile must not silently reinterpret newly
+     defaulted SML integers as real-valued Number operations. *)
+  val integerSite = fn st =>
+    let
+      val rec contains = fn t => case Unify.prune (st, t) of
+          Types.TCon (n, ts) => Unify.sameName (n, Types.intName) orelse SmlList.exists contains ts
+        | Types.TVar v => (case Unify.lookup (st, v) of
+            Unify.Free (Types.KClass ns, _) => SmlList.exists (fn n => Unify.sameName (n, Types.intName)) ns
+          | _ => false)
+        | Types.TArrow (a, b) => contains a orelse contains b
+        | Types.TRecord fs => SmlList.exists (fn (_, t) => contains t) fs
+        | _ => false
+      val Unify.State (_, _, _, _, sites) = st
+    in case sites of NONE => NONE | SOME xs => SmlList.find (fn (_, t) => contains t) xs end
+
+  val wmNumbers = fn st => case integerSite st of
+    NONE => Unify.Ok ((), st)
+  | SOME (pos, _) => Unify.Err ("signed 32-bit int: WM support is deferred; annotate numeric operands as Number", pos)
+
   (* Translates one parsed file. `structures` names every structure of the program. *)
   val toWm = fn (structures, path, src, prog, comments) =>
     let
@@ -279,23 +354,34 @@ structure Translate = struct
       val start =
         case prog of
           TopDecs (SStructure (p, _) :: _) :: _ => p
-        | _ => 0.0
+        | _ => 0
       val imports =
         SmlList.map (fn q => Doc.atom (start, "from \"./" ^ WmPrint.fileName q ^ "\" import * as " ^ q ^ ";"))
           (SmlList.filter (fn q => q <> self andalso SmlList.exists (fn s => s = q) structures) used)
-      val doc = Doc.stack (SmlList.map (fn td => WmPrint.topdec (structures, td)) phrases)
+      (* A newly valid defaulted integer function need not contain an integer
+         literal or annotation. Reject it too when its standalone environment
+         can be resolved, instead of silently assigning WM Number semantics. *)
+      val inferredInteger = case Basis.initial of Unify.Err _ => false | Unify.Ok (basis, _) =>
+        (case Elab.program (basis, prog, Unify.lenient) of Unify.Err _ => false
+         | Unify.Ok (_, st) => case integerSite st of SOME _ => true | NONE => false)
+      val gaps = declarationGaps (structures, phrases) @
+        (if inferredInteger then ["signed 32-bit int (WM support deferred)"] else [])
+      val doc = if SmlList.null gaps then Doc.stack (SmlList.map (fn td => WmPrint.topdec (structures, td)) phrases) else Doc.text ""
       val body =
         case imports of
           [] => doc
         | _ => Doc.stack [Doc.stack imports, Doc.text "", doc]
       val expected = WmPrint.fileName self
     in
-      if self <> "" andalso expected <> baseName path ^ ".wm" then
+      if not (SmlList.null gaps) then
+        TranslateError (path ^ ": unsupported WM translation: " ^ SubsetString.concatWith (gaps, ", ") ^
+          "; embedded SML declarations are not supported")
+      else (if self <> "" andalso expected <> baseName path ^ ".wm" then
         TranslateError (path ^ ": structure " ^ self ^ " must be in a file named "
-                        ^ CompilerText.slice (expected, 0.0, CompilerText.size expected - 3.0) ^ ".sml")
+                        ^ CompilerText.slice (expected, 0, CompilerText.size expected - 3) ^ ".sml")
       else
         Output (baseName path ^ ".wm", Doc.render (src, comments, WmPrint.commentStyle, body),
-                conventionWarnings (decs, exps))
+                conventionWarnings (decs, exps)))
     end
 
   (* Traverse expressions without changing source positions or declaration layout. *)
@@ -312,6 +398,7 @@ structure Translate = struct
          | ELet (ds, es) => ELet (SmlList.map (fn d => mapDec (f, d)) ds, SmlList.map go es)
          | EApp (a, b) => EApp (go a, go b)
          | ETyped (x, t) => ETyped (go x, t)
+         | ECopy (p, source, target, t) => ECopy (p, go source, go target, t)
          | EAndalso (a, b) => EAndalso (go a, go b)
          | EOrelse (a, b) => EOrelse (go a, go b)
          | EIf (c, a, b) => EIf (go c, go a, go b)
@@ -336,6 +423,15 @@ structure Translate = struct
               (n, SmlList.map (fn d => mapDec (f, d)) ds)) binds)) sds)
       | TopExp (p, e) => TopExp (p, mapExp (f, e))) prog
 
+  (* Native source spelling is a backend mapping, not a change to WM names or FFI keys.
+     One project-wide prefix is absent from every input byte string. *)
+  val keywordPrefix = BackendNames.prefix
+
+  (* Compatibility entry: the source-list backend uses project-wide binding resolution. *)
+  val keywordProgram = fn (prefix, prog) =>
+    let val (prog, _, _) = BackendNames.module ("", [], prog, BackendNames.Supply (prefix, 0, []))
+    in prog end
+
   (* Workman equality is ambiguous until elaboration. Only a scalar real comparison is
      rewritten; a second, strict elaboration rejects every remaining invalid SML equality. *)
   val realEquality = fn (st, prog) =>
@@ -349,13 +445,145 @@ structure Translate = struct
       val rewrite = fn e =>
         case e of
           EApp (EId (p, ([], opr)), a) =>
-            if (opr = "=" orelse opr = "<>") andalso SmlList.exists (fn q => Real.== (p, q)) positions
+            if (opr = "=" orelse opr = "<>") andalso SmlList.exists (fn q => (p = q)) positions
             then EApp (EId (p, (["Real"], if opr = "=" then "==" else "!=")), a)
             else e
         | _ => e
     in
       mapProgram (rewrite, prog)
     end
+
+  (* WM can generalize a pure function-field alias; SML selector applications cannot.
+     Probe in the declaration's actual environment, then wrap only a known function.
+     The probe state is discarded: the emitted expression is elaborated normally, so
+     captured monomorphic variables keep their levels and ordinary partial applications
+     retain their source restriction. This first pass handles module-level bindings. *)
+  val portableValues = fn (env, prog, st) =>
+    let
+      val used = concatMap (fn TopDecs sds => concatMap (fn SDec d => decNames d
+        | SStructure (_, bs) => concatMap (fn (_, ds) => concatMap (decNames, ds), bs), sds)
+        | TopExp (p, e) => expNames (p, e), prog)
+      val fresh = fn n => BackendNames.avoid (SmlList.map (fn (_, x) => x) used, n)
+      val rec options = fn xs =>
+        case xs of [] => SOME [] | NONE :: _ => NONE
+        | SOME x :: rest => (case options rest of SOME xs => SOME (x :: xs) | NONE => NONE)
+      (* Find a visible nominal constructor, including imported datatypes. Only identity
+         aliases qualify: an alias with permuted/fixed arguments is not a spelling for it. *)
+      val typeName = fn (env, nominal) =>
+        let
+          val rec identity = fn (i, args) => case args of [] => true
+            | Types.TGen j :: rest => (i = j) andalso identity (i + 1, rest)
+            | _ => false
+          val rec find = fn (Env.Env (structures, types, _), path) =>
+            let
+              val rec localType = fn (types, seen) => case types of [] => NONE
+                | (n, Env.TyStr (arity, body, _)) :: rest =>
+                    if SmlList.exists (fn x => x = n) seen then localType (rest, seen)
+                    else (case body of Types.TCon (name, args) =>
+                      if Unify.sameName (name, nominal) andalso (arity = Types.arityOf nominal)
+                        andalso identity (0, args) then SOME (path, n)
+                      else localType (rest, n :: seen)
+                    | _ => localType (rest, n :: seen))
+              val rec imported = fn (structures, seen) => case structures of [] => NONE
+                | (n, (body, _)) :: rest =>
+                    if SmlList.exists (fn x => x = n) seen then imported (rest, seen)
+                    else (case find (body, path @ [n]) of SOME id => SOME id
+                      | NONE => imported (rest, n :: seen))
+            in case localType (types, []) of SOME id => SOME id | NONE => imported (structures, []) end
+        in if Types.stampOf nominal < Types.firstStamp then SOME ([], Types.nameOf nominal)
+           else find (env, []) end
+      val copy = fn (env, p, source, target, layout, st) =>
+        case layout of TyCon (parameters, id) =>
+          let val variables = concatMap (fn TyVar v => [v] | _ => [], parameters) in
+            Unify.bind (Elab.exp ((env, 1, []), source, st)) (fn sourceType => fn probe =>
+              Unify.bind (Elab.mapRes (fn (v, probe) =>
+                let val (t, probe) = Unify.fresh (probe, Types.KPlain, 1)
+                in Unify.Ok ((v, t), probe) end, variables, probe)) (fn arguments => fn probe =>
+                Unify.bind (Elab.elabTy (env, fn v => Env.assoc (v, arguments), p, layout, probe))
+                  (fn layoutType => fn probe =>
+                    Unify.bind (Elab.unifyAt (probe, p, "copied layout", layoutType, sourceType)) (fn _ => fn probe =>
+                      Unify.bind (Elab.closeDeclaration (0, probe)) (fn _ => fn probe =>
+                        let
+                          val rec syntaxType = fn t => case Unify.prune (probe, t) of
+                              Types.TVar v => (case Unify.lookup (probe, v) of
+                                Unify.Free (kind, level) => if level <= 0 then NONE
+                                  else (case kind of Types.KClass _ => NONE | _ =>
+                                    SOME (TyVar ((case kind of Types.KEq => "''" | _ => "'") ^
+                                      fresh ("subsetmlCopy" ^ CompilerText.natural p ^ "Variable" ^ CompilerText.natural v))))
+                              | _ => NONE)
+                            | Types.TRigid _ => NONE
+                            | Types.TGen _ => NONE
+                            | Types.TArrow (a, b) => (case (syntaxType a, syntaxType b) of
+                                (SOME a, SOME b) => SOME (TyArrow (a, b)) | _ => NONE)
+                            | Types.TCon (n, args) => (case (typeName (env, n), options (SmlList.map syntaxType args)) of
+                                (SOME id, SOME args) => SOME (TyCon (args, id)) | _ => NONE)
+                            | Types.TRecord [] => SOME (TyCon ([], ([], "unit")))
+                            | Types.TRecord fields => (case Types.tupleComponents fields of
+                                SOME types => (case options (SmlList.map syntaxType types) of
+                                  SOME types => SOME (TyTuple types) | NONE => NONE)
+                              | NONE => NONE)
+                          val inferred = options (SmlList.map (fn (_, t) => syntaxType t) arguments)
+                          val expanded = case target of ERecord (q, fields) =>
+                              ERecord (q, SmlList.map (fn (label, value) =>
+                                let val argument = fresh ("subsetmlCopy" ^ CompilerText.natural p ^ "_" ^ label)
+                                in (label, EFn [(PId (p, ([], argument)), EApp (value, EId (p, ([], argument))))]) end) fields)
+                            | _ => target
+                        in Unify.Ok ((case inferred of SOME args => ETyped (expanded, TyCon (args, id))
+                          | NONE => source), st) end)))))
+          end
+        | _ => Unify.Ok (source, st)
+      val expression = fn (env, p, e, st) =>
+        case e of
+          ECopy (p, source, target, layout) => copy (env, p, source, target, layout, st)
+        |
+          EApp (ESelect (_, _), EId (_, _)) =>
+            Unify.bind (Elab.exp ((env, 1, []), e, st)) (fn t => fn probe =>
+              Unify.bind (Elab.closeDeclaration (0, probe)) (fn _ => fn probe =>
+                case Unify.prune (probe, t) of
+                  Types.TArrow (_, _) =>
+                    let val arg = fresh ("subsetmlAlias" ^ CompilerText.natural p)
+                    in Unify.Ok (EFn [(PId (p, ([], arg)), EApp (e, EId (p, ([], arg))))], st) end
+                | _ => Unify.Ok (e, st)))
+        | _ => Unify.Ok (e, st)
+      val declaration = fn (env, d, st) =>
+        case d of
+          DVal (p, vs, [(pattern, e)], []) =>
+            (case pattern of
+               PId (_, ([], _)) => Unify.bind (expression (env, p, e, st)) (fn e => fn st =>
+                 Unify.Ok (DVal (p, vs, [(pattern, e)], []), st))
+             | _ => Unify.Ok (d, st))
+        | _ => Unify.Ok (d, st)
+      val rec declarations = fn (env, ds, st) =>
+        case ds of [] => Unify.Ok ((Env.empty, []), st)
+        | d :: rest => Unify.bind (declaration (env, d, st)) (fn d => fn st =>
+            Unify.bind (Elab.dec ((env, 0, []), d, st)) (fn delta => fn st =>
+              Unify.bind (declarations (Env.plus (env, delta), rest, st)) (fn (more, rest) => fn st =>
+                Unify.Ok ((Env.plus (delta, more), d :: rest), st))))
+      val structureDec = fn (env, sd, st) =>
+        case sd of SDec d => Unify.bind (declaration (env, d, st)) (fn d => fn st =>
+          Unify.bind (Elab.dec ((env, 0, []), d, st)) (fn delta => fn st => Unify.Ok ((delta, SDec d), st)))
+        | SStructure (p, bs) =>
+            Unify.bind (Elab.foldRes (fn ((delta, output), (n, ds), st) =>
+              Unify.bind (declarations (env, ds, st)) (fn (body, ds) => fn st =>
+                Unify.Ok ((Env.plus (delta, Env.withStructure (n, body, false)), output @ [(n, ds)]), st)),
+              (Env.empty, []), bs, st)) (fn (delta, bs) => fn st =>
+                Unify.Ok ((delta, SStructure (p, bs)), st))
+      val rec structures = fn (env, sds, st) =>
+        case sds of [] => Unify.Ok ((Env.empty, []), st)
+        | sd :: rest => Unify.bind (structureDec (env, sd, st)) (fn (delta, sd) => fn st =>
+              Unify.bind (structures (Env.plus (env, delta), rest, st)) (fn (more, rest) => fn st =>
+                Unify.Ok ((Env.plus (delta, more), sd :: rest), st)))
+      val rec phrases = fn (env, prog, st) =>
+        case prog of [] => Unify.Ok ((env, []), st)
+        | td :: rest =>
+            Unify.bind (case td of TopDecs sds =>
+              Unify.bind (structures (env, sds, st)) (fn (delta, sds) => fn st =>
+                Unify.Ok ((delta, TopDecs sds), st))
+              | _ => Unify.bind (Elab.topdec (env, td, st)) (fn delta => fn st =>
+                Unify.Ok ((delta, td), st))) (fn (delta, td) => fn st =>
+                Unify.bind (phrases (Env.plus (env, delta), rest, st)) (fn (env, rest) => fn st =>
+                  Unify.Ok ((env, td :: rest), st)))
+    in phrases (env, prog, st) end
 
   (* Check dependencies before a module, regardless of the command-line order. Every
      recovery starts with its dependency closure, so unrelated input files remain independent. *)
@@ -376,7 +604,7 @@ structure Translate = struct
         let val name = nameOfModule item in
           if SmlList.exists (fn n => n = name) done then Unify.Ok ((done, acc), Unify.initial)
           else (if SmlList.exists (fn n => n = name) visiting then
-            Unify.Err ("cyclic module dependency involving " ^ name, 0.0)
+            Unify.Err ("cyclic module dependency involving " ^ name, 0)
           else
             let
               val needed = SmlList.filter (fn m => nameOfModule m <> name andalso
@@ -392,9 +620,9 @@ structure Translate = struct
           (_, [], st, acc) => Unify.Ok (acc, st)
         | (env, (path, src, prog, comments) :: rest, st, acc) =>
             let val Unify.State (vars, next, sels, recs, _) = st in
-              Unify.bind (Elab.program (env, prog, Unify.State (vars, next, sels, recs, SOME [])))
-                (fn env => fn st => elaborate (env, rest, st,
-                  acc @ [(path, src, realEquality (st, prog), comments)]))
+              Unify.bind (portableValues (env, prog, Unify.State (vars, next, sels, recs, SOME [])))
+                (fn (env, prog) => fn st => Unify.bind (wmNumbers st) (fn _ => fn st =>
+                  elaborate (env, rest, st, acc @ [(path, src, realEquality (st, prog), comments)])))
             end
       val rec strict = fn
           (_, [], st) => Unify.Ok ((), st)
@@ -402,18 +630,75 @@ structure Translate = struct
             Unify.bind (Elab.program (env, prog, st)) (fn env => fn st => strict (env, rest, st))
     in
       Unify.bind (order (target, [], [], [])) (fn (_, ordered) => fn _ =>
-        Unify.bind Basis.initial (fn basis => fn _ =>
+        let
+          val prefix = BackendNames.prefix (SmlList.map (fn (path, src, _, _) => (path, src)) ordered)
+          val (planned, names) = BackendNames.project (prefix,
+            SmlList.map (fn m => (nameOfModule m, deps m, m)) ordered)
+          val ordered = SmlList.map (fn (_, _, m) => m) planned
+        in case BackendNames.failure names of
+          SOME (_, p, message) => Unify.Err (message, p)
+        | NONE => Unify.bind Basis.initial (fn basis => fn _ =>
           Unify.bind (elaborate (basis, ordered, Unify.lenient, [])) (fn rewritten => fn _ =>
             Unify.bind (strict (basis, rewritten, Unify.initial)) (fn _ => fn st =>
               case SmlList.find (fn m => nameOfModule m = nameOfModule target) rewritten of
                 SOME m => Unify.Ok (m, st)
-              | NONE => Unify.Err ("missing translated module", 0.0)))))
+              | NONE => Unify.Err ("missing translated module", 0)))) end)
     end
 
-  (* A Workman module as SubsetML: its declarations become the structure named by the file. *)
-  val fromWm = fn (path, src, decs, exps, comments) =>
+  (* Modules arrive in resolved dependency order. Each checker sees only direct imports;
+     cache owned structure environments, never an importer's ambient environment. *)
+  val recoverProjectWithRuntime = fn (runtime, modules) =>
     let
-      val name = WmParse.structureName path
+      val working = fn (basis, cache, dependencies) =>
+        SmlList.foldl (fn (name, result) => Unify.bind result (fn env => fn st =>
+          case SmlList.find (fn (key, _) => key = name) cache of
+            NONE => Unify.Err ("missing resolved dependency " ^ name, 0)
+          | SOME (_, body) => Unify.Ok (Env.plus (env, Env.withStructure (name, body, false)), st)))
+          (Unify.Ok (basis, Unify.initial)) dependencies
+      val own = fn (env, name) =>
+        case Env.structureAt (env, [name]) of
+          NONE => Unify.Err ("missing translated structure " ^ name, 0)
+        | SOME (body, _) =>
+            let val selected = case runtime of SOME key => key = name | NONE => false
+                val valid = case Env.value (body, ([], "panic")) of
+                  SOME (([Types.KPlain], Types.TArrow (Types.TCon (tn, []), Types.TGen index)), Env.SValue) =>
+                    (Types.stampOf tn = Types.stampOf Types.stringName) andalso (index = 0)
+                | _ => false
+            in if selected andalso not valid then
+                 Unify.Err ("panic runtime must export panic : string -> 'a", 0)
+               else Unify.Ok (body, Unify.initial) end
+      val rec rewrite = fn (basis, remaining, cache, st, acc) =>
+        case remaining of
+          [] => Unify.Ok (SmlList.rev acc, st)
+        | (name, dependencies, (path, src, prog, cs)) :: rest =>
+            Unify.bind (working (basis, cache, dependencies)) (fn env => fn _ =>
+              let val Unify.State (vars, next, sels, recs, _) = st in
+                Unify.bind (portableValues (env, prog, Unify.State (vars, next, sels, recs, SOME [])))
+                  (fn (exports, rewritten) => fn next => Unify.bind (wmNumbers next) (fn _ => fn next =>
+                    Unify.bind (own (exports, name)) (fn body => fn _ =>
+                      rewrite (basis, rest, (name, body) :: cache, next,
+                        (name, dependencies, (path, src, realEquality (next, rewritten), cs)) :: acc))))
+              end)
+      val rec strict = fn (basis, remaining, cache, st) =>
+        case remaining of
+          [] => Unify.Ok ((), st)
+        | (name, dependencies, (_, _, prog, _)) :: rest =>
+            Unify.bind (working (basis, cache, dependencies)) (fn env => fn _ =>
+              Unify.bind (Elab.programExports (env, prog, st)) (fn exports => fn next =>
+                Unify.bind (own (exports, name)) (fn body => fn _ =>
+                  strict (basis, rest, (name, body) :: cache, next))))
+    in
+      Unify.bind Basis.initial (fn basis => fn _ =>
+        Unify.bind (rewrite (basis, modules, [], Unify.lenient, [])) (fn rewritten => fn _ =>
+          Unify.bind (strict (basis, rewritten, [], Unify.initial)) (fn _ => fn st =>
+            Unify.Ok (SmlList.map (fn (_, _, m) => m) rewritten, st))))
+    end
+
+  val recoverProject = fn modules => recoverProjectWithRuntime (NONE, modules)
+
+  (* A Workman module as SubsetML: its declarations become the structure named by the file. *)
+  val fromWmNamed = fn (name, src, decs, exps, comments) =>
+    let
       (* Imports disappear from the AST. Anchor the structure before them, so comments
          between an import and the first declaration stay inside the structure. *)
       val first =
@@ -426,7 +711,7 @@ structure Translate = struct
         | NONE => Doc.text ("structure " ^ name ^ " = struct")
       val structureDoc =
         Doc.stack [structureLine,
-                   Doc.indent (2.0, Doc.stack (SmlList.map SmlPrint.dec decs)),
+                   Doc.indent (2, Doc.stack (SmlList.map SmlPrint.dec decs)),
                    Doc.text "end"]
       val expDocs = SmlList.map (fn e => Doc.cat (SmlPrint.exp e, Doc.text ";")) exps
       val doc =
@@ -436,6 +721,9 @@ structure Translate = struct
     in
       Doc.render (src, comments, SmlPrint.commentStyle, doc)
     end
+
+  val fromWm = fn (path, src, decs, exps, comments) =>
+    fromWmNamed (WmParse.structureName path, src, decs, exps, comments)
 
   (* Reprints a parsed file as SubsetML. *)
   val toSml = fn (src, prog, comments) =>

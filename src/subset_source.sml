@@ -7,8 +7,8 @@ from "./subset_string.sml" import * as SubsetString;
 
 (* Immutable source-built byte index. Native input is converted exactly once. *)
 structure SubsetSource = struct
-  datatype source = Empty | Byte of char | Branch of real * source * source
-  val length = fn Empty => 0.0 | Byte c => 1.0 | Branch (size, left, right) => size
+  datatype source = Empty | Byte of char | Branch of int * source * source
+  val length = fn Empty => 0 | Byte c => 1 | Branch (size, left, right) => size
   val join = fn (left, right) => Branch (length left + length right, left, right)
   val build = fn bytes =>
     let
@@ -21,13 +21,13 @@ structure SubsetSource = struct
   val fromBytes = fn bytes => SubsetResult.map (SubsetBytes.validate bytes, build)
   val fromNative = fn value => SubsetResult.map (SubsetString.fromNative value, build)
 
-  val at = fn (tree, index : real) =>
-    if index >= 0.0 andalso index < length tree then
+  val at = fn (tree, index : int) =>
+    if index >= 0 andalso index < length tree then
       let
         val rec go = fn
             (Empty, offset) => SubsetResult.Err SubsetBytes.OutOfBounds
           | (Byte c, offset) =>
-              if offset <= 0.0 andalso offset >= 0.0 then SubsetResult.Ok c
+              if offset <= 0 andalso offset >= 0 then SubsetResult.Ok c
               else SubsetResult.Err SubsetBytes.InvalidIndex
           | (Branch (size, left, right), offset) =>
               if offset < length left then go (left, offset)
@@ -36,11 +36,11 @@ structure SubsetSource = struct
     else SubsetResult.Err SubsetBytes.InvalidIndex
 
   val boundary = fn (tree, index) =>
-    if index >= 0.0 andalso index <= length tree then
+    if index >= 0 andalso index <= length tree then
       if index >= length tree then true else SubsetResult.isOk (at (tree, index))
     else false
   val slice = fn (tree, start, count) =>
-    if count >= 0.0 andalso boundary (tree, start) andalso boundary (tree, start + count) then
+    if count >= 0 andalso boundary (tree, start) andalso count <= length tree - start then
       let
         val finish = start + count
         val rec collect = fn (node, base, acc) =>
@@ -50,6 +50,6 @@ structure SubsetSource = struct
             | Byte c => c :: acc
             | Branch (size, left, right) =>
                 collect (left, base, collect (right, base + length left, acc))
-      in SubsetResult.Ok (collect (tree, 0.0, [])) end
+      in SubsetResult.Ok (collect (tree, 0, [])) end
     else SubsetResult.Err SubsetBytes.InvalidIndex
 end

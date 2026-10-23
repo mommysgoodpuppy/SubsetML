@@ -70,7 +70,7 @@ structure ModuleImports = struct
                 let val (skip, text) = payload in
                   if seen then Error ("only one @subsetml metadata block is allowed", pos)
                   else (if pos >= first then Error ("import metadata must precede ordinary declarations", pos)
-                  else (case declarations (text, pos + 2.0 + skip) of
+                  else (case declarations (text, pos + 2 + skip) of
                     Error (message, offset) => Error (message, offset)
                   | Imports entries => loop (rest, true, entries)))
                 end

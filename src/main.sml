@@ -10,14 +10,17 @@ from "./sml_list.sml" import * as SmlList;
 from "./subset_list.sml" import * as SubsetList;
 from "./translate.sml" import * as Translate;
 from "./sml_list_pair.sml" import * as SmlListPair;
+from "./wm_project.sml" import * as WmProject;
 from "./wm_parse.sml" import * as WmParse;
+from "./backend_names.sml" import * as BackendNames;
 from "./unify.sml" import * as Unify;
-from "./sml_option.sml" import * as SmlOption;
+from "./module_project.sml" import * as ModuleProject;
 from "./print.sml" import * as Print;
 from "./normalize.sml" import * as Normalize;
 from "./basis.sml" import * as Basis;
 from "./elab.sml" import * as Elab;
-from "./module_project.sml" import * as ModuleProject;
+from "./native_int.sml" import * as NativeInt;
+from "./sml_target.sml" import * as SmlTarget;
 *)
 
 (* Command-line driver.
@@ -28,6 +31,8 @@ from "./module_project.sml" import * as ModuleProject;
      subsetml fmt FILE...           reprint each file as SubsetML
      subsetml wm OUTDIR FILE...     translate the program's files to Workman modules in OUTDIR
      subsetml sml OUTDIR FILE.wm... translate Workman modules to SubsetML files in OUTDIR
+     subsetml sml-entry OUTDIR ENTRY.wm discover and translate the supported import graph
+     subsetml sml OUTDIR --panic-runtime R.wm FILE.wm... select the native panic provider
      subsetml roundtrip FILE...     check that SML -> Workman -> SML preserves each file's syntax *)
 structure Main = struct
 
@@ -56,10 +61,10 @@ structure Main = struct
         if i >= offset then (line, col)
         else case bytes of [] => (line, col) | c :: rest =>
           let val newline = c = #"\n" in
-            go (rest, i + 1.0, if newline then line + 1.0 else line, if newline then 1.0 else col + 1.0)
+            go (rest, i + 1, if newline then line + 1 else line, if newline then 1 else col + 1)
           end
     in
-      go (CompilerText.characters src, 0.0, 1.0, 1.0)
+      go (CompilerText.characters src, 0, 1, 1)
     end
 
   val errorLineKind = fn (path, src, kind, msg, pos) =>
@@ -109,7 +114,7 @@ structure Main = struct
     | ParseFailure (path, src, msg, pos) => errorLineKind (path, src, "parse error", msg, pos)
 
   val usage = fn () =>
-    (eprint "usage: subsetml (check | parse | fmt | roundtrip) FILE...\n       subsetml wm OUTDIR FILE...\n       subsetml sml OUTDIR FILE.wm...\n";
+    (eprint "usage: subsetml (check | parse | fmt | roundtrip) FILE...\n       subsetml native OUTDIR FILE.sml...\n       subsetml sml-target (mlton | mlworks) OUTDIR [--adapter CHECKER.sml NATIVE.sml]... FILE.sml...\n       subsetml wm OUTDIR FILE...\n       subsetml sml OUTDIR [--panic-runtime R.wm] FILE.wm...\n       subsetml sml-entry OUTDIR [--panic-runtime R.wm] [--native-adapter CHECKER.wm NATIVE.sml STRUCTURE]... ENTRY.wm\n";
      SubsetProcess.exit false)
 
   val finish = fn ok => SubsetProcess.exit ok
@@ -124,7 +129,7 @@ structure Main = struct
         | SubsetResult.Err error => (eprint (sourceErrorText error); [])) loaded)
     in
       if SmlList.null files then usage ()
-      else (if Real.== (SubsetList.length parsed, SubsetList.length files) then finish (f parsed) else finish false)
+      else (if (SubsetList.length parsed = SubsetList.length files) then finish (f parsed) else finish false)
     end
 
   val translate = fn (outDir, parsed) =>
@@ -151,34 +156,86 @@ structure Main = struct
       | _ => (SmlList.app (fn e => eprint ("error: " ^ e ^ "\n")) errors; false)
     end
 
-  (* Workman to SubsetML: foo_bar.wm becomes foo_bar.sml holding structure FooBar. *)
-  val fromWm = fn (outDir, files) =>
+  (* Reverse translation uses the same canonical resolver as SML metadata loading.
+     Explicit source lists and entry discovery share preparation, resolution and checking. *)
+  val fromWmLoaded = fn (outDir, runtimePath, entryPath, adapterSpecs, sources) =>
     let
-      val loaded = SmlList.map (fn path =>
-        let val src = readFile path in
-          case WmParse.parseModule src of
-            WmParse.ParseError (msg, pos) => (eprint (errorLine (path, src, msg, pos)); NONE)
-          | WmParse.Module (ds, es, cs) => SOME (path, src,
-              Syntax.TopDecs [Syntax.SStructure (0.0, [(WmParse.structureName path, ds)])] ::
-              SmlList.map (fn e => Syntax.TopExp (0.0, e)) es, cs)
-        end) files
-      val modules = SmlList.concat (SmlList.map (fn SOME m => [m] | NONE => []) loaded)
-      val recovered = SmlList.map (fn m => Translate.recover (modules, m)) modules
-      val ok = Real.== (SubsetList.length modules, SubsetList.length files)
-      val results = SmlList.map (fn
-          Unify.Err (msg, _) => (eprint ("error translating Workman: " ^ msg ^ "\n"); NONE)
-        | Unify.Ok ((path, src, prog, cs), _) =>
-            let val (_, phrases) = Translate.module prog
-                val (ds, es) = Translate.parts phrases
-                val stem = Translate.baseName path
-                val name = if CompilerText.isSuffix (stem, ".wm")
-                           then CompilerText.slice (stem, 0.0, CompilerText.size stem - 3.0) else stem
-            in SOME (outDir ^ "/" ^ name ^ ".sml", Translate.fromWm (path, src, ds, es, cs)) end) recovered
+      val keywordPrefix = Translate.keywordPrefix sources
+      val rec traverse = fn (items, f) =>
+        case items of
+          [] => SubsetResult.Ok []
+        | item :: rest => SubsetResult.andThen (f item, fn value =>
+            SubsetResult.map (traverse (rest, f), fn values => value :: values))
+      val translate = fn (units, adapters) =>
+        let
+          (* The selected runtime is the first canonical source. Its closure is checked first;
+             resolution adds it as a private dependency only where the built-in is used. *)
+          val runtime = case (runtimePath, units) of
+            (SOME _, unit :: _) => SOME (WmProject.name unit) | _ => NONE
+          val dependenciesOf = fn name => fn planned =>
+            case SubsetList.find (planned, fn (key, _, _) => key = name) of
+              NONE => [] | SOME (_, dependencies, _) => dependencies
+          val unitsNamed = fn names => traverse (names, fn name =>
+            case SubsetList.find (units, fn unit => WmProject.name unit = name) of
+              NONE => WmProject.failure ("translation", "", "missing runtime dependency " ^ name, 0)
+            | SOME unit => SubsetResult.Ok unit)
+        in SubsetResult.andThen (traverse (units, fn unit => WmProject.prepare (units, unit)), fn prepared =>
+          SubsetResult.andThen (WmProject.order prepared, fn ordered =>
+            let
+              val declarations = traverse (ordered, fn WmProject.Source (unit, _, tokens) =>
+                case WmParse.recordLayoutsTokens (WmProject.name unit, WmProject.textOf unit, tokens) of
+                  WmParse.Done (layouts, _) => SubsetResult.Ok layouts
+                | WmParse.Fail (message, pos) => WmProject.failure (WmProject.pathOf unit, WmProject.textOf unit, message, pos))
+            in SubsetResult.andThen (declarations, fn groups =>
+              SubsetResult.andThen (traverse (ordered, fn WmProject.Source (unit, edges, tokens) =>
+                case WmParse.parseModuleProject (SmlList.concat groups, WmProject.name unit, WmProject.textOf unit, tokens, keywordPrefix) of
+                  WmParse.ParseError (message, pos) => WmProject.failure (WmProject.pathOf unit, WmProject.textOf unit, message, pos)
+                | WmParse.Module (ds, es, cs) =>
+                    SubsetResult.map (WmProject.imported (units, unit, edges), fn dependencies =>
+                      (WmProject.name unit, SmlList.map WmProject.name dependencies,
+                       (WmProject.pathOf unit, WmProject.textOf unit,
+                        Syntax.TopDecs [Syntax.SStructure (0, [(WmProject.name unit, ds)])] ::
+                        SmlList.map (fn e => Syntax.TopExp (0, e)) es, cs)))), fn modules =>
+                let
+                  val (renamed, names) = BackendNames.projectWithRuntime (runtime, keywordPrefix, modules)
+                  val checked = case BackendNames.failure names of
+                    NONE => Translate.recoverProjectWithRuntime (runtime, renamed)
+                  | SOME (_, pos, message) => Unify.Err (message, pos)
+                in case checked of
+                  Unify.Err (message, pos) => WmProject.failure ("translation", "", BackendNames.diagnostic (names, message), pos)
+                | Unify.Ok (recovered, _) =>
+                    SubsetResult.andThen (traverse (SmlListPair.zip (ordered, recovered),
+                      fn (WmProject.Source (unit, _, _), (_, src, prog, cs)) =>
+                        SubsetResult.map (unitsNamed (dependenciesOf (WmProject.name unit) renamed), fn dependencies =>
+                          let val (_, phrases) = Translate.module prog
+                              val (ds, es) = Translate.parts phrases
+                          in (outDir ^ "/" ^ WmProject.output unit,
+                            WmProject.metadata dependencies ^ Translate.fromWmNamed (WmProject.name unit, src, ds, es, cs)) end)), fn results =>
+                      case entryPath of NONE => SubsetResult.Ok results
+                      | SOME path => (case ModuleProject.identify path of
+                          SubsetResult.Err error => WmProject.failure (path, "", SubsetIo.errorText error, 0)
+                        | SubsetResult.Ok (ModuleProject.Resolved (id, _)) =>
+                            (case SubsetList.find (units, fn unit => ModuleProject.same (WmProject.identity unit, id)) of
+                              NONE => WmProject.failure (path, "", "missing build entry", 0)
+                            | SOME entry => SubsetResult.map (WmProject.mlb (units, ordered, renamed, entry, adapters),
+                                fn text => results @ [(outDir ^ "/project.mlb", text)])))) end)) end)) end
     in
-      if ok andalso SmlList.all SmlOption.isSome results then
-        (SmlList.app (fn SOME entry => let val (path, text) = entry in writeFile (path, text) end | NONE => ()) results; true)
-      else false
+      case SubsetResult.andThen (WmProject.plan sources, fn units =>
+        SubsetResult.andThen (WmProject.adapters (units, adapterSpecs), fn adapters => translate (units, adapters))) of
+        SubsetResult.Err (WmProject.Error (path, src, message, pos)) =>
+          (eprint (errorLine (path, src, message, pos)); false)
+      | SubsetResult.Ok results => (SmlList.app writeFile results; true)
     end
+
+  val fromWm = fn (outDir, runtimePath, files) =>
+    fromWmLoaded (outDir, runtimePath, NONE, [], SmlList.map (fn path => (path, readFile path))
+      (case runtimePath of NONE => files | SOME path => path :: files))
+
+  val fromWmEntry = fn (outDir, runtimePath, adapterSpecs, entry) =>
+    case WmProject.discover (case runtimePath of NONE => [entry] | SOME runtime => [runtime, entry]) of
+      SubsetResult.Err (WmProject.Error (path, src, message, pos)) =>
+        (eprint (errorLine (path, src, message, pos)); false)
+    | SubsetResult.Ok sources => fromWmLoaded (outDir, runtimePath, SOME entry, adapterSpecs, sources)
 
   (* SML -> Workman -> SML must give back the same declarations, up to Normalize. *)
   val roundTrip = fn parsed =>
@@ -191,8 +248,8 @@ structure Main = struct
             case WmParse.parseModule text of
               WmParse.ParseError (msg, pos) => (eprint (errorLine (path, text, msg, pos)); NONE)
             | WmParse.Module (ds, es, cs) => SOME (path, text,
-                Syntax.TopDecs [Syntax.SStructure (0.0, [(WmParse.structureName name, ds)])] ::
-                SmlList.map (fn e => Syntax.TopExp (0.0, e)) es, cs)) parsed
+                Syntax.TopDecs [Syntax.SStructure (0, [(WmParse.structureName name, ds)])] ::
+                SmlList.map (fn e => Syntax.TopExp (0, e)) es, cs)) parsed
       val modules = SmlList.concat (SmlList.map (fn SOME m => [m] | NONE => []) loaded)
       val show = fn prog =>
         let val (_, phrases) = Translate.module prog
@@ -237,7 +294,7 @@ structure Main = struct
       val checked = SubsetResult.andThen (ModuleProject.discover (path, source), fn graph =>
         case Basis.initial of
           Unify.Err (message, _) => SubsetResult.Err
-            (ModuleProject.CheckFailure (path, "", "internal error in the basis: " ^ message, 0.0))
+            (ModuleProject.CheckFailure (path, "", "internal error in the basis: " ^ message, 0))
         | Unify.Ok (basis, _) => ModuleProject.check (graph, basis))
       val report = fn
           ModuleProject.LoadFailure error => sourceErrorText error
@@ -267,8 +324,34 @@ structure Main = struct
         withParsed (files, fn parsed =>
           (SmlList.app (fn (_, src, prog, comments) => output (Translate.toSml (src, prog, comments))) parsed;
            true))
+    | "native" :: outDir :: files => withParsed (files, fn parsed =>
+        case NativeInt.emit parsed of
+          Unify.Err (message, pos) => (eprint ("native error: " ^ message ^ "\n"); false)
+        | Unify.Ok (outputs, _) =>
+            (SmlList.app (fn (path, text) => writeFile (outDir ^ "/" ^ NativeInt.basename path, text)) outputs; true))
+    | "sml-target" :: target :: outDir :: options =>
+        let val rec parse = fn (remaining, adapters) => case remaining of
+            "--adapter" :: checker :: native :: rest => parse (rest, (checker, native) :: adapters)
+          | [] => usage ()
+          | files => withParsed (files, fn parsed =>
+              case SmlTarget.emit (target, SmlList.rev adapters, parsed) of
+                SubsetResult.Err message => (eprint ("SML target error: " ^ message ^ "\n"); false)
+              | SubsetResult.Ok outputs =>
+                  (SmlList.app (fn (name, text) => writeFile (outDir ^ "/" ^ name, text)) outputs; true))
+        in parse (options, []) end
     | "wm" :: outDir :: files => withParsed (files, fn parsed => translate (outDir, parsed))
-    | "sml" :: outDir :: files => if SmlList.null files then usage () else finish (fromWm (outDir, files))
+    | "sml-entry" :: outDir :: options =>
+        let val rec parse = fn (remaining, runtime, adapters) => case remaining of
+            [entry] => finish (fromWmEntry (outDir, runtime, SmlList.rev adapters, entry))
+          | "--panic-runtime" :: path :: rest =>
+              (case runtime of NONE => parse (rest, SOME path, adapters) | SOME _ => usage ())
+          | "--native-adapter" :: checker :: native :: exported :: rest =>
+              parse (rest, runtime, (checker, native, exported) :: adapters)
+          | _ => usage ()
+        in parse (options, NONE, []) end
+    | "sml" :: outDir :: "--panic-runtime" :: runtime :: files =>
+        if SmlList.null files then usage () else finish (fromWm (outDir, SOME runtime, files))
+    | "sml" :: outDir :: files => if SmlList.null files then usage () else finish (fromWm (outDir, NONE, files))
     | "roundtrip" :: files => withParsed (files, roundTrip)
     | _ => usage ()
     end

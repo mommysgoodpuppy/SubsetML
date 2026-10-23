@@ -1,7 +1,7 @@
 (* Num: the real-typed counterparts of the Basis functions whose types mention int (spec §9.3).
 
-   SubsetML omits int, so its programs use these instead of String.size, List.nth, Char.ord and
-   the rest. This file is not SubsetML: it is full SML, compiled before SubsetML code on MLton.
+   Legacy consumers with real-valued indices use these instead of String.size, List.nth,
+   Char.ord and the rest. SubsetML now also supports int. This file is full SML, not SubsetML.
    The translator has provisional mappings into Workman's current library. These interfaces
    are bootstrap compatibility scaffolding, not the final custom SubsetML Basis API.
 

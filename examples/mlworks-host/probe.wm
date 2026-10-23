@@ -1,0 +1,68 @@
+// This application remains WM source. No JS imports or embedded SML.
+from "../../lib/mlworks/checker/subset_host.wm" import * as Host;
+from "../../src/subset_result.wm" import * as R;
+
+let ensure = (condition, message) => {
+  if (condition) { R.Ok(void) } else { R.Err(message) }
+};
+let failed = (value) => {
+  match(value) { R.Err(message) => { true }, R.Ok(value) => { false } }
+};
+
+let run = (root, bytes) => {
+  let directory = root ++ "/probe-dir";
+  let original = directory ++ "/payload.bin";
+  let renamed = directory ++ "/renamed.bin";
+  R.andThen(Host.makeDir(directory), (_) => {
+    R.andThen(Host.isDir(directory), (isDirectory) => {
+      R.andThen(ensure(isDirectory, "created path is not a directory"), (_) => {
+        R.andThen(Host.writeFile(bytes, original), (_) => {
+          R.andThen(Host.readFile(original), (actual) => {
+            R.andThen(ensure(actual == bytes, "binary round trip differs"), (_) => {
+              R.andThen(ensure(failed(Host.writeFile("bad", original ++ "\u0000suffix")), "NUL path accepted"), (_) => {
+                R.andThen(Host.readFile(original), (preserved) => {
+                  R.andThen(ensure(preserved == bytes, "invalid path truncated file"), (_) => {
+                    R.andThen(Host.rename(original, renamed), (_) => {
+                      R.andThen(Host.listDir(directory), (entries) => {
+                        R.andThen(ensure(entries == ["renamed.bin"], "directory entries differ"), (_) => {
+                          R.andThen(ensure(failed(Host.readFile(original)), "missing file did not return Err"), (_) => {
+                            R.andThen(Host.removeFile(renamed), (_) => {
+                              R.andThen(Host.removeDir(directory), (_) => {
+                                Host.writeStdout("MLWORKS_HOST_PROBE_OK\n")
+                              })
+                            })
+                          })
+                        })
+                      })
+                    })
+                  })
+                })
+              })
+            })
+          })
+        })
+      })
+    })
+  })
+};
+
+let main = (root, bytes) => {
+  let result = R.andThen(run(root, bytes), (_) => {
+    R.andThen(Host.canonicalPath(root), (_) => {
+      R.andThen(Host.arguments(), (_) => {
+        R.andThen(Host.writeFile(bytes, root ++ "/stream-bytes.bin"), (_) => {
+          R.andThen(Host.writeStdout("STDOUT_BYTES_BEGIN\n" ++ bytes ++ "\nSTDOUT_BYTES_END\n"), (_) => {
+            Host.writeStderr("STDERR_BYTES_BEGIN\n" ++ bytes ++ "\nSTDERR_BYTES_END\nMLWORKS_HOST_STDERR_OK\n")
+          })
+        })
+      })
+    })
+  });
+  match(result) {
+    R.Ok(_) => { Host.exit(true) },
+    R.Err(message) => {
+      let _ = Host.writeStderr(message ++ "\n");
+      Host.exit(false)
+    }
+  }
+};

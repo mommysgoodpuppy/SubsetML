@@ -6,7 +6,7 @@
 structure Syntax = struct
 
   (* Byte offset into the source text. *)
-  type pos = real
+  type pos = int
 
   (* A comment's position, its text without the delimiters, and whether code precedes it on its
      line (a trailing comment). Comments are kept beside the syntax tree for translation. *)
@@ -32,6 +32,8 @@ structure Syntax = struct
       PWild
     | PScon of pos * scon
     | PId of pos * longid               (* variable or constructor *)
+    (* Internal reverse-WM pattern; resolved and lowered before target checking. *)
+    | PPinned of pos * longid
     | PRecord of pos * (string * pat) list
     | PTuple of pat list                (* [] is (); never one component *)
     | PList of pat list
@@ -54,6 +56,9 @@ structure Syntax = struct
     | EIf of exp * exp * exp
     | ECase of exp * (pat * exp) list
     | EFn of (pat * exp) list
+    (* Internal WM lowering plan: checked ordered construction, pure final fields, layout.
+       Not surface SubsetML syntax; printers retain the checked fallback if not lowered. *)
+    | ECopy of pos * exp * exp * ty
 
   and dec =
       (* val tyvarseq valbind: the bindings before and after `rec` *)

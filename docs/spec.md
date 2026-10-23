@@ -1,6 +1,6 @@
 # SubsetML Specification
 
-Status: draft 0.2 (2026-10-02).
+Status: draft 0.3 (2026-10-17); signed 32-bit integer expansion.
 
 ## 1. Principle
 
@@ -64,7 +64,7 @@ nonfix op raise sharing sig signature where while with withtype :> ...
 
 | Constant | Status |
 |---|---|
-| integer, decimal and hex (`42`, `~7`, `0x1F`, `~0x1f`) | **omitted** with `int` (§9.3); write `42.0` |
+| integer, decimal and hex (`42`, `~7`, `0x1F`, `~0x1f`) | kept; signed 32-bit bounds (§9.3) |
 | real (`1.5`, `~2.0e~3`, `1E10`) | kept |
 | string (all escapes of §2.2, including `\^c`, `\ddd`, `\uxxxx` and `\f…f\` gaps) | kept |
 | character `#"c"` | kept |
@@ -197,12 +197,11 @@ These are unchanged (§4, §6), including the parts that are easy to get wrong:
 * **Equality attribute** (§4.4, §4.6): `=` and `<>` have type `''a * ''a -> bool` internally.
   Equality type variables still arise during inference even though `''a` can't be written. `real`
   does not admit equality.
-* **Overloading** (Appendix E): `abs ~ + - * div mod / < > <= >=` are overloaded over the
-  numeric classes of Appendix E restricted to SubsetML's `real` type. Text operands
-  to `< > <= >=` are rejected; use explicit custom Basis comparisons. Unresolved
-  overloading defaults to `int` in SML, which SubsetML omits (§9.3), so an overloaded identifier
-  whose type its context does not determine is rejected: `fn (x, y) => x + y` needs an annotation
-  such as `(x : real, y)`.
+* **Overloading** (Appendix E): `abs ~ + - * < > <= >=` accept `int` or `real`.
+  `div` and `mod` are integer-only; `/` is real-only. Text ordering operands are
+  rejected; use explicit custom Basis comparisons. At a value binding's closure,
+  unresolved numeric overloading defaults to `int`: `val twice = fn x => x + x`
+  has type `int -> int`. Annotate an operand for a real version.
 * **Exceptions still exist dynamically.** The language can't declare, raise or handle them, but
   the Definition's dynamic semantics still produces packets: `Match` (failed `fn`/`case`), `Bind`
   (failed `val`). Current bootstrap host calls can also raise exceptions such as `Subscript`
@@ -282,14 +281,13 @@ end of a file may be omitted.
 
 | Component | Status |
 |---|---|
-| types `unit bool real string char list` | kept |
-| type `int` | **omitted** for now (§9.3) |
+| types `unit bool int real string char list` | kept; `int` is signed 32-bit |
 | types `word`, `ref`, `exn` | **omitted** |
 | `true false nil ::` | kept |
 | `=` | kept |
 | `ref`, `:=` | **omitted** |
 | `Match`, `Bind` as identifiers | **omitted** (still raised dynamically, §5) |
-| overloaded identifiers (Appendix E) | numeric only, resolving to `real` (`div` and `mod` omitted) |
+| overloaded identifiers (Appendix E) | numeric only: `int` and `real`; default `int` |
 
 ### 9.2 Bootstrap namespace restriction
 
@@ -304,27 +302,41 @@ in the MLton host environment, where a same-spelled pattern would have a differe
 Rebinding them as datatype constructors is allowed. This is a bootstrap compatibility guard;
 this restriction can be revisited when the checker and host use the same supplied environment.
 
-### 9.3 Numbers: `real` only, for now
+### 9.3 Numbers: signed 32-bit `int` and `real`
 
-**Decision (2026-10-02):** SubsetML omits `int`. Its only numeric type is `real`, which is
-exactly Workman's `Number` (64-bit IEEE, `../wm-mini/markdown/core-design.md`, "Numbers"), so
-`real` and `Number` translate one for one. `int` is expected to return later, to SubsetML and to
-Workman together.
+**Expansion (2026-10-17):** `int` is restored to the supported subset, superseding
+2026-10-02's real-only restriction. This adds a Standard ML type and its existing
+semantics; it does not add a new construct to Standard ML. SubsetML pins SML's
+implementation-defined integer precision to **32 signed bits**, including the sign.
+See [Integer contract and native targets](integers.md) for the full contract,
+examples, backend requirements and current scope.
 
-Because SubsetML stays strict SML, this also means:
-
-* **No integer constants.** `42` has type `int` in SML, so numbers are written as real constants:
-  `42.0` (Workman `42`).
-* **Overloading must resolve to `real`** (or `string`/`char` for comparisons). SML would default
-  an unresolved `+` to `int`, so SubsetML rejects it instead (§5).
-* **No `=` on numbers.** `real` does not admit equality in SML: compare with `Real.== (x, y)`
-  (Workman `==`), and numbers cannot appear in patterns. A datatype holding a `real` does not
-  admit equality.
-* **The integer-only `div` and `mod` bindings are omitted.** Numeric library operations and
-  sizes/indices use the currently supported number type. Library numeric APIs and bootstrap
-  adapters are documented in the separate [Basis document](basis.md).
-
-The checker enforces this restriction and the implementation uses `real` throughout.
+* Range: **~2147483648 through 2147483647**, inclusive. Decimal and hexadecimal
+  constants outside it are static errors, including patterns. Negative literals
+  use SML's `~`; negating the minimum value is a distinct overflowing operation.
+* Integer constants have type `int`, real constants have type `real`. There is
+  no implicit conversion between the two. `1 + 1.0` and `1 / 2` are type errors.
+* `+ - * ~ abs` and numeric ordering support both types. Unresolved numeric
+  overloading defaults to `int` at value binding closure. `=` and `<>` support
+  integers and integer-containing equality types; real equality still requires
+  `Real.==`/`Real.!=`. Integer constants are permitted in patterns; real patterns
+  remain prohibited by SML.
+* `div` floors toward negative infinity. `mod` satisfies
+  `a = (a div b) * b + (a mod b)` mathematically; nonzero remainders have the
+  divisor's sign. Zero divisors raise `Div`. Integer results outside the range
+  raise `Overflow`, without wrapping. Minimum `div ~1` overflows; minimum
+  `mod ~1` is zero.
+* `real` remains the existing floating-point type. Its meaning and existing
+  real-valued library sizes/indices are unchanged. Integer support does not
+  implicitly migrate the custom Basis or compiler internals.
+* Authored exception declarations/handlers remain outside the subset. `Overflow`
+  and `Div` are dynamic runtime exceptions, as `Match` and `Bind` already were.
+  Checked Result-returning integer APIs are not introduced by this expansion.
+* The `native` command explicitly targets `Int32.int` and resolved Int32
+  operations; relying on a host's default `int` is insufficient (MLWorks uses
+  30 bits). The checker alone does not change a host compiler's representation.
+* WM/JS integer support is deferred. Existing WM numbers still translate to
+  `real`; the native SML path does not depend on the WM compiler.
 
 ## 10. Implementation-defined choices
 
@@ -334,12 +346,11 @@ The checker enforces this restriction and the implementation uses `real` through
 | Context resolving overloading (Appendix E) | the smallest enclosing `val` declaration. Appendix E allows a smaller context than the structure-level declaration. |
 | Context resolving `# lab` (§4.11) | the same as overloading |
 | Character set | 8-bit, ASCII-compatible |
+| Integer precision | signed 32-bit, range ~2147483648 through 2147483647 |
 
 ## 11. Open questions
 
 * Whether to add the `word` type.
 * Structure aliases `structure A = B`.
-* Numeric overloading (Appendix E): with `real` as the only number type it always resolves to
-  `real` (§9.3). Whether to keep it once `int` returns is open.
 * Whether to require exhaustive matches, which would remove `Match` at runtime for native code.
   That is an extra restriction, so the Definition allows it.

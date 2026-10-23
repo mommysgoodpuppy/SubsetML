@@ -6,16 +6,17 @@ from "./sml_list.sml" import * as SmlList;
 from "./compiler_text.sml" import * as CompilerText;
 from "./subset_char.sml" import * as SubsetChar;
 from "./wm_print.sml" import * as WmPrint;
+from "./backend_names.sml" import * as BackendNames;
 from "./subset_list.sml" import * as SubsetList;
-from "./parser.sml" import * as Parser;
 from "./sml_option.sml" import * as SmlOption;
 *)
 
 (* Parsing Workman source into SubsetML abstract syntax: the reverse of WmPrint.
 
-   It accepts the Workman fragment that corresponds to SubsetML, plus the SML fallbacks that
+   It accepts the Workman fragment that corresponds to SubsetML, plus the expression compatibility forms that
    WmPrint emits (`div`, `mod`, `@`, `o`, `before`, `#lab`, `~`). Workman features outside
-   SubsetML (pinned match names, `%`, pipes, JSON, FFI imports, ...) are reported as errors. *)
+   the reverse profile (`%`, receiver pipes, JSON, FFI imports, ...) are reported as errors.
+   Numeric and pinned match patterns survive internally until binding resolution lowers them. *)
 structure WmParse = struct
 
   open Syntax
@@ -34,7 +35,7 @@ structure WmParse = struct
 
   val peek = fn
       t :: _ => t
-    | [] => (WEOF, 0.0)
+    | [] => (WEOF, 0)
 
   val advance = fn
       _ :: rest => rest
@@ -52,7 +53,7 @@ structure WmParse = struct
     | WName path => "`" ^ SubsetString.concatWith (path, ".") ^ "`"
     | WSelect l => "`#" ^ l ^ "`"
     | WScon _ => "a literal"
-    | WSml _ => "an SML declaration"
+    | WOpen _ => "a resolved header open"
     | WEOF => "end of input"
 
   val expected = fn (what, ts) =>
@@ -126,10 +127,8 @@ structure WmParse = struct
         case SmlList.rev (CompilerText.fields (file, fn c => c = #"/")) of
           last :: _ => last
         | [] => file
-      val stem = if CompilerText.isSuffix (base, ".wm") then CompilerText.slice (base, 0.0, CompilerText.size base - 3.0) else base
-    in
-      SubsetString.concat (SmlList.map WmPrint.capitalize
-                       (SmlList.filter (fn w => w <> "") (CompilerText.fields (stem, fn c => c = #"_"))))
+      val stem = if CompilerText.isSuffix (base, ".wm") then CompilerText.slice (base, 0, CompilerText.size base - 3) else base
+    in BackendNames.moduleHint stem
     end
 
   (* --------------------------------------------------------------------------------------- *)
@@ -174,8 +173,8 @@ structure WmParse = struct
 
   val negativeLiteral = fn (minusPos, ts) =>
     case peek ts of
-      (WScon (SInt s), p) => if Real.== (p, minusPos + 1.0) then SOME (SReal ("~" ^ s ^ ".0")) else NONE
-    | (WScon (SReal s), p) => if Real.== (p, minusPos + 1.0) then SOME (SReal ("~" ^ s)) else NONE
+      (WScon (SInt s), p) => if (p = minusPos + 1) then SOME (SReal ("~" ^ s ^ ".0")) else NONE
+    | (WScon (SReal s), p) => if (p = minusPos + 1) then SOME (SReal ("~" ^ s)) else NONE
     | _ => NONE
 
   (* Builds `h1 :: ... :: tail`. *)
@@ -209,12 +208,12 @@ structure WmParse = struct
       | (WKey "void", _) => Done (PTuple [], advance ts)
       | (WKey "true", p) => Done (PId (p, ([], "true")), advance ts)
       | (WKey "false", p) => Done (PId (p, ([], "false")), advance ts)
-      | (WScon (SInt _), p) => Fail ("real constants may not occur in patterns", p)
-      | (WScon (SReal _), p) => Fail ("real constants may not occur in patterns", p)
+      | (WScon (SInt s), p) => Done (PScon (p, number (SInt s)), advance ts)
+      | (WScon (SReal s), p) => Done (PScon (p, SReal s), advance ts)
       | (WScon c, p) => Done (PScon (p, c), advance ts)
       | (WKey "-", p) =>
           (case negativeLiteral (p, advance ts) of
-             SOME (SInt s) => Done (PScon (p, SInt s), advance (advance ts))
+             SOME c => Done (PScon (p, c), advance (advance ts))
            | _ => expected ("a pattern", ts))
       | (WKey ".{", p) =>
           let
@@ -256,11 +255,11 @@ structure WmParse = struct
                     case args of
                       [single] => Done (PApp (p, valueName (quals, name), single), ts)
                     | _ => Done (PApp (p, valueName (quals, name), PTuple args), ts))
-                else Done (PId (p, valueName (quals, name)), advance ts)
+                else Done (if inMatch then PPinned (p, valueName (quals, name))
+                          else PId (p, valueName (quals, name)), advance ts)
             | (false, true, true) => Done (PId (p, ([], name)), advance ts)
             | (false, _, _) =>
-                Fail ("`" ^ SubsetString.concatWith (path, ".") ^ "` here is a pinned value in Workman, "
-                      ^ "which SubsetML patterns cannot express; write Var(" ^ name ^ ") to bind", p)
+                Done (PPinned (p, valueName (quals, name)), advance ts)
           end
       | _ => expected ("a pattern", ts)
     end
@@ -282,31 +281,31 @@ structure WmParse = struct
         case peek ts of
           (WEOF, _) => false
         | (WKey k, _) =>
-            if k = "(" orelse k = "[" orelse k = "{" orelse k = ".{" then scan (depth + 1.0, advance ts)
+            if k = "(" orelse k = "[" orelse k = "{" orelse k = ".{" then scan (depth + 1, advance ts)
             else
               (if k = ")" orelse k = "]" orelse k = "}" then
-                 (if Real.== (depth, 1.0) then isKey ("=>", advance ts) else scan (depth - 1.0, advance ts))
+                 (if (depth = 1) then isKey ("=>", advance ts) else scan (depth - 1, advance ts))
                else scan (depth, advance ts))
         | _ => scan (depth, advance ts)
     in
-      isKey ("(", ts) andalso scan (0.0, ts)
+      isKey ("(", ts) andalso scan (0, ts)
     end
 
   val binLevel = fn
-      "||" => SOME 1.0
-    | "&&" => SOME 2.0
-    | "==" => SOME 3.0
-    | "!=" => SOME 3.0
-    | "<" => SOME 4.0
-    | ">" => SOME 4.0
-    | "<=" => SOME 4.0
-    | ">=" => SOME 4.0
-    | "++" => SOME 5.0
-    | "+" => SOME 5.0
-    | "-" => SOME 5.0
-    | "*" => SOME 6.0
-    | "/" => SOME 6.0
-    | "%" => SOME 6.0
+      "||" => SOME 1
+    | "&&" => SOME 2
+    | "==" => SOME 3
+    | "!=" => SOME 3
+    | "<" => SOME 4
+    | ">" => SOME 4
+    | "<=" => SOME 4
+    | ">=" => SOME 4
+    | "++" => SOME 5
+    | "+" => SOME 5
+    | "-" => SOME 5
+    | "*" => SOME 6
+    | "/" => SOME 6
+    | "%" => SOME 6
     | _ => NONE
 
   val smlOperator = fn
@@ -324,12 +323,19 @@ structure WmParse = struct
 
   val infixApp = fn (opr, p, l, r) => EApp (EId (p, ([], opr)), ETuple [l, r])
 
+  (* Calls and syntax-only pipe insertion share the same argument convention. *)
+  val apply = fn (callee, args) =>
+    case (callee, args) of
+      (EId (p, (["List"], "append")), [left, right]) => infixApp ("@", p, left, right)
+    | (_, [single]) => EApp (callee, single)
+    | _ => EApp (callee, ETuple args)
+
   val consExp = fn (p, items, tail) =>
     SmlList.foldr (fn (h, t) => infixApp ("::", p, h, t)) tail items
 
   val startsDecl = fn ts =>
     isKey ("let", ts) orelse isKey ("type", ts) orelse isKey ("record", ts)
-    orelse (case peek ts of (WSml _, _) => true | _ => false)
+    orelse (case peek ts of (WOpen _, _) => true | _ => false)
 
   datatype item =
       IDec of dec
@@ -356,6 +362,102 @@ structure WmParse = struct
         ([], [single]) => single
         | _ => ELet (ds, body)
     end
+
+  datatype result =
+      Module of dec list * exp list * comment list
+    | ParseError of string * pos
+
+  datatype recordLayout = Layout of string * string * string list * (string * ty) list
+  datatype recordPart = Spread of exp | Field of string * exp
+
+  (* Resolve uppercase generic parameter references before producing SML types. *)
+  val rec parameterType = fn (variables, t) =>
+    case t of
+      TyCon ([], ([], name)) =>
+        (case SmlList.find (fn v => decapitalize (CompilerText.drop (v, 1)) = name) variables of
+           SOME v => TyVar v | NONE => t)
+    | TyCon (args, name) => TyCon (SmlList.map (fn a => parameterType (variables, a)) args, name)
+    | TyTuple types => TyTuple (SmlList.map (fn a => parameterType (variables, a)) types)
+    | TyArrow (a, b) => TyArrow (parameterType (variables, a), parameterType (variables, b))
+    | TyRecord fields => TyRecord (SmlList.map (fn (l, a) => (l, parameterType (variables, a))) fields)
+    | TyVar _ => t
+
+  val parseModuleLowering = fn (layouts, owner, src, lexed, fieldPrefix) =>
+    let
+      (* Export field-type witnesses through their owning record module. Consumers need
+         not import private dependencies merely to type-check generated reconstruction. *)
+      val fieldAlias = fn (recordName, label) =>
+        case fieldPrefix of NONE => "" | SOME prefix =>
+          prefix ^ "Field" ^ CompilerText.natural (CompilerText.size recordName) ^ "_" ^ recordName ^ "_" ^ label
+      (* Names absent from the authored source cannot capture its bindings. *)
+      val names = case lexed of
+          Tokens (tokens, _) => SmlList.concat (SmlList.map
+            (fn (WName path, _) => path | _ => []) tokens)
+        | LexError (_, _) => []
+      val fresh = fn name => BackendNames.avoid (names, name)
+      val source = CompilerText.source src
+      val spaceBefore = fn ts =>
+        let val p = posOf ts in
+          p > 0 andalso
+            (WmLexer.isSpace (CompilerText.sub (source, p - 1)) orelse
+             CompilerText.sub (source, p - 1) = #"/")
+        end
+      val startsSpaceArgument = fn ts =>
+        spaceBefore ts andalso
+          (case peek ts of
+             (WName _, _) => (case fallbackOperator ts of NONE => true | SOME _ => false)
+           | (WScon _, _) => true
+           | (WKey k, _) => member (k, ["(", "[", "{", ".{", "true", "false", "void", "match"])
+           | _ => false)
+
+      (* Conservative source purity: constructor applications and other computed forms use
+         ordered lowering until their value status can be resolved by the checker. *)
+      val rec pure = fn e =>
+        case e of
+          EScon (_, _) => true
+        | EId (_, _) => true
+        | EFn _ => true
+        | ERecord (_, fields) => SmlList.all (fn (_, value) => pure value) fields
+        | EList values => SmlList.all pure values
+        | ETuple values => SmlList.all pure values
+        | ETyped (value, _) => pure value
+        | _ => false
+      val rec variablesIn = fn t =>
+        case t of
+          TyVar name => [name]
+        | TyCon (args, _) => SmlList.concat (SmlList.map variablesIn args)
+        | TyTuple args => SmlList.concat (SmlList.map variablesIn args)
+        | TyArrow (a, b) => variablesIn a @ variablesIn b
+        | TyRecord fields => SmlList.concat (SmlList.map (fn (_, t) => variablesIn t) fields)
+      val argumentShape = fn t =>
+        case t of TyVar _ => true
+        | TyTuple args => SmlList.all (fn TyVar _ => true | _ => false) args
+        | _ => false
+      val literalLayout = fn (variables, fields) =>
+        let val occurrences = SmlList.concat (SmlList.map (fn (_, t) => variablesIn t) fields) in
+          SmlList.all (fn v => (SubsetList.length (SmlList.filter (fn n => n = v) occurrences) = 1)) variables
+          andalso SmlList.all (fn (_, t) =>
+            SubsetList.isEmpty (variablesIn t) orelse
+            (case t of TyVar _ => true | TyArrow (a, TyVar _) => argumentShape a | _ => false)) fields
+        end
+      (* Imported layouts must be visible outside a literal's lowering helper too.
+         Type aliases have no runtime effect and do not create record identities. *)
+      val referenced =
+        let
+          val rec scan = fn tokens =>
+            case tokens of
+              (WName path, _) :: (WKey "{", _) :: rest => path :: scan rest
+            | _ :: rest => scan rest
+            | [] => []
+        in case lexed of Tokens (tokens, _) => scan tokens | LexError (_, _) => [] end
+      val aliases = SmlList.map (fn Layout (moduleName, name, parameters, _) =>
+        DType (0, [(parameters, fresh ("subsetmlLayout_" ^ moduleName ^ "_" ^ name),
+          TyCon (SmlList.map TyVar parameters, (CompilerText.fields (moduleName, fn c => c = #"."), name)))]))
+        (SmlList.filter (fn Layout (moduleName, name, _, _) => moduleName <> owner andalso
+          SmlList.exists (fn path =>
+            let val (qs, n, _) = splitPath path in
+              SubsetString.concatWith (qs, ".") = moduleName andalso decapitalize n = name
+            end) referenced) layouts)
 
   val rec parseExp = fn ts =>
     case peek ts of
@@ -461,10 +563,10 @@ structure WmParse = struct
       val rec more = fn (l, ts) =>
         case fallbackOperator ts of
           SOME opr =>
-            bind (parseBinary (1.0, advance ts)) (fn r => fn ts' => more (infixApp (opr, posOf ts, l, r), ts'))
+            bind (parseBinary (1, advance ts)) (fn r => fn ts' => more (infixApp (opr, posOf ts, l, r), ts'))
         | NONE => Done (l, ts)
     in
-      bind (parseBinary (1.0, ts)) (fn l => fn ts => more (l, ts))
+      bind (parseBinary (1, ts)) (fn l => fn ts => more (l, ts))
     end
 
   and parseBinary = fn (minLevel, ts) =>
@@ -478,7 +580,7 @@ structure WmParse = struct
                  else
                    (if opr = "%" then Fail ("`%` has no SubsetML counterpart (SML `mod` differs)", p)
                     else
-                      bind (parseBinary (level + 1.0, advance ts)) (fn r => fn ts =>
+                      bind (parseBinary (level + 1, advance ts)) (fn r => fn ts =>
                         more (case opr of
                                 "&&" => ECase (ETuple [l, r],
                                   [(PTuple [PId (p, ([], "true")), PId (p, ([], "true"))], EId (p, ([], "true"))),
@@ -504,24 +606,50 @@ structure WmParse = struct
       (WKey "!", p) => bind (parseUnary (advance ts)) (fn e => fn ts => Done (EApp (EId (p, ([], "not")), e), ts))
     | (WKey "-", p) =>
         (case negativeLiteral (p, advance ts) of
-           SOME c => Done (EScon (p, c), advance (advance ts))
+           SOME c =>
+             if isKey (":>", advance (advance ts)) then
+               bind (parseUnary (advance ts)) (fn e => fn ts => Done (EApp (EId (p, ([], "~")), e), ts))
+             else Done (EScon (p, c), advance (advance ts))
          | NONE => bind (parseUnary (advance ts)) (fn e => fn ts => Done (EApp (EId (p, ([], "~")), e), ts)))
-    | _ => parsePostfix ts
+    | _ => parsePipe ts
 
-  (* A primary expression followed by calls. *)
-  and parsePostfix = fn ts =>
+  (* Pipes bind above unary/binary operators, chain left-to-right, and lower
+     only to ordinary applications. No type-directed receiver/carrier lookup. *)
+  and parsePipe = fn ts =>
     let
-      val rec calls = fn (f, ts) =>
-        if isKey ("(", ts) andalso not (lambdaAhead ts) then
-          bind (delimited ("(", parseExp, ",", ")", ts)) (fn args => fn ts =>
-            case (f, args) of
-              (* WmPrint's spelling of SML `@`; the SML Basis has no List.append. *)
-              (EId (p, (["List"], "append")), [l, r]) => calls (infixApp ("@", p, l, r), ts)
-            | (_, [single]) => calls (EApp (f, single), ts)
-            | _ => calls (EApp (f, ETuple args), ts))
-        else Done (f, ts)
+      val rec more = fn (left, ts) =>
+        if isKey (":>", ts) then
+          let val stage = advance ts in
+            if isKey (".", stage) then
+              Fail ("receiver pipes are outside the SubsetML translation profile; use a named function", posOf stage)
+            else bind (parsePostfixForm stage) (fn (right, insertion) => fn rest =>
+              more (case insertion of
+                      SOME (callee, args) => apply (callee, left :: args)
+                    | NONE => EApp (right, left), rest))
+          end
+        else Done (left, ts)
     in
-      bind (parsePrimary ts) (fn e => fn ts => calls (e, ts))
+      bind (parsePostfix ts) (fn left => fn ts => more (left, ts))
+    end
+
+  and parsePostfix = fn ts =>
+    bind (parsePostfixForm ts) (fn (value, _) => fn rest => Done (value, rest))
+
+  (* Retain just the outer call's source form until pipe insertion is decided.
+     Grouping returns a primary with no insertion slot. A space application is
+     a fully constructed stage; a final explicit call supplies an insertion slot. *)
+  and parsePostfixForm = fn ts =>
+    let
+      val rec calls = fn (callee, insertion, ts) =>
+        if isKey ("(", ts) andalso not (lambdaAhead ts) then
+          bind (delimited ("(", parseExp, ",", ")", ts)) (fn args => fn rest =>
+            calls (apply (callee, args), SOME (callee, args), rest))
+        else (if startsSpaceArgument ts then
+          bind (if lambdaAhead ts then parseLambda ts else parsePrimary ts) (fn arg => fn rest =>
+            calls (EApp (callee, arg), NONE, rest))
+        else Done ((callee, insertion), ts))
+    in
+      bind (parsePrimary ts) (fn value => fn rest => calls (value, NONE, rest))
     end
 
   and parsePrimary = fn ts =>
@@ -531,7 +659,9 @@ structure WmParse = struct
     | (WKey "false", p) => Done (EId (p, ([], "false")), advance ts)
     | (WKey "void", _) => Done (ETuple [], advance ts)
     | (WKey "~", p) => Done (EId (p, ([], "~")), advance ts)
-    | (WName path, p) => Done (pathExp (p, path), advance ts)
+    | (WName path, p) =>
+        if isKey ("{", advance ts) then parseNamedRecord (p, path, advance (advance ts))
+        else Done (pathExp (p, path), advance ts)
     | (WSelect l, p) =>
         if CompilerText.firstIs (l, SubsetChar.isDigit)
         then Fail ("tuple selectors are not part of SubsetML; use a pattern such as (_, x)", p)
@@ -549,6 +679,8 @@ structure WmParse = struct
                 if isKey ("=", advance ts) then
                   bind (parseExp (advance (advance ts))) (fn e => fn ts => Done ((l, e), ts))
                 else Done ((l, EId (lp, ([], l))), advance ts)
+            | (WKey "..", offset) => Fail
+                ("record updates must name their record type: use Point { ..value, field = replacement }", offset)
             | _ => expected ("a record field", ts)
         in
           bind (separated (field, ",", "}", advance ts)) (fn fields => fn ts =>
@@ -572,6 +704,143 @@ structure WmParse = struct
     | (WKey "match", _) => parseExp ts
     | _ => expected ("an expression", ts)
 
+  (* Named record layout is explicit; no inference is needed to enumerate copied fields. *)
+  and parseNamedRecord = fn (p, path, ts) =>
+    let
+      val (qualifiers, name, selections) = splitPath path
+      val sourceOwner = if SubsetList.isEmpty qualifiers then owner else SubsetString.concatWith (qualifiers, ".")
+      val candidate = SmlList.find (fn Layout (moduleName, recordName, _, _) =>
+        moduleName = sourceOwner andalso recordName = decapitalize name) layouts
+      val part = fn ts =>
+        case peek ts of
+          (WKey "..", _) => bind (parseExp (advance ts)) (fn e => fn ts => Done (Spread e, ts))
+        | (WName [label], offset) =>
+            if isKey ("=", advance ts) then
+              bind (parseExp (advance (advance ts))) (fn e => fn ts => Done (Field (label, e), ts))
+            else Done (Field (label, EId (offset, ([], label))), advance ts)
+        | _ => expected ("a record field or spread", ts)
+    in
+      if not (SubsetList.isEmpty selections) then Fail ("expected a nominal record type name", p)
+      else case candidate of
+        NONE => Fail ("unknown record layout " ^ SubsetString.concatWith (path, ".") ^ "; supply its declaration when translating", p)
+      | SOME (Layout (_, recordName, variables, fields)) =>
+          bind (separated (part, ",", "}", ts)) (fn parts => fn ts =>
+            bind (expect ("}", ts)) (fn _ => fn ts =>
+              let
+                val prefix = "subsetmlRecord" ^ CompilerText.natural p ^ "_"
+                val parameters = SmlList.map (fn v => (v, "'" ^ fresh (prefix ^ CompilerText.drop (v, 1)))) variables
+                val rec fieldType = fn t =>
+                  case t of
+                    TyVar v => (case SmlList.find (fn (old, _) => old = v) parameters of
+                      SOME pair => let val (_, name) = pair in TyVar name end | NONE => t)
+                  | TyCon (args, (qs, n)) =>
+                      let val builtin = SmlList.exists (fn b => b = n) ["real", "string", "char", "bool", "unit", "list", "option"]
+                          val qs = if SubsetList.isEmpty qs andalso not builtin andalso sourceOwner <> owner then [sourceOwner] else qs
+                      in TyCon (SmlList.map fieldType args, (qs, n)) end
+                  | TyTuple types => TyTuple (SmlList.map fieldType types)
+                  | TyArrow (a, b) => TyArrow (fieldType a, fieldType b)
+                  | TyRecord fs => TyRecord (SmlList.map (fn (l, t) => (l, fieldType t)) fs)
+                val fieldFor = fn (label, t) =>
+                  case fieldPrefix of
+                    SOME _ => if sourceOwner <> owner then
+                      TyCon (SmlList.map (fn (_, v) => TyVar v) parameters,
+                        ([sourceOwner], fieldAlias (recordName, label)))
+                      else fieldType t
+                  | NONE => fieldType t
+                val targetType = TyCon (SmlList.map (fn (_, v) => TyVar v) parameters, (qualifiers, recordName))
+                val literal =
+                  if literalLayout (variables, fields) then
+                    let
+                      val rec direct = fn remaining =>
+                        case remaining of
+                          [] => SOME []
+                        | Spread _ :: _ => NONE
+                        | Field (label, value) :: rest =>
+                            if not (pure value) then NONE
+                            else (case (SmlList.find (fn (l, _) => l = label) fields, direct rest) of
+                              (SOME entry, SOME tail) =>
+                                let
+                                  val (_, t) = entry
+                                  val value = if SubsetList.isEmpty (variablesIn t) then ETyped (value, fieldFor (label, t))
+                                    else (case t of
+                                      TyArrow (domain, TyVar _) =>
+                                        let
+                                          val arguments = case domain of TyTuple args => args | _ => [domain]
+                                          val rec argumentNames = fn (index, remaining) =>
+                                            case remaining of [] => [] | _ :: rest =>
+                                              fresh (prefix ^ label ^ "Argument" ^ CompilerText.natural index)
+                                                :: argumentNames (index + 1, rest)
+                                          val bound = argumentNames (0, arguments)
+                                          val patterns = SmlList.map (fn name => PId (p, ([], name))) bound
+                                          val values = SmlList.map (fn name => EId (p, ([], name))) bound
+                                          val pattern = case domain of TyTuple _ => PTuple patterns | _ =>
+                                            let val [single] = patterns in single end
+                                          val argument = case domain of TyTuple _ => ETuple values | _ =>
+                                            let val [single] = values in single end
+                                        in EFn [(pattern, EApp (value, argument))] end
+                                    | _ => value)
+                                in SOME ((label, value) :: tail) end
+                            | _ => NONE)
+                    in direct parts end
+                  else NONE
+                val rec finish = fn (remaining, index, bindings, values, explicit) =>
+                  case remaining of
+                    [] =>
+                      (case SmlList.find (fn (label, _) => not (SmlList.exists (fn (l, _) => l = label) values)) fields of
+                         SOME pair => let val (label, _) = pair in Fail ("missing record field " ^ label, p) end
+                       | NONE =>
+                           let
+                             val ordered = SmlList.rev bindings
+                             val patterns = SmlList.map (fn (pattern, _) => pattern) ordered
+                             val arguments = SmlList.map (fn (_, argument) => argument) ordered
+                             val pattern = case patterns of [single] => single | _ => PTuple patterns
+                             val argument = case arguments of [single] => single | _ => ETuple arguments
+                             val helper = fresh (prefix ^ "build")
+                             val result = ETyped (ERecord (p, SmlList.map (fn (label, _) =>
+                               let val SOME pair = SmlList.find (fn (l, _) => l = label) values
+                                   val (_, value) = pair in (label, value) end) fields), targetType)
+                             val layoutAlias = DType (p, [(SmlList.map (fn (_, v) => v) parameters,
+                               fresh (prefix ^ "layout"), targetType)])
+                             (* Generalize the layout parameters on the helper, not on its caller.
+                                Arguments retain source order and are evaluated once, including
+                                entries overwritten by a later spread. *)
+                             val declaration = DVal (p, [], [(PId (p, ([], helper)),
+                               EFn [(pattern, ELet ([layoutAlias], [result]))])], [])
+                             val ordered = ELet ([declaration], [EApp (EId (p, ([], helper)), argument)])
+                             (* Replaced or discarded entries can constrain outer weak variables.
+                                A plain copy retains every entry in its emitted field wrappers. *)
+                             val copy = (case parts of [Spread (EId (_, _))] => true | _ => false)
+                               andalso SmlList.all (fn (_, TyArrow (_, _)) => true | _ => false) fields
+                               andalso SmlList.all (fn Spread (EId (_, _)) => true
+                                 | Field (_, value) => pure value | _ => false) parts
+                             val final = SmlList.foldl (fn (part, values) =>
+                               case part of Spread e => SmlList.map (fn (label, _) =>
+                                 (label, EApp (ESelect (p, label), e))) fields
+                               | Field (label, e) => (label, e) :: SmlList.filter (fn (l, _) => l <> label) values) [] parts
+                           in Done ((case literal of
+                             SOME fields => ERecord (p, fields)
+                           | NONE => if copy then ECopy (p, ordered, ERecord (p, final), targetType)
+                             else ordered), ts) end)
+                  | part :: rest =>
+                      let val temporary = fresh (prefix ^ CompilerText.natural index)
+                          val value = EId (p, ([], temporary)) in
+                        case part of
+                          Spread e => finish (rest, index + 1,
+                            (PTyped (PId (p, ([], temporary)), targetType), e) :: bindings,
+                            SmlList.map (fn (label, _) => (label, EApp (ESelect (p, label), value))) fields, explicit)
+                        | Field (label, e) =>
+                            if SmlList.exists (fn l => l = label) explicit then Fail ("duplicate record field " ^ label, p)
+                            else (case SmlList.find (fn (l, _) => l = label) fields of
+                              NONE => Fail (name ^ " has no field " ^ label, p)
+                            | SOME pair =>
+                                let val (_, t) = pair in finish (rest, index + 1,
+                                  (PTyped (PId (p, ([], temporary)), fieldFor (label, t)), e) :: bindings,
+                                  (label, value) :: SmlList.filter (fn (l, _) => l <> label) values,
+                                  label :: explicit) end)
+                      end
+                            in finish (parts, 0, [], [], []) end))
+    end
+
   (* --------------------------------------------------------------------------------------- *)
   (* Declarations. A namespace import (`import * as X`) yields no declaration: SML refers to
      structures by name without importing them. *)
@@ -579,13 +848,7 @@ structure WmParse = struct
   and parseDecl = fn ts =>
     let val p = posOf ts in
       case peek ts of
-        (WSml text, _) =>
-          (case Parser.parse text of
-             Parser.Program (prog, _) =>
-               Done (SmlList.concat (SmlList.map (fn
-                         TopDecs sds => SmlList.concat (SmlList.map (fn SDec d => [d] | SStructure (_, _) => []) sds)
-                       | TopExp (_, _) => []) prog), advance ts)
-           | Parser.ParseError (msg, q) => Fail ("in an SML declaration: " ^ msg, p + q))
+        (WOpen ids, _) => Done ([DOpen (p, ids)], advance ts)
       | (WKey "let", _) =>
           let
             val isRec = isKey ("rec", advance ts)
@@ -630,7 +893,20 @@ structure WmParse = struct
                    in
                      bind (delimited ("{", field, ",", "}", ts)) (fn fields => fn ts =>
                        bind (expect (";", ts)) (fn _ => fn ts =>
-                         Done ([DType (p, [(vs, decapitalize name, TyRecord fields)])], ts)))
+                         Done (DType (p, [(vs, decapitalize name, TyRecord (SmlList.map (fn (l, t) => (l, parameterType (vs, t))) fields))]) ::
+                           (case fieldPrefix of NONE => [] | SOME prefix =>
+                             let
+                               val arguments = SmlList.map (fn (label, _) =>
+                                 (label, fresh (prefix ^ "Constructor_" ^ name ^ "_" ^ label))) fields
+                               val patterns = SmlList.map (fn (_, argument) => PId (p, ([], argument))) arguments
+                               val parameter = case patterns of [single] => single | _ => PTuple patterns
+                               val target = TyCon (SmlList.map TyVar vs, ([], decapitalize name))
+                               val body = ETyped (ERecord (p, SmlList.map (fn (label, argument) =>
+                                 (label, EId (p, ([], argument)))) arguments), target)
+                             in [DVal (p, [], [(PId (p, ([], name)), EFn [(parameter, body)])], [])] end) @
+                           (case fieldPrefix of NONE => [] | SOME _ =>
+                             SmlList.map (fn (label, t) => DType (p,
+                               [(vs, fieldAlias (decapitalize name, label), parameterType (vs, t))])) fields), ts)))
                    end))
            | _ => expected ("a record name", advance ts))
       | (WKey "from", _) =>
@@ -701,20 +977,17 @@ structure WmParse = struct
         bind (expect (";", ts)) (fn _ => fn ts =>
           case (SmlList.all (fn (_, _, alias, _) => SmlOption.isSome alias) bs,
                 SmlList.all (fn (_, _, alias, _) => not (SmlOption.isSome alias)) bs) of
-            (true, _) => Done ([DType (p, SmlList.map (fn (vs, n, alias, _) => let val SOME t = alias in (vs, n, t) end) bs)], ts)
-          | (_, true) => Done ([DDatatype (p, SmlList.map (fn (vs, n, _, cons) => (vs, n, cons)) bs)], ts)
+            (true, _) => Done ([DType (p, SmlList.map (fn (vs, n, alias, _) => let val SOME t = alias in (vs, n, parameterType (vs, t)) end) bs)], ts)
+          | (_, true) => Done ([DDatatype (p, SmlList.map (fn (vs, n, _, cons) => (vs, n,
+              SmlList.map (fn (q, c, arg) => (q, c, case arg of
+                SOME t => SOME (parameterType (vs, t)) | NONE => NONE)) cons)) bs)], ts)
           | _ => Fail ("SubsetML cannot mix type aliases and datatypes in one group", p)))
     end
 
   (* --------------------------------------------------------------------------------------- *)
   (* Modules *)
 
-  datatype result =
-      Module of dec list * exp list * comment list
-    | ParseError of string * pos
-
-  val parseModule = fn src =>
-    case WmLexer.lex src of
+    in case lexed of
       LexError (message, pos) => ParseError (message, pos)
     | Tokens (ts, comments) =>
         let
@@ -726,11 +999,62 @@ structure WmParse = struct
                 then bind (parseDecl ts) (fn ds => fn ts => items (SmlList.revAppend (ds, decs), exps, ts))
                 else
                   bind (parseExp ts) (fn e => fn ts =>
-                    bind (expect (";", ts)) (fn _ => fn ts => items (DVal (0.0, [], [(PId (0.0, ([], "it")), e)], []) :: decs, exps, ts)))
+                    bind (expect (";", ts)) (fn _ => fn ts => items (DVal (0, [], [(PId (0, ([], "it")), e)], []) :: decs, exps, ts)))
         in
           case items ([], [], ts) of
-            Done ((decs, exps), _) => Module (decs, exps, comments)
+            Done ((decs, exps), _) => Module (aliases @ decs, exps, comments)
           | Fail (message, pos) => ParseError (message, pos)
         end
+    end
+
+  val parseModuleTokens = fn (layouts, owner, src, lexed) =>
+    parseModuleLowering (layouts, owner, src, lexed, NONE)
+
+  val parseModuleProject = fn (layouts, owner, src, lexed, prefix) =>
+    parseModuleLowering (layouts, owner, src, lexed, SOME prefix)
+
+  val parseModuleWithLayouts = fn (layouts, owner, src) =>
+    parseModuleTokens (layouts, owner, src, WmLexer.lex src)
+
+  (* Extract declaration layouts without requiring the rest of a module to translate yet.
+     Complete expressions still pass through normal parsing and strict elaboration. *)
+  val recordLayoutsTokens = fn (owner, src, lexed) =>
+    let
+      val rec scan = fn (tokens, layouts, depth) =>
+        case tokens of
+          (WKey "record", start) :: rest =>
+            if depth > 0 then Fail ("record layout declarations must be top-level in the initial translation profile", start)
+            else let
+              val rec header = fn remaining =>
+                case remaining of
+                  (WKey ";", stop) :: tail =>
+                    (case parseModuleTokens ([], owner, src, Tokens (
+                      SubsetList.filter (tokens, fn (_, p) => p <= stop) @ [(WEOF, stop + 1)], [])) of
+                       Module ([DType (_, [(variables, name, TyRecord fields)])], [], _) =>
+                         scan (tail, Layout (owner, name, variables, fields) :: layouts, depth)
+                     | Module (_, _, _) => Fail ("invalid record declaration", start)
+                     | ParseError (message, offset) => Fail (message, offset))
+                | (WEOF, offset) :: _ => Fail ("unterminated record declaration", offset)
+                | _ :: tail => header tail
+                | [] => Fail ("unterminated record declaration", start)
+            in header rest end
+        | (WKey "{", _) :: rest => scan (rest, layouts, depth + 1)
+        | (WKey ".{", _) :: rest => scan (rest, layouts, depth + 1)
+        | (WKey "}", _) :: rest => scan (rest, layouts, depth - 1)
+        | _ :: rest => scan (rest, layouts, depth)
+        | [] => Done (SmlList.rev layouts, [])
+    in
+      case lexed of
+        LexError (message, offset) => Fail (message, offset)
+      | Tokens (tokens, _) => scan (tokens, [], 0)
+    end
+
+  val recordLayouts = fn (path, src) =>
+    recordLayoutsTokens (structureName path, src, WmLexer.lex src)
+
+  val parseModule = fn src =>
+    case recordLayouts ("", src) of
+      Fail (message, offset) => ParseError (message, offset)
+    | Done (layouts, _) => parseModuleWithLayouts (layouts, "", src)
 
 end

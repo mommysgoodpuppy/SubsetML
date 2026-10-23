@@ -1,0 +1,158 @@
+/* @subsetml
+from "./compiler_text.sml" import * as CompilerText;
+from "./subset_result.sml" import * as SubsetResult;
+from "./module_project.sml" import * as ModuleProject;
+from "./subset_io.sml" import * as SubsetIo;
+from "./native_int.sml" import * as NativeInt;
+from "./unify.sml" import * as Unify;
+from "./subset_list.sml" import * as SubsetList;
+from "./sml_list.sml" import * as SmlList;
+*/
+
+/* SML source-list targets. Build descriptions and native adapters are distinct
+   from portable source semantics; the complete plan precedes all file writes. */
+
+from "./compiler_text.wm" import * as CompilerText;
+from "./subset_result.wm" import * as SubsetResult;
+from "./module_project.wm" import * as ModuleProject;
+from "./subset_io.wm" import * as SubsetIo;
+from "./native_int.wm" import * as NativeInt;
+from "./unify.wm" import * as Unify;
+from "./subset_list.wm" import * as SubsetList;
+from "./sml_list.wm" import * as SmlList;
+
+let quote = (text) => { "\"" ++ CompilerText.escapeSmlString(text) ++ "\"" };
+let error = (text) => { SubsetResult.Err(text) };
+let identify = (path) => {
+  SubsetResult.mapError(
+    ModuleProject.identify(path),
+    (failure) => { path ++ ": " ++ SubsetIo.errorText(failure) }
+  )
+};
+let read = (path) => {
+  SubsetResult.mapError(
+    SubsetResult.map(SubsetIo.readFile(path), CompilerText.stringOf),
+    (failure) => { path ++ ": " ++ SubsetIo.errorText(failure) }
+  )
+};
+let rec traverse = (items, f) => {
+  match(items) {
+    [] => { SubsetResult.Ok([]) },
+    [item, ..rest] => {
+      SubsetResult.andThen(
+        f(item),
+        (value) => {
+          SubsetResult.map(traverse(rest, f), (values) => { [value, ..values] })
+        }
+      )
+    }
+  }
+};
+
+let emit = (target, specifications, files) => {
+  if (if (target != "mlton") { target != "mlworks" } else { false }) { error("unknown SML target: " ++ target) } else {
+    match(NativeInt.project(files)) {
+      Unify.Err(message, _) => { error(message) },
+      Unify.Ok((Var(prelude), Var(outputs)), _) => {
+        let rec select = (remaining, identities, selected) => {
+          match(remaining) {
+            [] => { SubsetResult.Ok(selected) },
+            [(Var(checker), Var(native)), ..rest] => {
+              SubsetResult.andThen(
+                identify(checker),
+                match {
+                  ModuleProject.Resolved(id, _) => {
+                    if (SubsetList.exists(selected, (key, _) => { ModuleProject.same(key, id) })) { error("duplicate native adapter: " ++ checker) } else {
+                      if (!SubsetList.exists(identities, (_, key) => { ModuleProject.same(key, id) })) {
+                        error("native adapter checker is not in the source list: " ++ checker)
+                      } else {
+                        SubsetResult.andThen(read(native), (text) => { select(rest, identities, [(id, text), ..selected]) })
+                      }
+                    }
+                  }
+                }
+              )
+            }
+          }
+        };
+        let names = SmlList.map((path, _) => { NativeInt.basename(path) })(outputs);
+        let reserved = SubsetList.find(
+          names,
+          (name) => {
+            SubsetList.exists(
+              ["prelude.sml", "project.mlb", "bootstrap.sml", "load.sml"],
+              (reserved) => { name == reserved }
+            )
+          }
+        );
+        match(reserved) {
+          Some(name) => { error("reserved SML target output filename: " ++ name) },
+          None => {
+            SubsetResult.andThen(
+              traverse(
+                outputs,
+                (path, _) => {
+                  SubsetResult.map(
+                    identify(path),
+                    match {
+                      ModuleProject.Resolved(id, _) => { (path, id) }
+                    }
+                  )
+                }
+              ),
+              (identities) => {
+                SubsetResult.andThen(
+                  select(specifications, identities, []),
+                  (selected) => {
+                    let adapted = SmlList.map((path, text) => {
+                      let chosen = match(SubsetList.find(identities, (source, _) => { source == path })) {
+                        None => { None },
+                        Some(_, id) => {
+                          SubsetList.find(selected, (key, _) => { ModuleProject.same(key, id) })
+                        }
+                      };
+                      (
+                        NativeInt.basename(path),
+                        match(chosen) {
+                          None => { text },
+                          Some(_, native) => { native }
+                        }
+                      )
+                    })(outputs);
+                    let ordered = ["prelude.sml", ..names];
+                    let build = if (target == "mlton") {
+                      [
+                        (
+                          "project.mlb",
+                          "$(SML_LIB)/basis/basis.mlb\n" ++ SubsetList.foldLeft(ordered, "", (name, text) => { text ++ quote(name) ++ "\n" })
+                        )
+                      ]
+                    } else {
+                      [
+                        (
+                          "bootstrap.sml",
+                          "(* Load once from the MLWorks target-objects directory. *)\nShell.Project.load \"require_all\";\n"
+                        ),
+                        (
+                          "load.sml",
+                          "(* Full SML startup adapter; call SubsetTarget.load with application arguments. *)\n" ++ "structure SubsetTarget = struct\n" ++ "  val arguments = ref ([] : string list)\n" ++ "  fun load values = (arguments := values; List.app use [" ++ SubsetList.foldLeft(
+                            ordered,
+                            "",
+                            (name, text) => {
+                              text ++ (if (text == "") { "" } else { ", " }) ++ quote(name)
+                            }
+                          ) ++ "])\nend;\n" ++ "structure CommandLine = struct\n  val name = CommandLine.name\n" ++ "  fun arguments () = !SubsetTarget.arguments\nend;\n"
+                        )
+                      ]
+                    };
+                    SubsetResult.Ok([("prelude.sml", prelude), ..List.append(adapted, build)])
+                  }
+                )
+              }
+            )
+          }
+        }
+      }
+    }
+  }
+};

@@ -86,6 +86,7 @@ let rec patL = match {
   PWild => { (3, text("_")) },
   PScon(p, c) => { (3, atom(p, scon(c))) },
   PId(p, id) => { (3, atom(p, longid(id))) },
+  PPinned(p, id) => { (3, atom(p, "UNLOWERED_PIN_" ++ longid(id))) },
   PRecord(p, fields) => {
     (
       3,
@@ -155,6 +156,7 @@ let rec expL = match {
     )
   },
   ESelect(p, l) => { (30, atom(p, "#" ++ l)) },
+  ECopy(_, source, _, _) => { expL(source) },
   ETuple(es) => { (30, group("(", ",", ")", SmlList.map(exp)(es))) },
   EList(es) => { (30, group("[", ",", "]", SmlList.map(exp)(es))) },
   ESeq(es) => { (30, group("(", ";", ")", SmlList.map(exp)(es))) },

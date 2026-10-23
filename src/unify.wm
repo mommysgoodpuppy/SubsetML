@@ -37,7 +37,8 @@ type Selection = (Syntax.Pos, Number, Ty, String, Ty);
 
 /* Variables, the next fresh number (also used for type name stamps), pending selections,
    the label sets of the record type declarations so far (spec R2), and, when translating
-   from Workman, the equality sites seen so far (see `lenient`). */
+   from Workman, equality sites plus resolved numeric/library identifier sites
+   used by native integer emission (see `lenient`). */
 type State =
   | State<IntMap.Map<Var>, Number, List<Selection>, List<List<String>>, Option<List<(Syntax.Pos, Ty)>>>;
 
@@ -45,7 +46,9 @@ let initial = State(IntMap.empty, firstStamp, [], [], None);
 
 /* For translating Workman, whose `==` also compares numbers: `=` and `<>` accept any
    operands, and each use is recorded with its operand type, so that the uses on real can
-   become Real.== and Real.!= (Translate.realEquality). */
+   become Real.== and Real.!= (Translate.realEquality). Elab also records numeric
+   identifier function types here for NativeInt; these are distinct from equality
+   operand entries and are ignored by the real-equality rewrite. */
 let lenient = State(IntMap.empty, firstStamp, [], [], Some([]));
 
 type Res<a> = Ok<a, State> | Err<String, Syntax.Pos>;
@@ -286,7 +289,7 @@ let rec occurs = (st, v, t) => {
 };
 
 // Makes t satisfy kind k.
-let rec require = (st, k, t) => {
+let rec requireKind = (st, k, t) => {
   match(k, prune(st, t)) {
     (KPlain, _) => { Unified(st) },
     (_, TVar(w)) => {
@@ -322,7 +325,7 @@ and requireAll = (st, k, ts) => {
   match(ts) {
     [] => { Unified(st) },
     [t, ..rest] => {
-      andThen(require(st, k, t), (st) => { requireAll(st, k, rest) })
+      andThen(requireKind(st, k, t), (st) => { requireAll(st, k, rest) })
     }
   }
 };
@@ -360,7 +363,10 @@ and bindVar = (st, v, t) => {
     Bound(t') => { unify(st, t', t) },
     Free(k, level) => {
       if (occurs(st, v, t)) { Mismatch("the type would be circular") } else {
-        andThen(require(st, k, t), (st) => { Unified(set(adjust(st, level, t), v, Bound(t))) })
+        andThen(
+          requireKind(st, k, t),
+          (st) => { Unified(set(adjust(st, level, t), v, Bound(t))) }
+        )
       }
     }
   }

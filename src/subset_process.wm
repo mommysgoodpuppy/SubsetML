@@ -31,3 +31,15 @@ let exit = (success) => {
   let rec unreachable = () => { unreachable() };
   unreachable()
 };
+
+/* Invariant failure: report the byte-string message and a newline, then stop.
+   A failed validation/write must still terminate; panic cannot recover through Result. */
+let panic = (message: String) => {
+  match(SubsetResult.andThen(
+    SubsetIo.bytes(message),
+    (bytes) => { SubsetIo.writeStderr(SubsetList.append(bytes, ['\n'])) }
+  )) {
+    SubsetResult.Ok(void) => { exit(false) },
+    SubsetResult.Err(_) => { exit(false) }
+  }
+};

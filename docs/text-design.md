@@ -135,3 +135,29 @@ use source text operations. CLI text helpers use the byte layer; file/process ac
 provided by the six-operation SubsetIo/SubsetProcess CLI profile; source module loading adds
 filesystem canonicalization as a separate host operation. Exact count formatting is provided by
 `SubsetNatural`; arbitrary floating-point formatting is a separate contract.
+
+## Lossless UTF-16 source views
+
+`SubsetUtf16Source` adds source-only indexed storage for raw UTF-16 units. Unlike strict
+Unicode codecs, it accepts lone surrogates: damaged editor input remains available for
+lexical diagnostics. It does not change the language's `char` or `string` semantics.
+
+Checked construction validates numeric units as integral values in 0..65535. An immutable
+balanced tree supports indexed lookup; slices retain a shared tree and unit range rather
+than reconstructing text. Positions and lengths count units, including both units of a
+supplementary scalar. A slice may split a surrogate pair deliberately.
+
+`fromNativeUnits` uses the existing `SubsetTextHost.codes` operation. It preserves JS string
+storage units; the SML adapter yields byte values, not decoded Unicode scalars. Native file
+input should use `fromUtf8` on bytes instead. The same module can therefore serve native
+UTF-8 files and arbitrary JS editor buffers without pretending their host strings agree.
+
+Raw UTF-16 byte conversion supports both endian orders and preserves lone surrogates.
+Conversion to scalars or UTF-8 remains strict and may fail on the stored units. There is
+no replacement-character fallback. BOMs are ordinary units; this layer does not remove them.
+Only the existing extraction operation is used: storage, indexing and conversions add no
+language features, host indexing primitive, or required Unicode service.
+
+The initial tree uses one leaf per unit, following the existing byte-source index design.
+Packed leaves and a sequential cursor are possible source-level optimizations; the current
+API makes no promise that this representation is optimal for large editor buffers.

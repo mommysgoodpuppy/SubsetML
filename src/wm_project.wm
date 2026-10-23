@@ -1,0 +1,679 @@
+/* @subsetml
+from "./module_project.sml" import * as ModuleProject;
+from "./syntax.sml" import * as Syntax;
+from "./wm_lexer.sml" import * as WmLexer;
+from "./subset_result.sml" import * as SubsetResult;
+from "./compiler_text.sml" import * as CompilerText;
+from "./module_imports.sml" import * as ModuleImports;
+from "./subset_list.sml" import * as SubsetList;
+from "./subset_io.sml" import * as SubsetIo;
+from "./wm_parse.sml" import * as WmParse;
+from "./basis.sml" import * as Basis;
+from "./unify.sml" import * as Unify;
+from "./env.sml" import * as Env;
+from "./subset_char.sml" import * as SubsetChar;
+from "./subset_string.sml" import * as SubsetString;
+from "./lexer.sml" import * as Lexer;
+*/
+
+/* Source-list reverse translation shares the source loader's canonical identities.
+   Backend names are chosen separately; they are never filesystem identities. */
+
+from "./module_project.wm" import * as ModuleProject;
+from "./syntax.wm" import * as Syntax;
+from "./wm_lexer.wm" import * as WmLexer;
+from "./subset_result.wm" import * as SubsetResult;
+from "./compiler_text.wm" import * as CompilerText;
+from "./module_imports.wm" import * as ModuleImports;
+from "./subset_list.wm" import * as SubsetList;
+from "./subset_io.wm" import * as SubsetIo;
+from "./wm_parse.wm" import * as WmParse;
+from "./basis.wm" import * as Basis;
+from "./unify.wm" import * as Unify;
+from "./env.wm" import * as Env;
+from "./subset_char.wm" import * as SubsetChar;
+from "./subset_string.wm" import * as SubsetString;
+from "./lexer.wm" import * as Lexer;
+
+type Input = | Input<ModuleProject.Resolved, String, String>;
+type Unit = | Unit<Input, String, String>;
+type Edge = | Edge<String, Syntax.Pos, String, ModuleProject.ModuleId>;
+type Source = | Source<Void, List<Edge>, WmLexer.Result>;
+type Error = | Error<String, String, String, Syntax.Pos>;
+
+let failure = (path, src, message, pos) => { SubsetResult.Err(Error(path, src, message, pos)) };
+let identity = match {
+  Unit(Input(ModuleProject.Resolved(id, _), _, _), _, _) => { id }
+};
+let name = match {
+  Unit(_, name, _) => { name }
+};
+let output = match {
+  Unit(_, _, output) => { output }
+};
+let pathOf = match {
+  Unit(Input(_, path, _), _, _) => { path }
+};
+let textOf = match {
+  Unit(Input(_, _, src), _, _) => { src }
+};
+let sourceUnit = match {
+  Source(unit, _, _) => { unit }
+};
+let edgesOf = match {
+  Source(_, edges, _) => { edges }
+};
+
+let validSpecifier = (specifier) => {
+  if (CompilerText.isSuffix(specifier, ".wm")) {
+    ModuleImports.validPath(CompilerText.slice(specifier, 0, CompilerText.size(specifier) - 3) ++ ".sml")
+  } else { false }
+};
+
+/* Discovery reads only the supported import header. Preparation still validates aliases,
+   private scope and later imports using the same canonical identities. */
+let headerPaths = (path, src, tokens) => {
+  let rec scan = (tokens) => {
+    match(tokens) {
+      [
+        (WmLexer.WKey("from"), Var(pos)),
+        (WmLexer.WScon(Syntax.SString(specifier)), _),
+        (WmLexer.WKey("import"), _),
+        (WmLexer.WKey("*"), _),
+        ..rest
+      ] => {
+        let remaining = match(rest) {
+          [
+            (WmLexer.WKey("as"), _),
+            (WmLexer.WName([_]), _),
+            (WmLexer.WKey(";"), _),
+            ..tail
+          ] => { Some(tail) },
+          [(WmLexer.WKey(";"), _), ..tail] => { Some(tail) },
+          _ => { None }
+        };
+        match(remaining) {
+          None => {
+            failure(path, src, "reverse discovery requires header namespace imports", pos)
+          },
+          Some(tail) => {
+            if (!validSpecifier(specifier)) {
+              failure(
+                path,
+                src,
+                "imports require explicit relative .wm paths in the local source profile",
+                pos
+              )
+            } else {
+              SubsetResult.map(scan(tail), (paths) => { [(specifier, pos), ..paths] })
+            }
+          }
+        }
+      },
+      [(WmLexer.WKey("from"), Var(pos)), .._] => {
+        failure(path, src, "reverse discovery requires header namespace imports", pos)
+      },
+      _ => { SubsetResult.Ok([]) }
+    }
+  };
+  scan(tokens)
+};
+
+let discover = (roots) => {
+  let rec visit = (resolved, active, seen) => {
+    let ModuleProject.Resolved(id, path) = resolved;
+    if (SubsetList.exists(seen, (key, _, _) => { ModuleProject.same(key, id) })) { SubsetResult.Ok(seen) } else {
+      SubsetResult.andThen(
+        SubsetResult.mapError(
+          SubsetIo.readFile(path),
+          (error) => { Error(path, "", SubsetIo.errorText(error), 0) }
+        ),
+        (bytes) => {
+          let src = CompilerText.stringOf(bytes);
+          match(WmLexer.lex(src)) {
+            WmLexer.LexError(message, pos) => { failure(path, src, message, pos) },
+            WmLexer.Tokens(tokens, _) => {
+              SubsetResult.andThen(
+                headerPaths(path, src, tokens),
+                (paths) => {
+                  let rec walk = (paths, seen) => {
+                    match(paths) {
+                      [] => { SubsetResult.Ok(seen) },
+                      [(Var(specifier), Var(pos)), ..rest] => {
+                        match(ModuleProject.resolve(resolved, specifier)) {
+                          SubsetResult.Err(error) => {
+                            failure(
+                              path,
+                              src,
+                              "cannot resolve import \"" ++ specifier ++ "\": " ++ SubsetIo.errorText(error),
+                              pos
+                            )
+                          },
+                          SubsetResult.Ok(child) => {
+                            let ModuleProject.Resolved(target, _) = child;
+                            if (SubsetList.exists(
+                              [resolved, ..active],
+                              match {
+                                ModuleProject.Resolved(key, _) => { ModuleProject.same(key, target) }
+                              }
+                            )) {
+                              failure(path, src, ModuleProject.cycle([resolved, ..active], child), pos)
+                            } else {
+                              SubsetResult.andThen(visit(child, [resolved, ..active], seen), (seen) => { walk(rest, seen) })
+                            }
+                          }
+                        }
+                      }
+                    }
+                  };
+                  walk(paths, [(id, path, src), ..seen])
+                }
+              )
+            }
+          }
+        }
+      )
+    }
+  };
+  let rec loadRoots = (roots, seen) => {
+    match(roots) {
+      [] => {
+        SubsetResult.Ok(SubsetList.map(SubsetList.reverse(seen), (_, path, src) => { (path, src) }))
+      },
+      [path, ..rest] => {
+        match(ModuleProject.identify(path)) {
+          SubsetResult.Err(error) => { failure(path, "", SubsetIo.errorText(error), 0) },
+          SubsetResult.Ok(resolved) => {
+            SubsetResult.andThen(visit(resolved, [], seen), (seen) => { loadRoots(rest, seen) })
+          }
+        }
+      }
+    }
+  };
+  loadRoots(roots, [])
+};
+
+let plan = (sources) => {
+  let rec identify = (sources, inputs) => {
+    match(sources) {
+      [] => { SubsetResult.Ok(SubsetList.reverse(inputs)) },
+      [(Var(path), Var(src)), ..rest] => {
+        match(ModuleProject.identify(path)) {
+          SubsetResult.Err(error) => { failure(path, src, SubsetIo.errorText(error), 0) },
+          SubsetResult.Ok(resolved) => {
+            let ModuleProject.Resolved(id, _) = resolved;
+            if (SubsetList.exists(
+              inputs,
+              match {
+                Input(ModuleProject.Resolved(key, _), _, _) => { ModuleProject.same(key, id) }
+              }
+            )) { identify(rest, inputs) } else { identify(rest, [Input(resolved, path, src), ..inputs]) }
+          }
+        }
+      }
+    }
+  };
+  let rec allocate = (inputs, used, units) => {
+    match(inputs) {
+      [] => { SubsetList.reverse(units) },
+      [input, ..rest] => {
+        let Input(_, path, _) = input;
+        let stem = if (CompilerText.isSuffix(path, ".wm")) {
+          CompilerText.slice(translateBase(path), 0, CompilerText.size(translateBase(path)) - 3)
+        } else { translateBase(path) };
+        let rec choose = (suffix) => {
+          let candidate = stem ++ suffix;
+          let structureName = WmParse.structureName(candidate ++ ".wm");
+          if (if (SubsetList.exists(used, (n, f) => { if (n == structureName) { true } else { f == candidate } })) { true } else {
+            SubsetList.exists(
+              rest,
+              match {
+                Input(_, path, _) => { WmParse.structureName(path) == structureName }
+              }
+            )
+          }) { choose(suffix ++ "Module") } else { (structureName, candidate) }
+        };
+        let (structureName, filename) = choose("");
+        allocate(
+          rest,
+          [(structureName, filename), ..used],
+          [Unit(input, structureName, filename ++ ".sml"), ..units]
+        )
+      }
+    }
+  }
+  and translateBase = (path) => {
+    match(SubsetList.reverse(CompilerText.fields(path, (c) => { c == '/' }))) {
+      [base, .._] => { base },
+      [] => { path }
+    }
+  };
+  match(Basis.initial) {
+    Unify.Err(message, pos) => { failure("translation", "", message, pos) },
+    Unify.Ok(Env.Env(structures, _, _), _) => {
+      SubsetResult.map(
+        identify(sources, []),
+        (inputs) => {
+          allocate(inputs, SubsetList.map(structures, (name, _) => { (name, "") }), [])
+        }
+      )
+    }
+  }
+};
+
+let prepare = (units, unit) => {
+  let Unit(Input(resolved, path, src), _, _) = unit;
+  let dependency = (specifier, pos) => {
+    if (!validSpecifier(specifier)) {
+      failure(
+        path,
+        src,
+        "imports require explicit relative .wm paths in the local source profile",
+        pos
+      )
+    } else {
+      match(ModuleProject.resolve(resolved, specifier)) {
+        SubsetResult.Err(error) => {
+          failure(
+            path,
+            src,
+            "cannot resolve import \"" ++ specifier ++ "\": " ++ SubsetIo.errorText(error),
+            pos
+          )
+        },
+        SubsetResult.Ok(ModuleProject.Resolved(target, _)) => {
+          match(SubsetList.find(units, (child) => { ModuleProject.same(identity(child), target) })) {
+            None => {
+              failure(
+                path,
+                src,
+                "import dependency is not in the supplied source list: " ++ specifier,
+                pos
+              )
+            },
+            Some(child) => { SubsetResult.Ok(child) }
+          }
+        }
+      }
+    }
+  };
+  let rec imports = (tokens, edges, aliases, opens) => {
+    match(tokens) {
+      [
+        (WmLexer.WKey("from"), Var(pos)),
+        (WmLexer.WScon(Syntax.SString(specifier)), _),
+        (WmLexer.WKey("import"), _),
+        (WmLexer.WKey("*"), _),
+        (WmLexer.WKey("as"), _),
+        (WmLexer.WName([alias]), _),
+        (WmLexer.WKey(";"), _),
+        ..rest
+      ] => {
+        if (!CompilerText.firstIs(alias, SubsetChar.isUpper)) {
+          failure(
+            path,
+            src,
+            "namespace aliases must start with an uppercase letter in the initial translation profile",
+            pos
+          )
+        } else {
+          if (SubsetList.exists(aliases, (a, _) => { a == alias })) {
+            failure(path, src, "duplicate namespace alias " ++ alias, pos)
+          } else {
+            SubsetResult.andThen(
+              dependency(specifier, pos),
+              (child) => {
+                imports(
+                  rest,
+                  [Edge(specifier, pos, alias, identity(child)), ..edges],
+                  [(alias, name(child)), ..aliases],
+                  opens
+                )
+              }
+            )
+          }
+        }
+      },
+      [
+        (WmLexer.WKey("from"), Var(pos)),
+        (WmLexer.WScon(Syntax.SString(specifier)), _),
+        (WmLexer.WKey("import"), _),
+        (WmLexer.WKey("*"), _),
+        (WmLexer.WKey(";"), _),
+        ..rest
+      ] => {
+        SubsetResult.andThen(
+          dependency(specifier, pos),
+          (child) => {
+            if (SubsetList.exists(aliases, (_, target) => { target == name(child) })) {
+              imports(rest, edges, aliases, [(WmLexer.WOpen([[name(child)]]), pos), ..opens])
+            } else {
+              failure(
+                path,
+                src,
+                "open imports currently require a preceding namespace import of the same module",
+                pos
+              )
+            }
+          }
+        )
+      },
+      [(WmLexer.WKey("from"), Var(pos)), .._] => {
+        failure(
+          path,
+          src,
+          "reverse translation currently requires header namespace imports: from \"./file.wm\" import * as Name;",
+          pos
+        )
+      },
+      _ => {
+        let rec rewrite = (tokens, acc) => {
+          match(tokens) {
+            [] => { SubsetResult.Ok(SubsetList.reverse(acc)) },
+            [(WmLexer.WKey("from"), Var(pos)), .._] => {
+              failure(
+                path,
+                src,
+                "imports must precede ordinary declarations in the initial translation profile",
+                pos
+              )
+            },
+            [(WmLexer.WName([head, ..tail]), Var(pos)), ..rest] => {
+              match(SubsetList.find(aliases, (alias, _) => { alias == head })) {
+                None => {
+                  if (if (!SubsetList.isEmpty(tail)) { SubsetList.exists(units, (u) => { name(u) == head }) } else { false }) {
+                    failure(
+                      path,
+                      src,
+                      "namespace " ++ head ++ " is not explicitly imported under that name",
+                      pos
+                    )
+                  } else { rewrite(rest, [(WmLexer.WName([head, ..tail]), pos), ..acc]) }
+                },
+                Some(_, target) => {
+                  if (SubsetList.isEmpty(tail)) { rewrite(rest, [(WmLexer.WName([head]), pos), ..acc]) } else {
+                    rewrite(rest, [(WmLexer.WName([target, ..tail]), pos), ..acc])
+                  }
+                }
+              }
+            },
+            [token, ..rest] => { rewrite(rest, [token, ..acc]) }
+          }
+        };
+        SubsetResult.map(
+          rewrite(tokens, []),
+          (body) => {
+            (SubsetList.reverse(edges), List.append(SubsetList.reverse(opens), body))
+          }
+        )
+      }
+    }
+  };
+  match(WmLexer.lex(src)) {
+    WmLexer.LexError(message, pos) => { failure(path, src, message, pos) },
+    WmLexer.Tokens(tokens, comments) => {
+      SubsetResult.map(
+        imports(tokens, [], [], []),
+        (edges, body) => {
+          Source(
+            unit,
+            edges,
+            WmLexer.Tokens(
+              body,
+              SubsetList.filter(
+                comments,
+                (_, body, _) => {
+                  match(ModuleImports.marked(body)) {
+                    None => { true },
+                    Some(_) => { false }
+                  }
+                }
+              )
+            )
+          )
+        }
+      )
+    }
+  }
+};
+
+let order = (sources) => {
+  let rec visit = (source, active, completed) => {
+    let unit = sourceUnit(source);
+    if (SubsetList.exists(
+      completed,
+      (s) => { ModuleProject.same(identity(sourceUnit(s)), identity(unit)) }
+    )) { SubsetResult.Ok(completed) } else {
+      let rec walk = (edges, completed) => {
+        match(edges) {
+          [] => { SubsetResult.Ok([source, ..completed]) },
+          [Edge(specifier, pos, _, target), ..rest] => {
+            if (SubsetList.exists([unit, ..active], (u) => { ModuleProject.same(identity(u), target) })) {
+              failure(
+                pathOf(unit),
+                textOf(unit),
+                "import cycle: " ++ SubsetString.concatWith(
+                  List.append(SubsetList.map(SubsetList.reverse([unit, ..active]), pathOf), [specifier]),
+                  " -> "
+                ),
+                pos
+              )
+            } else {
+              match(SubsetList.find(sources, (s) => { ModuleProject.same(identity(sourceUnit(s)), target) })) {
+                None => {
+                  failure(pathOf(unit), textOf(unit), "internal error: missing resolved dependency", pos)
+                },
+                Some(child) => {
+                  SubsetResult.andThen(visit(child, [unit, ..active], completed), (done) => { walk(rest, done) })
+                }
+              }
+            }
+          }
+        }
+      };
+      walk(edgesOf(source), completed)
+    }
+  };
+  let rec roots = (remaining, completed) => {
+    match(remaining) {
+      [] => { SubsetResult.Ok(SubsetList.reverse(completed)) },
+      [source, ..rest] => {
+        SubsetResult.andThen(visit(source, [], completed), (done) => { roots(rest, done) })
+      }
+    }
+  };
+  roots(sources, [])
+};
+
+let imported = (units, unit, edges) => {
+  let rec loop = (edges, seen) => {
+    match(edges) {
+      [] => { SubsetResult.Ok(SubsetList.reverse(seen)) },
+      [Edge(_, pos, _, target), ..rest] => {
+        match(SubsetList.find(units, (child) => { ModuleProject.same(identity(child), target) })) {
+          None => {
+            failure(pathOf(unit), textOf(unit), "internal error: missing resolved dependency", pos)
+          },
+          Some(child) => {
+            loop(
+              rest,
+              if (SubsetList.exists(seen, (u) => { ModuleProject.same(identity(u), target) })) { seen } else { [child, ..seen] }
+            )
+          }
+        }
+      }
+    }
+  };
+  loop(edges, [])
+};
+
+type Adapter = | Adapter<ModuleProject.ModuleId, String, String>;
+
+let structureIdentifier = (value) => {
+  match(Lexer.lex(value)) {
+    Lexer.Tokens([(Lexer.TId(identifier), _), (Lexer.TEOF, _)], _) => {
+      if (identifier == value) {
+        SubsetChar.isAlpha(CompilerText.sub(CompilerText.source(identifier), 0))
+      } else { false }
+    },
+    _ => { false }
+  }
+};
+
+let adapters = (units, specifications) => {
+  let rec resolve = (remaining, seen) => {
+    match(remaining) {
+      [] => { SubsetResult.Ok(SubsetList.reverse(seen)) },
+      [(Var(checker), Var(native), Var(exported)), ..rest] => {
+        if (!structureIdentifier(exported)) {
+          failure(checker, "", "native adapter export must be an SML structure identifier", 0)
+        } else {
+          SubsetResult.andThen(
+            match(ModuleProject.identify(checker)) {
+              SubsetResult.Err(error) => { failure(checker, "", SubsetIo.errorText(error), 0) },
+              SubsetResult.Ok(ModuleProject.Resolved(id, _)) => {
+                if (!SubsetList.exists(units, (unit) => { ModuleProject.same(identity(unit), id) })) {
+                  failure(checker, "", "native adapter checker is not in the entry graph", 0)
+                } else {
+                  if (SubsetList.exists(
+                    seen,
+                    match {
+                      Adapter(key, _, _) => { ModuleProject.same(id, key) }
+                    }
+                  )) {
+                    failure(checker, "", "duplicate native adapter selection", 0)
+                  } else {
+                    match(ModuleProject.identify(native)) {
+                      SubsetResult.Err(error) => { failure(native, "", SubsetIo.errorText(error), 0) },
+                      SubsetResult.Ok(ModuleProject.Resolved(_, path)) => {
+                        match(SubsetIo.readFile(path)) {
+                          SubsetResult.Err(error) => { failure(native, "", SubsetIo.errorText(error), 0) },
+                          SubsetResult.Ok(_) => { SubsetResult.Ok(Adapter(id, path, exported)) }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            (adapter) => { resolve(rest, [adapter, ..seen]) }
+          )
+        }
+      }
+    }
+  };
+  resolve(specifications, [])
+};
+
+/* One basis instance per canonical module. A module's body receives the standard Basis
+   and only its direct dependencies; the `in` part exports only its own structure.
+   Native implementations use source import aliases in separately captured basis scopes. */
+let mlb = (units, sources, modules, entry, adapters) => {
+  let scopeName = (name) => { "SubsetBuild_" ++ name };
+  let rec emit = (modules) => {
+    match(modules) {
+      [] => { SubsetResult.Ok("") },
+      [(Var(name), Var(dependencies), _), ..rest] => {
+        match(SubsetList.find(units, (unit) => { nameOf(unit) == name })) {
+          None => {
+            failure("translation", "", "missing build module " ++ name, 0)
+          },
+          Some(unit) => {
+            let selected = SubsetList.find(
+              adapters,
+              match {
+                Adapter(id, _, _) => { ModuleProject.same(identity(unit), id) }
+              }
+            );
+            let body = match(selected) {
+              None => {
+                SubsetResult.Ok("      open SubsetBuild_Standard" ++ SubsetString.concat(SubsetList.map(dependencies, (name) => { " " ++ scopeName(name) })) ++ "\n    in\n      \"" ++ CompilerText.escapeSmlString(output(unit)) ++ "\"\n")
+              },
+              Some(Adapter(_, native, exported)) => {
+                match(SubsetList.find(
+                  sources,
+                  (source) => {
+                    ModuleProject.same(identity(sourceUnit(source)), identity(unit))
+                  }
+                )) {
+                  None => {
+                    failure(pathOf(unit), "", "missing native adapter imports", 0)
+                  },
+                  Some(source) => {
+                    let rec aliases = (edges) => {
+                      match(edges) {
+                        [] => { SubsetResult.Ok("", "") },
+                        [Edge(_, pos, alias, target), ..rest] => {
+                          if (!structureIdentifier(alias)) {
+                            failure(
+                              pathOf(unit),
+                              textOf(unit),
+                              "native adapter import alias must be an SML structure identifier",
+                              pos
+                            )
+                          } else {
+                            match(SubsetList.find(units, (child) => { ModuleProject.same(identity(child), target) })) {
+                              None => {
+                                failure(pathOf(unit), "", "missing native adapter dependency", 0)
+                              },
+                              Some(child) => {
+                                SubsetResult.map(
+                                  aliases(rest),
+                                  (declarations, opens) => {
+                                    (
+                                      "      basis SubsetNative_" ++ alias ++ " = bas local open " ++ scopeName(nameOf(child)) ++ " in structure " ++ alias ++ " = " ++ nameOf(child) ++ " end end\n" ++ declarations,
+                                      " SubsetNative_" ++ alias ++ opens
+                                    )
+                                  }
+                                )
+                              }
+                            }
+                          }
+                        }
+                      }
+                    };
+                    SubsetResult.map(
+                      aliases(edgesOf(source)),
+                      (declarations, opens) => {
+                        "      open SubsetBuild_Standard\n" ++ declarations ++ "      open SubsetBuild_Standard" ++ opens ++ "\n    in\n      local\n        \"" ++ CompilerText.escapeSmlString(native) ++ "\"\n      in\n        structure " ++ name ++ " = " ++ exported ++ "\n      end\n"
+                      }
+                    )
+                  }
+                }
+              }
+            };
+            SubsetResult.andThen(
+              body,
+              (body) => {
+                SubsetResult.map(
+                  emit(rest),
+                  (text) => {
+                    "  basis " ++ scopeName(name) ++ " = bas\n    local\n" ++ body ++ "    end\n  end\n" ++ text
+                  }
+                )
+              }
+            )
+          }
+        }
+      }
+    }
+  }
+  and nameOf = (unit) => { name(unit) };
+  SubsetResult.map(
+    emit(modules),
+    (text) => {
+      "local\n  basis SubsetBuild_Standard = bas $(SML_LIB)/basis/basis.mlb end\n" ++ text ++ "in\n  open SubsetBuild_Standard " ++ scopeName(name(entry)) ++ "\nend\n"
+    }
+  )
+};
+
+let metadata = (dependencies) => {
+  if (SubsetList.isEmpty(dependencies)) { "" } else {
+    "(* @subsetml\n" ++ SubsetString.concat(SubsetList.map(
+      dependencies,
+      (unit) => {
+        "from \"./" ++ output(unit) ++ "\" import * as " ++ name(unit) ++ ";\n"
+      }
+    )) ++ "*)\n\n"
+  }
+};

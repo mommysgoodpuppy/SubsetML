@@ -11,11 +11,11 @@ structure Types = struct
 
   (* A type name (Definition §4.1): its stamp, its printed name, its arity, and whether it
      admits equality, given type arguments that do. *)
-  type tyname = real * string * real * bool
+  type tyname = int * string * int * bool
 
   datatype ty =
-      TVar of real                       (* unification variable; see Unify *)
-    | TGen of real                       (* the i-th bound variable of a type scheme *)
+      TVar of int                       (* unification variable; see Unify *)
+    | TGen of int                       (* the i-th bound variable of a type scheme *)
     | TRigid of string                  (* an explicit type variable 'a in scope *)
     | TCon of tyname * ty list
     | TArrow of ty * ty
@@ -39,15 +39,15 @@ structure Types = struct
   (* --------------------------------------------------------------------------------------- *)
   (* The type names of the initial basis. Program type names get stamps from `firstStamp`. *)
 
-  val boolName = (1.0, "bool", 0.0, true)
-  val intName = (2.0, "int", 0.0, true)
-  val realName = (3.0, "real", 0.0, false)
-  val stringName = (4.0, "string", 0.0, true)
-  val charName = (5.0, "char", 0.0, true)
-  val listName = (6.0, "list", 1.0, true)
-  val optionName = (7.0, "option", 1.0, true)
-  val orderName = (8.0, "order", 0.0, true)
-  val firstStamp = 100.0
+  val boolName = (1, "bool", 0, true)
+  val intName = (2, "int", 0, true)
+  val realName = (3, "real", 0, false)
+  val stringName = (4, "string", 0, true)
+  val charName = (5, "char", 0, true)
+  val listName = (6, "list", 1, true)
+  val optionName = (7, "option", 1, true)
+  val orderName = (8, "order", 0, true)
+  val firstStamp = 100
 
   val boolTy = TCon (boolName, [])
   val intTy = TCon (intName, [])
@@ -64,7 +64,7 @@ structure Types = struct
 
   val labelLess = fn (a, b) =>
     case (isNumeric a, isNumeric b) of
-      (true, true) => CompilerText.size a < CompilerText.size b orelse (Real.== (CompilerText.size a, CompilerText.size b) andalso CompilerText.less (a, b))
+      (true, true) => CompilerText.size a < CompilerText.size b orelse ((CompilerText.size a = CompilerText.size b) andalso CompilerText.less (a, b))
     | (true, false) => true
     | (false, true) => false
     | (false, false) => CompilerText.less (a, b)
@@ -113,7 +113,7 @@ structure Types = struct
           (_, []) => true
         | (digits, (l, _) :: rest) => l = tupleLabel digits andalso check (nextTupleLabel digits, rest)
     in
-      if SubsetList.length fields >= 2.0 andalso check ([#"1"], fields) then SOME (SmlList.map (fn (_, t) => t) fields) else NONE
+      if SubsetList.length fields >= 2 andalso check ([#"1"], fields) then SOME (SmlList.map (fn (_, t) => t) fields) else NONE
     end
 
   (* Replaces TGen i by the i-th argument. *)

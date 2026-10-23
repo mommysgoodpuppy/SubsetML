@@ -7,6 +7,7 @@ from "./sml_list.sml" import * as SmlList;
 from "./subset_string.sml" import * as SubsetString;
 from "./subset_list.sml" import * as SubsetList;
 from "./compiler_text.sml" import * as CompilerText;
+from "./subset_char.sml" import * as SubsetChar;
 from "./sml_list_pair.sml" import * as SmlListPair;
 from "./subset_result.sml" import * as SubsetResult;
 */
@@ -26,6 +27,7 @@ from "./sml_list.wm" import * as SmlList;
 from "./subset_string.wm" import * as SubsetString;
 from "./subset_list.wm" import * as SubsetList;
 from "./compiler_text.wm" import * as CompilerText;
+from "./subset_char.wm" import * as SubsetChar;
 from "./sml_list_pair.wm" import * as SmlListPair;
 from "./subset_result.wm" import * as SubsetResult;
 
@@ -77,6 +79,7 @@ let rec patPos = (p) => {
   match(p) {
     PScon(q, _) => { Some(q) },
     PId(q, _) => { Some(q) },
+    PPinned(q, _) => { Some(q) },
     PRecord(q, _) => { Some(q) },
     PApp(q, _, _) => { Some(q) },
     PTuple(ps) => {
@@ -114,6 +117,7 @@ let rec expPos = (e) => {
     EId(q, _) => { Some(q) },
     ERecord(q, _) => { Some(q) },
     ESelect(q, _) => { Some(q) },
+    ECopy(q, _, _, _) => { Some(q) },
     ETuple(es) => { first(es) },
     EList(es) => { first(es) },
     ESeq(es) => { first(es) },
@@ -268,6 +272,7 @@ let rec expTyVars = (e) => {
     EFn(rules) => {
       concatMap((p, y) => { List.append(patTyVars(p), expTyVars(y)) }, rules)
     },
+    ECopy(_, source, _, _) => { expTyVars(source) },
     _ => { [] }
   }
 };
@@ -322,14 +327,45 @@ let constTy = match {
   SChar(_) => { charTy }
 };
 
-// SubsetML omits int (spec §9.3), so integer constants are rejected.
+/* Validate without converting through the host's narrower int. Accumulation
+   stays exact and stops as soon as a signed 32-bit magnitude is exceeded. */
+let int32Literal = (text) => {
+  let (negative, digits) = match(CompilerText.characters(text)) {
+    ['~', ..rest] => { (true, rest) },
+    Var(rest) => { (false, rest) }
+  };
+  let (base, digits) = match(digits) {
+    ['0', 'x', ..rest] => { (16, rest) },
+    Var(rest) => { (10, rest) }
+  };
+  let limit = if (negative) { 2147483648 } else { 2147483647 };
+  let alphabet = CompilerText.characters("0123456789abcdef");
+  let rec digit = (c, cs, n) => {
+    match(cs) {
+      [] => { 16 },
+      [d, ..rest] => {
+        if (SubsetChar.toLower(c) == d) { n } else { digit(c, rest, n + 1) }
+      }
+    }
+  };
+  let rec scan = (cs, value) => {
+    match(cs) {
+      [] => { true },
+      [c, ..rest] => {
+        let n = value * base + digit(c, alphabet, 0);
+        if (n <= limit) { scan(rest, n) } else { false }
+      }
+    }
+  };
+  scan(digits, 0)
+};
+
 let checkConst = (pos, c, st) => {
   match(c) {
     SInt(text) => {
-      Err(
-        "integer constants are not part of SubsetML, which omits int for now; write " ++ text ++ ".0",
-        pos
-      )
+      if (int32Literal(text)) { Ok(intTy, st) } else {
+        Err("integer constant outside signed 32-bit range: " ++ text, pos)
+      }
     },
     _ => { Ok(constTy(c), st) }
   }
@@ -368,6 +404,7 @@ let rec pat = (ctx, p, st) => {
     PScon(q, c) => {
       bind(checkConst(q, c, st))((t) => (st) => { Ok((t, []), st) })
     },
+    PPinned(q, _) => { Err("internal pinned pattern was not lowered", q) },
     PId(q, id) => {
       match(constructorScheme(Env.value(env, id)), id) {
         (Some(scheme), _) => {
@@ -500,12 +537,37 @@ let rec exp = (ctx, e, st) => {
       match(Env.value(env, id)) {
         Some(entry) => {
           let (scheme, _) = entry;
+          let (kinds, _) = scheme;
           let (t, st') = instantiate(st, level, scheme);
-          Ok(t, st')
+          let numeric = SmlList.exists((k) => {
+            match(k) {
+              KClass(_) => { true },
+              _ => { false }
+            }
+          })(kinds);
+          let primitive = if (if (numeric) { true } else { id == ([], "div") }) { true } else { id == ([], "mod") };
+          let integerLibrary = match(id) {
+            (["Int"], _) => {
+              match(Env.structureAt(env, ["Int"])) {
+                Some(_, isBasis) => { isBasis },
+                None => { false }
+              }
+            },
+            _ => { false }
+          };
+          let State(vs, nx, sels, recs, sites) = st';
+          let st'' = if (if (primitive) { true } else { integerLibrary }) {
+            match(sites) {
+              Some(xs) => { State(vs, nx, sels, recs, Some([(q, t), ..xs])) },
+              None => { st' }
+            }
+          } else { st' };
+          Ok(t, st'')
         },
         None => { Err("unbound identifier " ++ longName(id), q) }
       }
     },
+    ECopy(_, source, _, _) => { exp(ctx, source, st) },
     ERecord(q, fields) => {
       bind(checkRecordLabels(env, q, SmlList.map((l, _) => { l })(fields), st))((_) => (st) => {
         bind(mapRes(
@@ -849,7 +911,24 @@ and settleSelections = (level, st) => {
           }
         }
       },
-      TVar(_) => { Ok((List.append(pending, [sel]), progress), st) },
+      TVar(v) => {
+        /* A field belongs to its receiver's type, even while the flexible row is
+           pending. Preserve that context dependency before closing inner vals. */
+        let receiverLevel = match(lookup(st, v)) {
+          Free(_, level) => { level },
+          Bound(_) => { l }
+        };
+        let escaped = SmlList.exists((w) => {
+          match(lookup(st, w)) {
+            Free(_, fieldLevel) => { fieldLevel > receiverLevel },
+            Bound(_) => { false }
+          }
+        })(freeVars(st, f));
+        Ok(
+          (List.append(pending, [sel]), if (progress) { true } else { escaped }),
+          adjust(st, receiverLevel, f)
+        )
+      },
       _ => {
         Err("`#" ++ lab ++ "` is applied to a non-record: " ++ show(st, r), q)
       }
@@ -888,31 +967,34 @@ and settleSelections = (level, st) => {
 
 // The scheme of one bound variable.
 and closeBinding = (level, explicit, generalizable, pos, x, t, st) => {
-  /* An overloaded variable its context has not resolved would default to int in SML
-     (Appendix E), which SubsetML omits (spec §9.3). */
-  let unresolved = SmlList.exists((v) => {
+  // Appendix E: default unresolved numeric classes at declaration closure.
+  let defaults = SmlList.filter((v) => {
     match(lookup(st, v)) {
       Free(KClass(_), l) => { l > level },
       _ => { false }
     }
   })(freeVars(st, t));
-  let rigid = SmlList.filter((v) => { member(v, explicit) })(rigidNames(resolve(st, t)));
-  match(unresolved, generalizable, rigid) {
-    (true, _, _) => {
-      Err(
-        "the type of an overloaded operation in `" ++ x ++ "` is not determined: SML would make it int, " ++ "which SubsetML omits; add a type annotation such as (x : real)",
-        pos
-      )
-    },
-    (false, true, _) => { Ok((x, generalize(st, level, explicit, t)), st) },
-    (false, false, [v, .._]) => {
-      Err(
-        "type variable " ++ v ++ " cannot be generalized: the value is expansive (Definition, section 4.8)",
-        pos
-      )
-    },
-    (false, false, []) => { Ok((x, ([], resolve(st, t))), adjust(st, level, t)) }
-  }
+  let rec settle = (vars, st) => {
+    match(vars) {
+      [] => { Ok(void, st) },
+      [v, ..rest] => {
+        bind(unifyAt(st, pos, "integer default", TVar(v), intTy))((_) => (st) => { settle(rest, st) })
+      }
+    }
+  };
+  bind(settle(defaults, st))((_) => (st) => {
+    let rigid = SmlList.filter((v) => { member(v, explicit) })(rigidNames(resolve(st, t)));
+    match(generalizable, rigid) {
+      (true, _) => { Ok((x, generalize(st, level, explicit, t)), st) },
+      (false, [v, .._]) => {
+        Err(
+          "type variable " ++ v ++ " cannot be generalized: the value is expansive (Definition, section 4.8)",
+          pos
+        )
+      },
+      (false, []) => { Ok((x, ([], resolve(st, t))), adjust(st, level, t)) }
+    }
+  })
 }
 
 and rigidNames = (t) => {

@@ -1,0 +1,190 @@
+/* @subsetml
+from "./syntax.sml" import * as Syntax;
+from "./sml_list.sml" import * as SmlList;
+from "./compiler_text.sml" import * as CompilerText;
+from "./backend_names.sml" import * as BackendNames;
+from "./unify.sml" import * as Unify;
+from "./types.sml" import * as Types;
+from "./elab.sml" import * as Elab;
+from "./translate.sml" import * as Translate;
+from "./subset_list.sml" import * as SubsetList;
+from "./basis.sml" import * as Basis;
+*/
+
+/* Native SML emission makes the int32 choice explicit, independently of the
+   host compiler's default int. Source formatting remains source formatting. */
+
+from "./syntax.wm" import * as Syntax;
+from "./sml_list.wm" import * as SmlList;
+from "./compiler_text.wm" import * as CompilerText;
+from "./backend_names.wm" import * as BackendNames;
+from "./unify.wm" import * as Unify;
+from "./types.wm" import * as Types;
+from "./elab.wm" import * as Elab;
+from "./translate.wm" import * as Translate;
+from "./subset_list.wm" import * as SubsetList;
+from "./basis.wm" import * as Basis;
+
+from "./syntax.wm" import *;
+
+let basename = (path) => {
+  match(SmlList.rev(CompilerText.fields(path, (c) => { c == '/' }))) {
+    [name, .._] => { name },
+    [] => { path }
+  }
+};
+
+let project = (files) => {
+  let prefix = BackendNames.prefix(SmlList.map((path, src, _, _) => { (path, src) })(files));
+  let runtime = prefix ++ "Int32";
+  let integerTy = TyCon([], ([runtime], "int"));
+  let header = "(* Generated native SML: SubsetML int is signed 32-bit. *)\n" ++ "structure " ++ runtime ++ " = struct\n" ++ "  open Int32\n  val precision = SOME (32 : Int32.int)\nend\n";
+  /* Keep authored type syntax: an initial SML type alias preserves local
+     aliases, shadowing and opens without changing the host's operators. */
+  let rec lowerPat = (p) => {
+    match(p) {
+      PScon(_, SInt(_)) => { PTyped(p, integerTy) },
+      PRecord(q, fs) => { PRecord(q, SmlList.map((l, p) => { (l, lowerPat(p)) })(fs)) },
+      PTuple(ps) => { PTuple(SmlList.map(lowerPat)(ps)) },
+      PList(ps) => { PList(SmlList.map(lowerPat)(ps)) },
+      PApp(q, id, p) => { PApp(q, id, lowerPat(p)) },
+      PTyped(p, t) => { PTyped(lowerPat(p), t) },
+      _ => { p }
+    }
+  };
+  let process = (prog, st) => {
+    let Unify.State(_, _, _, _, sites) = st;
+    let site = (pos) => {
+      match(sites) {
+        None => { None },
+        Some(xs) => { SmlList.find((p, _) => { (p: Number) == pos })(xs) }
+      }
+    };
+    let rec integer = (t) => {
+      match(Unify.prune(st, t)) {
+        Types.TCon(n, []) => { Unify.sameName(n, Types.intName) },
+        Types.TVar(v) => {
+          match(Unify.lookup(st, v)) {
+            Unify.Free(Types.KClass(ns), _) => {
+              SmlList.exists((n) => { Unify.sameName(n, Types.intName) })(ns)
+            },
+            _ => { false }
+          }
+        },
+        Types.TArrow(a, _) => { integer(a) },
+        Types.TRecord([(_, Var(t)), .._]) => { integer(t) },
+        _ => { false }
+      }
+    };
+    let id = (q, original) => {
+      match(site(q)) {
+        None => { original },
+        Some(_, t) => {
+          match(original) {
+            (["Int"], Var(name)) => { ([runtime], name) },
+            ([], Var(name)) => {
+              if (if (if (name != "=") { name != "<>" } else { false }) { integer(t) } else { false }) { ([runtime], name) } else { original }
+            },
+            _ => { original }
+          }
+        }
+      }
+    };
+    let rec exp = (e) => {
+      let rules = (rs) => { SmlList.map((p, e) => { (lowerPat(p), exp(e)) })(rs) };
+      match(e) {
+        EScon(_, SInt(_)) => { ETyped(e, integerTy) },
+        EId(q, name) => { EId(q, id(q, name)) },
+        ERecord(q, fs) => { ERecord(q, SmlList.map((l, e) => { (l, exp(e)) })(fs)) },
+        ECopy(q, a, b, t) => { ECopy(q, exp(a), exp(b), t) },
+        ETuple(es) => { ETuple(SmlList.map(exp)(es)) },
+        EList(es) => { EList(SmlList.map(exp)(es)) },
+        ESeq(es) => { ESeq(SmlList.map(exp)(es)) },
+        ELet(ds, es) => { ELet(SmlList.map(dec)(ds), SmlList.map(exp)(es)) },
+        EApp(a, b) => { EApp(exp(a), exp(b)) },
+        ETyped(e, t) => { ETyped(exp(e), t) },
+        EAndalso(a, b) => { EAndalso(exp(a), exp(b)) },
+        EOrelse(a, b) => { EOrelse(exp(a), exp(b)) },
+        EIf(c, a, b) => { EIf(exp(c), exp(a), exp(b)) },
+        ECase(e, rs) => { ECase(exp(e), rules(rs)) },
+        EFn(rs) => { EFn(rules(rs)) },
+        _ => { e }
+      }
+    }
+    and dec = (d) => {
+      match(d) {
+        DVal(q, vs, plain, recs) => {
+          let rules = (rs) => { SmlList.map((p, e) => { (lowerPat(p), exp(e)) })(rs) };
+          DVal(q, vs, rules(plain), rules(recs))
+        },
+        _ => { d }
+      }
+    };
+    let top = (td) => {
+      match(td) {
+        TopExp(q, e) => { TopExp(q, exp(e)) },
+        TopDecs(ds) => {
+          TopDecs(SmlList.map((sd) => {
+            match(sd) {
+              SDec(d) => { SDec(dec(d)) },
+              SStructure(q, bs) => {
+                SStructure(q, SmlList.map((name, ds) => { (name, SmlList.map(dec)(ds)) })(bs))
+              }
+            }
+          })(ds))
+        }
+      }
+    };
+    SmlList.map(top)(prog)
+  };
+
+  let rec loop = (env, st, files, acc) => {
+    match(files) {
+      [] => { Unify.Ok(SmlList.rev(acc), st) },
+      [(Var(path), Var(src), Var(prog), Var(cs)), ..rest] => {
+        /* Strict validation before the recording pass, whose equality mode
+           exists for WM recovery and must not weaken SML source checking. */
+        Unify.bind(Elab.program(env, prog, st))((_) => (_) => {
+          let Unify.State(vs, nx, sels, recs, _) = st;
+          Unify.bind(Elab.program(env, prog, Unify.State(vs, nx, sels, recs, Some([]))))((nextEnv) => (next) => {
+            let Unify.State(vs, nx, sels, recs, _) = next;
+            let native = process(prog, next);
+            loop(
+              nextEnv,
+              Unify.State(vs, nx, sels, recs, None),
+              rest,
+              [(path, Translate.toSml(src, native, cs)), ..acc]
+            )
+          })
+        })
+      }
+    }
+  };
+  let names = SmlList.map((path, _, _, _) => { basename(path) })(files);
+  let duplicate = SmlList.find((name) => {
+    SubsetList.length(SmlList.filter((other) => { name == other })(names)) > 1
+  })(names);
+  match(duplicate) {
+    Some(name) => { Unify.Err("duplicate native output filename: " ++ name, 0) },
+    None => {
+      Unify.bind(Basis.initial)((env) => (st) => {
+        Unify.bind(loop(env, st, files, []))((outputs) => (next) => {
+          Unify.Ok((header ++ "type int = " ++ runtime ++ ".int\n", outputs), next)
+        })
+      })
+    }
+  }
+};
+
+// Legacy source-list command keeps its prelude in the first output file.
+let emit = (files) => {
+  Unify.bind(project(files))((prelude, outputs) => (st) => {
+    Unify.Ok(
+      match(outputs) {
+        [] => { [] },
+        [(Var(path), Var(text)), ..rest] => { [(path, prelude ++ text), ..rest] }
+      },
+      st
+    )
+  })
+};

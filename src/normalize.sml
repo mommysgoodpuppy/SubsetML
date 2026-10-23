@@ -47,8 +47,9 @@ structure Normalize = struct
         else EApp (EId (p, (["Real"], opr)), ETuple [exp (ETyped (x, TyCon ([], ([], "real")))), exp y])
     | EApp (f, a) => EApp (exp f, exp a)
     | ETyped (x, t) => ETyped (exp x, t)
-    | EAndalso (a, b) => EIf (exp a, exp b, EId (0.0, ([], "false")))
-    | EOrelse (a, b) => EIf (exp a, EId (0.0, ([], "true")), exp b)
+    | ECopy (_, source, _, _) => exp source
+    | EAndalso (a, b) => EIf (exp a, exp b, EId (0, ([], "false")))
+    | EOrelse (a, b) => EIf (exp a, EId (0, ([], "true")), exp b)
     | EIf (c, a, b) => EIf (exp c, exp a, exp b)
     | ECase (x, rs) => ECase (exp x, rules (pat, exp, rs))
     (* First-class real comparisons are expanded to typed Workman lambdas. Contract

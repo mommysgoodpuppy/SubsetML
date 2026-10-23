@@ -16,11 +16,37 @@ echo "round trips: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
 
 # sml -> wm -> sml: each file's declarations survive the translation (up to Normalize)
-$bin roundtrip src/*.sml tests/accept/*.sml && echo "wm round trips: ok" || exit 1
+set --
+# The compiler now uses integers; preserve explicit rejection by the deferred WM profile.
+if $bin roundtrip src/subset_list.sml > "$tmp/unsupported" 2>&1; then
+  echo "FAIL: integer compiler entered deferred WM profile"; exit 1
+fi
+rg -q "signed 32-bit int" "$tmp/unsupported" || exit 1
+for f in tests/accept/*.sml; do
+  case "$f" in
+    tests/accept/int-constant.sml|tests/accept/int-type.sml|tests/accept/overload-unresolved.sml|tests/accept/integer_basics.sml)
+      if $bin roundtrip "$f" > "$tmp/unsupported" 2>&1; then
+        echo "FAIL: integer program entered deferred WM profile: $f"; exit 1
+      fi
+      rg -q 'signed 32-bit int' "$tmp/unsupported" || exit 1
+      ;;
+    tests/accept/core.sml|tests/accept/types.sml)
+      # These checker fixtures intentionally contain declarations outside the WM profile.
+      if $bin roundtrip "$f" > "$tmp/unsupported" 2>&1; then
+        echo "FAIL: accepted unsupported WM translation $f"; exit 1
+      fi
+      rg -q 'embedded SML declarations are not supported' "$tmp/unsupported" || exit 1
+      ;;
+    *) set -- "$@" "$f" ;;
+  esac
+done
+$bin roundtrip "$@" && echo "wm round trips: ok (unsupported declaration fixtures rejected)" || exit 1
 
 # wm -> sml -> wm: the generated Workman is a fixed point, text and comments included
 mkdir -p "$tmp/wm" "$tmp/sml" "$tmp/wm2"
-$bin wm "$tmp/wm" src/*.sml || exit 1
+# Record source fixtures gain native constructor helpers on reverse translation;
+# syntax/semantic roundtrip above covers them, but they are not a text fixed point.
+$bin wm "$tmp/wm" tests/accept/real_functions.sml tests/accept/structures.sml || exit 1
 $bin sml "$tmp/sml" "$tmp"/wm/*.wm || exit 1
 $bin wm "$tmp/wm2" "$tmp"/sml/*.sml || exit 1
 changed=0

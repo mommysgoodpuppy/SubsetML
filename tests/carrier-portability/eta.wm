@@ -1,0 +1,9 @@
+let viaResult = (f) => (result) => { Monad.via Result.carrier f result };
+let number: Result<Number, String> = viaResult (x) => {Ok(x + 1)} (Ok(1));
+let text: Result<String, Bool> = viaResult (x) => {Ok(x ++ "!")} (Ok("hi"));
+let mapped: Result<Bool, String> = Result.carrier.map(Ok("value"), (_) => {true});
+let combined: Result<String, Bool> = Result.carrier.map2(Ok("a"), Ok("b"), (a, b) => {a ++ b});
+let main = () => {
+  let checked = match(number, text, mapped, combined) { (Ok(2), Ok("hi!"), Ok(true), Ok("ab")) => {true}, _ => {false} };
+  print(if (checked) {"eta: ok"} else {"eta: FAILED"});
+};

@@ -33,6 +33,7 @@ structure Print = struct
       PWild => "_"
     | PScon (_, c) => scon c
     | PId (_, id) => longid id
+    | PPinned (_, id) => node ("pin", [longid id])
     | PRecord (_, fields) => node ("record", SmlList.map (fn (l, p) => node (l, [pat p])) fields)
     | PTuple ps => node ("tuple", SmlList.map pat ps)
     | PList ps => node ("list", SmlList.map pat ps)
@@ -50,6 +51,7 @@ structure Print = struct
     | EId (_, id) => longid id
     | ERecord (_, fields) => node ("record", SmlList.map (fn (l, e) => node (l, [exp e])) fields)
     | ESelect (_, l) => "#" ^ l
+    | ECopy (_, source, _, _) => exp source
     | ETuple es => node ("tuple", SmlList.map exp es)
     | EList es => node ("list", SmlList.map exp es)
     | ESeq es => node ("seq", SmlList.map exp es)

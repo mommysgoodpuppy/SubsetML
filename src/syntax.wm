@@ -28,6 +28,8 @@ type Pat =
   | PWild
   | PScon<Pos, Scon>
   | PId<Pos, Longid> // variable or constructor
+  // Internal reverse-WM pattern; resolved and lowered before target checking.
+  | PPinned<Pos, Longid>
   | PRecord<Pos, List<(String, Pat)>>
   | PTuple<List<Pat>> // [] is (); never one component
   | PList<List<Pat>>
@@ -50,6 +52,9 @@ type Exp =
   | EIf<Exp, Exp, Exp>
   | ECase<Exp, List<(Pat, Exp)>>
   | EFn<List<(Pat, Exp)>>
+  /* Internal WM lowering plan: checked ordered construction, pure final fields, layout.
+     Not surface SubsetML syntax; printers retain the checked fallback if not lowered. */
+  | ECopy<Pos, Exp, Exp, Ty>
 and Dec =
   // val tyvarseq valbind: the bindings before and after `rec`
   | DVal<Pos, List<String>, List<(Pat, Exp)>, List<(Pat, Exp)>>

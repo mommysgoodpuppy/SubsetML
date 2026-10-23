@@ -28,7 +28,7 @@ structure Basis = struct
 
   val conEntry = fn (name, scheme) => (name, (scheme, SCon))
 
-  val alpha = TGen 0.0
+  val alpha = TGen 0
 
   val boolCons = [("true", ([], boolTy)), ("false", ([], boolTy))]
   val listCons =
@@ -42,8 +42,9 @@ structure Basis = struct
   val withCons = fn (tn, cons) => TyStr (arityOf tn, TCon (tn, arguments tn), cons)
 
   val topTypes =
-    [("unit", TyStr (0.0, unitTy, [])),
+    [("unit", TyStr (0, unitTy, [])),
      ("bool", withCons (boolName, boolCons)),
+     ("int", tyStr intName),
      ("real", tyStr realName),
      ("string", tyStr stringName),
      ("char", tyStr charName),
@@ -53,10 +54,10 @@ structure Basis = struct
 
   (* Abstract Basis types. None is declared to admit equality: claiming equality the Basis
      does not grant would accept programs SML rejects. *)
-  val instreamName = (9.0, "instream", 0.0, false)
-  val outstreamName = (10.0, "outstream", 0.0, false)
-  val statusName = (11.0, "status", 0.0, false)
-  val substringName = (12.0, "substring", 0.0, false)
+  val instreamName = (9, "instream", 0, false)
+  val outstreamName = (10, "outstream", 0, false)
+  val statusName = (11, "status", 0, false)
+  val substringName = (12, "substring", 0, false)
 
   (* --------------------------------------------------------------------------------------- *)
   (* Values, as (structure path, types the structure declares, values) *)
@@ -83,10 +84,18 @@ structure Basis = struct
      ("null", "'a list -> bool"),
      ("valOf", "'a option -> 'a"),
      ("isSome", "'a option -> bool"),
-     ("/", "real * real -> real")]
+     ("/", "real * real -> real"),
+     ("div", "int * int -> int"),
+     ("mod", "int * int -> int")]
 
   val structures =
-    [(["List"], [],
+    [(["Int"], [],
+      [("toString", "int -> string"),
+       ("fromString", "string -> int option"),
+       ("precision", "int option"),
+       ("minInt", "int option"),
+       ("maxInt", "int option")]),
+     (["List"], [],
       [("null", "'a list -> bool"),
        ("hd", "'a list -> 'a"),
        ("tl", "'a list -> 'a list"),
@@ -206,9 +215,7 @@ structure Basis = struct
      (["Num", "CharVector"], [],
       [("tabulate", "real * (real -> char) -> string")])]
 
-  (* Overloaded identifiers (Appendix E). The classes keep int, which SubsetML omits, so that an
-     operation SML would default to int is reported instead of silently typed (spec §9.3). `/`
-     has one type here and appears among the values above. *)
+  (* Appendix E numeric classes. Unresolved classes default to int; / stays real-only. *)
   val numClass = KClass [intName, realName]
   val binary = fn result => TArrow (tupleTy [alpha, alpha], result)
 
@@ -231,7 +238,7 @@ structure Basis = struct
   (* The scheme of a type written in SubsetML syntax, or the reason it is malformed. *)
   val scheme = fn (env, text) =>
     case Lexer.lex text of
-      Lexer.LexError (msg, _) => Unify.Err (msg, 0.0)
+      Lexer.LexError (msg, _) => Unify.Err (msg, 0)
     | Lexer.Tokens (ts, _) =>
         case Parser.parseTy ts of
           Parser.Fail (message, pos) => Unify.Err (message, pos)
@@ -240,9 +247,9 @@ structure Basis = struct
               val vars = Elab.distinct (Elab.tyVarsOf t)
               val rec index = fn
                   (_, [], _) => NONE
-                | (v, w :: rest, i) => if v = w then SOME (TGen i) else index (v, rest, i + 1.0)
+                | (v, w :: rest, i) => if v = w then SOME (TGen i) else index (v, rest, i + 1)
             in
-              Unify.bind (Elab.elabTy (env, fn v => index (v, vars, 0.0), 0.0, t, Unify.initial)) (fn body => fn st =>
+              Unify.bind (Elab.elabTy (env, fn v => index (v, vars, 0), 0, t, Unify.initial)) (fn body => fn st =>
                 Unify.Ok ((SmlList.map (fn _ => KPlain) vars, body), st))
             end
 
@@ -279,7 +286,7 @@ structure Basis = struct
                       | Unify.Ok (vals, st) =>
                           case scheme (scope, text) of
                             Unify.Ok (s, _) => Unify.Ok (vals @ [(name, (s, SValue))], st)
-                          | Unify.Err (msg, _) => Unify.Err ("basis entry " ^ name ^ ": " ^ msg, 0.0))
+                          | Unify.Err (msg, _) => Unify.Err ("basis entry " ^ name ^ ": " ^ msg, 0))
           (Unify.Ok ([], Unify.initial)) entries
       (* Values are elaborated where their structure's types are in scope. *)
       val scopeOf = fn path =>

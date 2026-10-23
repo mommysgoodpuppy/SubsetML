@@ -185,7 +185,7 @@ translation to Workman.
 
 | Operation | Contract |
 |---|---|
-| `isEmpty xs`, `reverse xs`, `length xs` | Empty test, reversed list and real-valued element count. |
+| `isEmpty xs`, `reverse xs`, `length xs` | Empty test, reversed list and integer element count. |
 | `reverseAppend (xs, ys)`, `append (xs, ys)` | Reverse xs onto ys, or concatenate xs followed by ys. |
 | `concat lists` | Flatten while retaining list and element order. |
 | `foldLeft (xs, initial, f)` | Invoke f from left to right. |
@@ -200,16 +200,15 @@ translation to Workman.
 | `splitAt (xs, index)` | Ok (prefix, suffix), with exactly index elements in prefix. |
 | `at (xs, index)` | Ok element at the zero-based index. |
 | `take (xs, count)`, `drop (xs, count)` | Ok prefix or suffix; never silently truncate. |
-| `tabulate (count, f)` | Ok generated list; invoke f at real indices 0 through count−1, left to right. |
+| `tabulate (count, f)` | Ok generated list; invoke f at integer indices 0 through count−1, left to right. |
 | `head xs`, `tail xs`, `last xs` | Return Ok on a nonempty list; Err EmptyList on an empty list. |
 | `traverse (xs, f)` | Invoke a Result-producing f left to right; stop at its first Err, preserving that error. Successful output order matches the input. |
 
 These operations are in `SubsetList`. Its error type is `datatype error = EmptyList | InvalidCount | InvalidIndex | OutOfBounds`.
-`repeat` and `tabulate` accept finite integral counts from zero through 2^53−1, including negative zero.
-It checks the count with bounded source binary arithmetic before allocating any list cells;
-negative, fractional, non-finite and larger counts return InvalidCount. The bound keeps
-countdown exact under the current binary64 numeric profile. Allocation exhaustion remains a
-runtime failure, not InvalidCount.
+`repeat` and `tabulate` accept nonnegative signed 32-bit integer counts.
+Negative counts return InvalidCount before allocation or callbacks. Fractional
+and non-finite arguments are type errors. Allocation exhaustion and arithmetic
+overflow remain runtime failures, not InvalidCount.
 Invalid indices/counts for `splitAt`, `at`, `take`, and `drop` return `InvalidIndex`;
 valid integral positions beyond the list return `OutOfBounds`. Splitting/taking/dropping
 at the list's length succeeds; accessing an element there returns `OutOfBounds`.
@@ -220,17 +219,12 @@ remain; the library does not roll them back or catch exceptions from callbacks.
 
 ### Exact natural numbers
 
-`SubsetNatural` operates on real-valued exact nonnegative integers from zero through
-2^53−1 in the current binary64 profile. `isValid value` tests this domain; negative zero
-is accepted. `divide (value, base)` returns `Ok (quotient, remainder)` with integer quotient
-and 0 ≤ remainder < base. Invalid values return `InvalidNatural`; invalid or zero divisors
-return `InvalidDivisor`. The value is checked before the divisor.
-
-`toString value` returns `Ok` ordinary unsigned decimal text, including `"0"` for either
-signed zero; invalid input returns `InvalidNatural`. It formats integers only. Neither
-operation needs host floor, division/modulo helpers or number formatting: division uses
-53 descending binary weights, and formatting repeatedly splits by ten. `split` is an
-internal unchecked helper for operands already known to satisfy the same domain.
+`SubsetNatural` operates on nonnegative signed 32-bit integers, zero through
+2147483647. `isValid` rejects negative values. `divide (value, base)` returns
+`Ok (quotient, remainder)` with 0 ≤ remainder < base; negative values return
+InvalidNatural and nonpositive divisors return InvalidDivisor. It checks the
+value first. `toString` returns unsigned decimal text, or InvalidNatural.
+The unchecked internal `split` uses integer `div` and `mod` on validated operands.
 
 The compiler uses this module for type-variable names, counts in diagnostics and its
 persistent integer-map arithmetic. Tuple labels use a decimal character counter directly.
@@ -240,7 +234,7 @@ persistent integer-map arithmetic. Tuple labels use a decimal character counter 
 `SubsetIo` provides checked whole-file I/O. File contents and standard-output/error payloads
 are `char list` bytes; no text decoding, BOM handling, newline conversion or newline insertion
 occurs. Use the source UTF codecs explicitly for text. Its error type is
-`HostError of string | NonByte of real | InvalidPath`.
+`HostError of string | NonByte of int | InvalidPath`.
 
 | Operation | Contract |
 |---|---|
@@ -260,7 +254,12 @@ zero-progress writes as errors. These operations are synchronous in the current 
 `SubsetProcess.arguments ()` returns `Ok` a list of validated argument byte strings, excluding
 the executable name, or a `SubsetIo.error`. It does not decode argument text.
 `SubsetProcess.exit success` terminates with success/failure (0/1 in the current adapters) and
-never returns. Arbitrary status codes and stream handles are outside this initial profile.
+never returns. `SubsetProcess.panic : string -> 'a` attempts to write its byte-string message
+followed by one newline to stderr, then exits unsuccessfully. It evaluates its argument once
+and never returns, including when message validation or stderr output fails. It does not add
+an implicit prefix, Unicode encoding, exception handler or recoverable Result. This is for
+terminal invariant failures; ordinary operational errors still use Result. Arbitrary status
+codes and stream handles are outside this initial profile.
 
 The native adapter uses binary file I/O and raw POSIX output. The Workman adapter uses a
 Latin-1 carrier string only inside the FFI boundary, with Node binary file/output calls. It
@@ -328,8 +327,7 @@ only as a compatibility port for regression tests. String membership can use the
 
 `SubsetChar.toCode character` returns `Ok code` for codes 0–255, or `Err NonByteCharacter`
 for a foreign target character outside that domain. `fromCode code` returns `Ok character`,
-or `Err InvalidCode` for negative, fractional, non-finite or greater-than-255 values. Negative
-zero is accepted as code zero. Both operations scan a fixed source table, bounded by 256
+or `Err InvalidCode` for negative or greater-than-255 integer values. Both operations scan a fixed source table, bounded by 256
 entries, and need neither `ord`/`chr` nor numeric floor/integer conversion primitives.
 
 The compiler's escape decoders now handle `fromCode` failures through their ordinary lexical
@@ -338,7 +336,7 @@ printing assert that their input characters belong to the language's byte domain
 native-string boundary validates that domain before supplying lexer text. No unchecked unwrap
 has been added to the custom Basis API.
 
-Ordering operators `<`, `>`, `<=`, and `>=` accept only `real` operands in SubsetML.
+Ordering operators `<`, `>`, `<=`, and `>=` accept `int` or `real` operands in SubsetML.
 Text ordering uses explicit source functions. `SubsetBytes.compare (left, right)` and
 `SubsetString.compare (left, right)` return `Ok SubsetOrder.Less`, `Equal`, or `Greater`
 in unsigned byte lexicographic order; a proper prefix sorts first. This is byte ordering,
@@ -351,7 +349,7 @@ Time and temporary storage are O(n + m); no additional host primitive is require
 
 `SubsetBytes` uses `char list` storage. `validate bytes` checks the byte domain and returns
 `Ok bytes` or `Err (NonByte offset)` for a foreign non-byte character. `length bytes` counts
-elements. These counts are real-valued, as required by the current language.
+elements. Counts, codes, offsets and indexed arguments use signed 32-bit `int`.
 
 | Operation | Contract |
 |---|---|
@@ -364,7 +362,7 @@ elements. These counts are real-valued, as required by the current language.
 | `at (bytes, index)` | Ok byte, or Err OutOfBounds at the end of the sequence. |
 | `slice (bytes, start, count)` | Exact slice; zero-length slices at EOF succeed. |
 
-Indexed operations reject negative, fractional, non-finite and beyond-length positions/counts
+Indexed operations reject negative and beyond-length integer positions/counts
 with `InvalidIndex`; they never silently truncate. They operate on byte sequences already in
 the language domain; use `validate` when receiving foreign data. `fields` invokes the delimiter once per byte, left to right. `trim` first scans the left
 prefix, then the remaining right suffix backwards; each scan stops on its first non-match.
@@ -391,7 +389,7 @@ runtime failure; these Results describe invalid data, not available memory.
 `fromNative string` performs checked conversion once, then builds the same index. The former
 returns `SubsetBytes` errors, the latter `SubsetString` errors. `length source` is constant time;
 `at (source, index)` returns a byte in O(log n). `slice (source, start, count)` returns bytes,
-visiting the selected range and boundary paths. Invalid, fractional, non-finite or out-of-range
+visiting the selected range and boundary paths. Invalid or out-of-range
 indices/counts return `SubsetBytes.InvalidIndex`; zero-length slices at EOF succeed. Build time
 is O(n), with O(n) nodes. Use the factories rather than forging visible tree constructors;
 `build`, `join` and `boundary` are internal implementation interfaces.
@@ -403,6 +401,36 @@ The document renderer converts source input once, uses the source index for posi
 uses shared trimming, splitting, concatenation and repetition for output.
 `tests/doc-portable.sh` checks exact layout, comment placement and helper contracts with
 original SML, round-tripped SML and generated Workman.
+
+### Lossless UTF-16 source views
+
+`SubsetUtf16Source` stores raw UTF-16 units in an immutable balanced index. Lone surrogates
+are accepted; this is source-buffer storage rather than a claim that the content is valid
+Unicode. Public construction validates every numeric unit as integral and in 0..65535.
+Use the builders rather than constructing the exposed representation directly; SubsetML
+has no opaque module types to hide its tree/view constructors.
+
+| Operation | Contract |
+|---|---|
+| `fromUnits units` | Build from numeric code units; first invalid element reports `InvalidUnit offset`. |
+| `fromNativeUnits text` | Extract raw host storage codes using `SubsetTextHost.codes`, then validate units. Native byte strings are not implicitly UTF-8 decoded. |
+| `length source` | Number of UTF-16 units, including two for each supplementary scalar. |
+| `peek (source, index)` | `SOME code` at a valid integral index; `NONE` for EOF, outside the view, or an invalid index. |
+| `at (source, index)` | Checked lookup; invalid indices report `InvalidIndex`. |
+| `slice (source, start, count)` | Shared source view; validates integral boundaries. An empty view at EOF is valid. |
+| `toUnits source` | Units in the view's original order. |
+| `fromUtf16Bytes (bytes, endian)` / `toUtf16Bytes (source, endian)` | Raw byte conversion; preserves surrogate units and BOMs. Input must have complete byte pairs. |
+| `fromScalars scalars` / `toScalars source` | Strict scalar conversion through the existing UTF-16 codec. |
+| `fromUtf8 bytes` / `toUtf8 source` | Strict UTF-8 conversion; invalid bytes or lone surrogates produce errors. |
+
+Indices, counts and invalid-unit positions use units. `UnicodeError` wraps the existing
+codec error unchanged: byte input and UTF-16 decoding errors have byte offsets; scalar
+encoding errors have scalar-list positions. UTF-16 decoding offsets count little-endian
+bytes in the selected view, so divide by two for a unit offset. Negative and out-of-range integer indices are rejected. Slices may split surrogate pairs, and later strict encoding
+correctly rejects such a view. No malformed input is silently replaced.
+
+See [text design](text-design.md#lossless-utf-16-source-views). Run `sh tests/utf16-source.sh`
+for SubsetML checking, translation round trips, MLton execution and generated WM parity.
 
 ### SML literal escaping
 
@@ -429,8 +457,7 @@ compatibility helpers; those helpers assert the compiler's established byte-doma
 
 `SubsetUnicode.isScalar code` checks integral Unicode scalar codes, excluding surrogates.
 The codecs operate on numeric scalar lists and byte-character lists; no host Unicode, floor,
-integer-conversion or bitwise functions are required. Internal bounded binary arithmetic
-preserves fractional residues during validation. Scalars and byte characters remain distinct.
+integer-conversion or bitwise functions are required. Integer division/modulo implements codec arithmetic. Scalars and byte characters remain distinct.
 
 | Operation | Successful value |
 |---|---|
@@ -444,8 +471,7 @@ insertion, stripping or byte-order detection. Noncharacters are accepted scalar 
 rules follow the [Unicode encoding definitions](https://www.unicode.org/versions/Unicode16.0.0/core-spec/chapter-3/).
 
 Errors are `SubsetUnicode.Error (reason, offset)`. Encoder offsets count scalar-list elements;
-decoder offsets count input bytes. Since offsets/scalars use `real`, destructure them and use
-real comparison rather than SML structural equality on Result values containing them.
+decoder offsets count input bytes. Offsets and scalar codes use `int`, so these Result values support structural equality.
 Validation returns the first detected error with no partial
 output. Invalid leaders/continuations identify the offending byte. Truncation identifies the
 EOF offset. Overlong, surrogate and above-maximum UTF-8 sequences identify their leading-byte
@@ -485,6 +511,7 @@ custom module declares its source dependencies and explicit primitive calls. The
 | `SubsetString` | SubsetBytes, SubsetChar, SubsetList, SubsetResult | SubsetTextHost.codes |
 | `SubsetNatural` | SubsetList, SubsetResult, SubsetString | none |
 | `SubsetSource` | SubsetBytes, SubsetList, SubsetResult, SubsetString | none directly; extraction through SubsetString |
+| `SubsetUtf16Source` | SubsetChar, SubsetList, SubsetResult, SubsetUnicode, SubsetUtf8, SubsetUtf16 | SubsetTextHost.codes |
 | `SubsetSmlEscape` | SubsetList, SubsetResult, SubsetString | none directly; native-string entry uses extraction through SubsetString |
 | `SubsetIo` | SubsetList, SubsetResult, SubsetString | SubsetHost.readFile, writeFile, writeStdout, writeStderr |
 | `SubsetProcess` | SubsetIo, SubsetList, SubsetResult | SubsetHost.arguments, exit |
@@ -671,3 +698,19 @@ It excludes CLI execution. `tests/io-portable.sh` checks all byte values in file
 output streams, argument/path marshalling, host errors, NUL paths and rejection before file
 truncation. `tests/cli-portable.sh` compares the native and generated Workman compiler's check,
 parse, format, round-trip and forward/reverse translation modes, including failure exits.
+
+
+## Signed 32-bit integer language support
+
+As of 2026-10-17, `int` is a language type alongside `real`; see
+[the integer contract](integers.md). The bootstrap `Int` namespace initially
+provides `toString`, `fromString`, `precision`, `minInt`, and `maxInt`. This is
+not a claim of full SML Basis Library support. Native emission selects Int32
+implementations and normalizes precision metadata to the SubsetML integer type.
+
+Compiler internals, `SubsetNatural`, byte/list/string sizes and indices, scalar
+codes and the text-host contract now use `int`. This is a breaking API migration;
+legacy real-valued fixtures and generated WM mirrors require migration. WM/JS
+integer execution remains deferred. The unrelated legacy `Num` adapter retains
+its real-valued compatibility interface. Integer arithmetic can dynamically raise
+`Overflow`/`Div`; authored SubsetML still has no exception handlers.

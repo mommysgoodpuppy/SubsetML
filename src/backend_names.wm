@@ -1,0 +1,868 @@
+/* @subsetml
+from "./syntax.sml" import * as Syntax;
+from "./subset_list.sml" import * as SubsetList;
+from "./compiler_text.sml" import * as CompilerText;
+from "./subset_char.sml" import * as SubsetChar;
+from "./elab.sml" import * as Elab;
+*/
+
+/* Shared target spelling and lexical binding resolution. Module keys are supplied by the
+   canonical project planner. A binding has its own allocation even when source names repeat. */
+
+from "./syntax.wm" import * as Syntax;
+from "./subset_list.wm" import * as SubsetList;
+from "./compiler_text.wm" import * as CompilerText;
+from "./subset_char.wm" import * as SubsetChar;
+from "./elab.wm" import * as Elab;
+
+type Binding = | Binding<String, String, Bool>;
+type Scope = | Scope<List<Binding>, List<Binding>>;
+type Symbol =
+  | Symbol<Number, String, Syntax.Pos, String, String, String>
+  | RuntimeUse<String, Syntax.Pos>
+  | Invalid<String, Syntax.Pos, String>;
+type Supply = | Supply<String, Number, List<Symbol>>;
+
+let keywords = [
+  "abstype",
+  "and",
+  "andalso",
+  "as",
+  "case",
+  "datatype",
+  "do",
+  "else",
+  "end",
+  "exception",
+  "fn",
+  "fun",
+  "handle",
+  "if",
+  "in",
+  "infix",
+  "infixr",
+  "let",
+  "local",
+  "nonfix",
+  "of",
+  "op",
+  "open",
+  "orelse",
+  "raise",
+  "rec",
+  "then",
+  "type",
+  "val",
+  "with",
+  "withtype",
+  "eqtype",
+  "functor",
+  "include",
+  "sharing",
+  "sig",
+  "signature",
+  "struct",
+  "structure",
+  "where",
+  "while"
+];
+let member = (names, name) => { SubsetList.exists(names, (n) => { n == name }) };
+let prefix = (sources) => {
+  let rec starts = (text, needle) => {
+    match(needle) {
+      [] => { true },
+      [n, ..ns] => {
+        match(text) {
+          [t, ..ts] => { if (t == n) { starts(ts, ns) } else { false } },
+          [] => { false }
+        }
+      }
+    }
+  };
+  let rec contains = (text, needle) => {
+    if (starts(text, needle)) { true } else {
+      match(text) {
+        [_, ..rest] => { contains(rest, needle) },
+        [] => { false }
+      }
+    }
+  };
+  let rec choose = (candidate) => {
+    if (SubsetList.exists(
+      sources,
+      (_, src) => {
+        contains(CompilerText.characters(src), CompilerText.characters(candidate))
+      }
+    )) { choose(candidate ++ "_") } else { candidate }
+  };
+  choose("subsetmlKeyword_")
+};
+
+/* Existing lowering passes can reserve deterministic hints through this shared allocator.
+   They pass the visible/generated names they must avoid, rather than adding local policies. */
+let rec avoid = (used, hint) => {
+  if (member(used, hint)) { avoid(used, hint ++ "_") } else { hint }
+};
+
+/* Filesystem stems are hints, not SML identifiers. Normalize separators and prefix
+   empty/digit-leading names; the project allocator still resolves spelling collisions. */
+let moduleHint = (stem) => {
+  let pieces = CompilerText.fields(stem, (c) => { !SubsetChar.isAlphaNum(c) });
+  let capitalize = (text) => {
+    match(CompilerText.characters(text)) {
+      [] => { "" },
+      [first, ..rest] => { CompilerText.implode([SubsetChar.toUpper(first), ..rest]) }
+    }
+  };
+  let hint = CompilerText.implode(SubsetList.concat(SubsetList.map(pieces, (text) => { CompilerText.characters(capitalize(text)) })));
+  match(CompilerText.characters(hint)) {
+    [] => { "Module" },
+    [first, .._] => {
+      if (SubsetChar.isAlpha(first)) { hint } else { "Module" ++ hint }
+    }
+  }
+};
+
+let empty = Scope([], []);
+let plus = match {
+  (Scope(av, at), Scope(bv, bt)) => { Scope(List.append(bv, av), List.append(bt, at)) }
+};
+let lookup = (bindings, name) => {
+  SubsetList.find(
+    bindings,
+    match {
+      Binding(source, _, _) => { source == name }
+    }
+  )
+};
+let label = (prefix, name) => {
+  if (member(keywords, name)) { prefix ++ "Label_" ++ name } else { name }
+};
+let fresh = match {
+  (
+    Supply(prefix, next, symbols),
+    Var(owner),
+    Var(pos),
+    Var(space),
+    Var(name),
+    Var(constructor)
+  ) => {
+    let unsafe = if (member(keywords, name)) { true } else {
+      if (if (space == "value") { !constructor } else { false }) { member(Elab.omittedConstructors, name) } else { false }
+    };
+    let target = if (unsafe) { prefix ++ space ++ CompilerText.natural(next) ++ "_" ++ name } else { name };
+    let symbol = Symbol(next, owner, pos, space, name, target);
+    (
+      Binding(name, target, constructor),
+      Supply(prefix, next + 1, [symbol, ..symbols])
+    )
+  }
+};
+
+// Every new lowering temporary uses the same collision-free project supply.
+let generated = match {
+  (Supply(prefix, next, symbols), Var(owner), Var(pos), Var(hint)) => {
+    let target = prefix ++ "generated" ++ CompilerText.natural(next) ++ "_" ++ hint;
+    (
+      target,
+      Supply(
+        prefix,
+        next + 1,
+        [Symbol(next, owner, pos, "generated", hint, target), ..symbols]
+      )
+    )
+  }
+};
+
+let failure = match {
+  Supply(_, _, symbols) => {
+    match(SubsetList.find(
+      symbols,
+      match {
+        Invalid(_) => { true },
+        _ => { false }
+      }
+    )) {
+      Some(Invalid(owner, pos, message)) => { Some(owner, pos, message) },
+      _ => { None }
+    }
+  }
+};
+
+let diagnostic = match {
+  (Supply(_, _, symbols), Var(message)) => {
+    let rec begins = (text, prefix) => {
+      match(prefix) {
+        [] => { true },
+        [c, ..rest] => {
+          match(text) {
+            [x, ..xs] => { if (c == x) { begins(xs, rest) } else { false } },
+            [] => { false }
+          }
+        }
+      }
+    };
+    let rec skip = (text, prefix) => {
+      match(prefix) {
+        [] => { text },
+        [_, ..rest] => {
+          match(text) {
+            [_, ..xs] => { skip(xs, rest) },
+            [] => { [] }
+          }
+        }
+      }
+    };
+    let rec replace = (text, prefix, replacement) => {
+      if (begins(text, prefix)) {
+        List.append(replacement, replace(skip(text, prefix), prefix, replacement))
+      } else {
+        match(text) {
+          [] => { [] },
+          [c, ..rest] => { [c, ..replace(rest, prefix, replacement)] }
+        }
+      }
+    };
+    SubsetList.foldLeft(
+      symbols,
+      message,
+      (symbol, message) => {
+        match(symbol) {
+          Symbol(_, _, _, _, source, target) => {
+            if (source == target) { message } else {
+              CompilerText.stringOf(replace(
+                CompilerText.characters(message),
+                CompilerText.characters(target),
+                CompilerText.characters(source)
+              ))
+            }
+          },
+          RuntimeUse(_) => { message },
+          Invalid(_) => { message }
+        }
+      }
+    )
+  }
+};
+
+let validate = match {
+  (Var(supply), Var(owner), Var(pos), Scope(values, types)) => {
+    let duplicate = (bindings) => {
+      SubsetList.find(
+        bindings,
+        match {
+          Binding(source, _, _) => {
+            SubsetList.length(SubsetList.filter(
+              bindings,
+              match {
+                Binding(other, _, _) => { source == other }
+              }
+            )) > 1
+          }
+        }
+      )
+    };
+    let add = (supply, bindings) => {
+      match(duplicate(bindings)) {
+        None => { supply },
+        Some(Binding(source, _, _)) => {
+          let Supply(prefix, next, symbols) = supply;
+          Supply(
+            prefix,
+            next,
+            [Invalid(owner, pos, "duplicate source binding " ++ source), ..symbols]
+          )
+        }
+      }
+    };
+    add(add(supply, values), types)
+  }
+};
+
+let moduleWithRuntime = (runtime, owner, imports, prog, initial) => {
+  let Supply(prefix, _, _) = initial;
+  let resolve = match {
+    (Scope(values, types), Var(space), (Var(qualifiers), Var(name))) => {
+      let bindings = match(qualifiers) {
+        [] => { if (space == "value") { values } else { types } },
+        [moduleName] => {
+          match(SubsetList.find(imports, (key, _) => { key == moduleName })) {
+            None => { [] },
+            Some(_, Scope(values, types)) => { if (space == "value") { values } else { types } }
+          }
+        },
+        _ => { [] }
+      };
+      match(lookup(bindings, name)) {
+        None => { (qualifiers, name) },
+        Some(Binding(_, target, _)) => { (qualifiers, target) }
+      }
+    }
+  };
+  let isConstructor = match {
+    (Scope(values, _), (Var(qualifiers), Var(name))) => {
+      let bindings = match(qualifiers) {
+        [] => { values },
+        [moduleName] => {
+          match(SubsetList.find(imports, (key, _) => { key == moduleName })) {
+            None => { [] },
+            Some(_, Scope(values, _)) => { values }
+          }
+        },
+        _ => { [] }
+      };
+      match(lookup(bindings, name)) {
+        Some(Binding(_, _, constructor)) => { constructor },
+        None => {
+          member(
+            ["true", "false", "nil", "::", "NONE", "SOME", "LESS", "EQUAL", "GREATER"],
+            name
+          )
+        }
+      }
+    }
+  };
+  let rec ty = (env, t) => {
+    match(t) {
+      Syntax.TyVar(_) => { t },
+      Syntax.TyCon(args, id) => {
+        Syntax.TyCon(SubsetList.map(args, (t) => { ty(env, t) }), resolve(env, "type", id))
+      },
+      Syntax.TyTuple(ts) => { Syntax.TyTuple(SubsetList.map(ts, (t) => { ty(env, t) })) },
+      Syntax.TyArrow(a, b) => { Syntax.TyArrow(ty(env, a), ty(env, b)) },
+      Syntax.TyRecord(fs) => {
+        Syntax.TyRecord(SubsetList.map(fs, (l, t) => { (label(prefix, l), ty(env, t)) }))
+      }
+    }
+  };
+  let rec pairFields = (fields, ps) => {
+    match(fields, ps) {
+      ([(Var(l), _), ..fs], [p, ..ps]) => { [(label(prefix, l), p), ..pairFields(fs, ps)] },
+      _ => { [] }
+    }
+  };
+  let rec pattern = (env, pat, supply) => {
+    match(pat) {
+      Syntax.PId(p, ([], Var(name))) => {
+        if (isConstructor(env, ([], name))) {
+          (Syntax.PId(p, resolve(env, "value", ([], name))), empty, supply)
+        } else {
+          let (binding, next) = fresh(supply, owner, p, "value", name, false);
+          let Binding(_, target, _) = binding;
+          (Syntax.PId(p, ([], target)), Scope([binding], []), next)
+        }
+      },
+      Syntax.PPinned(p, id) => {
+        (
+          if (isConstructor(env, id)) { Syntax.PId(p, resolve(env, "value", id)) } else { Syntax.PPinned(p, resolve(env, "value", id)) },
+          empty,
+          supply
+        )
+      },
+      Syntax.PId(p, id) => { (Syntax.PId(p, resolve(env, "value", id)), empty, supply) },
+      Syntax.PRecord(p, fs) => {
+        let (patterns, bindings, next) = patterns(env, SubsetList.map(fs, (_, p) => { p }), supply);
+        (Syntax.PRecord(p, pairFields(fs, patterns)), bindings, next)
+      },
+      Syntax.PTuple(ps) => {
+        let (ps, bindings, next) = patterns(env, ps, supply);
+        (Syntax.PTuple(ps), bindings, next)
+      },
+      Syntax.PList(ps) => {
+        let (ps, bindings, next) = patterns(env, ps, supply);
+        (Syntax.PList(ps), bindings, next)
+      },
+      Syntax.PApp(p, id, arg) => {
+        let (arg, bindings, next) = pattern(env, arg, supply);
+        (Syntax.PApp(p, resolve(env, "value", id), arg), bindings, next)
+      },
+      Syntax.PTyped(pat, t) => {
+        let (pat, bindings, next) = pattern(env, pat, supply);
+        (Syntax.PTyped(pat, ty(env, t)), bindings, next)
+      },
+      _ => { (pat, empty, supply) }
+    }
+  }
+  and patterns = (env, ps, supply) => {
+    match(ps) {
+      [] => { ([], empty, supply) },
+      [p, ..rest] => {
+        let (p, bindings, next) = pattern(env, p, supply);
+        let (rest, more, next) = patterns(env, rest, next);
+        (
+          [p, ..rest],
+          plus(bindings, more),
+          validate(next, owner, 0, plus(bindings, more))
+        )
+      }
+    }
+  };
+
+  let rec guarded = (pat) => {
+    match(pat) {
+      Syntax.PScon(_, Syntax.SReal(_)) => { true },
+      Syntax.PPinned(_) => { true },
+      Syntax.PRecord(_, fs) => { SubsetList.exists(fs, (_, p) => { guarded(p) }) },
+      Syntax.PTuple(ps) => { SubsetList.exists(ps, guarded) },
+      Syntax.PList(ps) => { SubsetList.exists(ps, guarded) },
+      Syntax.PApp(_, _, p) => { guarded(p) },
+      Syntax.PTyped(p, _) => { guarded(p) },
+      _ => { false }
+    }
+  };
+  let id = (p, name) => { Syntax.EId(p, ([], name)) };
+  let variable = (p, name) => { Syntax.PId(p, ([], name)) };
+  let binding = (p, name, e) => { Syntax.DVal(p, [], [(variable(p, name), e)], []) };
+  /* Pin aliases are evaluated outside the pattern's binders. The alias preserves the
+     resolved outer value even when a same-spelled binder appears in this pattern. */
+  let rec checks = (pat, supply) => {
+    let compare = (p, rhs, operator, aliases, next) => {
+      let (name, next) = generated(next, owner, p, "pattern");
+      (
+        variable(p, name),
+        [Syntax.EApp(Syntax.EId(p, operator), Syntax.ETuple([id(p, name), rhs]))],
+        aliases,
+        next
+      )
+    };
+    match(pat) {
+      Syntax.PScon(p, Syntax.SReal(s)) => {
+        compare(p, Syntax.EScon(p, Syntax.SReal(s)), (["Real"], "=="), [], supply)
+      },
+      Syntax.PPinned(p, path) => {
+        let (name, next) = generated(supply, owner, p, "pin");
+        compare(p, id(p, name), ([], "="), [binding(p, name, Syntax.EId(p, path))], next)
+      },
+      Syntax.PRecord(p, fs) => {
+        let (ps, guards, aliases, next) = checkList(SubsetList.map(fs, (_, p) => { p }), supply);
+        (Syntax.PRecord(p, pairFields(fs, ps)), guards, aliases, next)
+      },
+      Syntax.PTuple(ps) => {
+        let (ps, guards, aliases, next) = checkList(ps, supply);
+        (Syntax.PTuple(ps), guards, aliases, next)
+      },
+      Syntax.PList(ps) => {
+        let (ps, guards, aliases, next) = checkList(ps, supply);
+        (Syntax.PList(ps), guards, aliases, next)
+      },
+      Syntax.PApp(p, path, arg) => {
+        let (arg, guards, aliases, next) = checks(arg, supply);
+        (Syntax.PApp(p, path, arg), guards, aliases, next)
+      },
+      Syntax.PTyped(pat, t) => {
+        let (pat, guards, aliases, next) = checks(pat, supply);
+        (Syntax.PTyped(pat, t), guards, aliases, next)
+      },
+      _ => { (pat, [], [], supply) }
+    }
+  }
+  and checkList = (ps, supply) => {
+    match(ps) {
+      [] => { ([], [], [], supply) },
+      [p, ..rest] => {
+        let (p, guards, aliases, next) = checks(p, supply);
+        let (rest, more, moreAliases, next) = checkList(rest, next);
+        (
+          [p, ..rest],
+          List.append(guards, more),
+          List.append(aliases, moreAliases),
+          next
+        )
+      }
+    }
+  };
+  let rec conditions = (guards, yes, no) => {
+    match(guards) {
+      [] => { yes },
+      [guard, ..rest] => { Syntax.EIf(guard, conditions(rest, yes, no), no) }
+    }
+  };
+  /* Continuations live outside branch binders. Their bodies are not duplicated, and
+     constructing a thunk does not execute later branches or evaluate their pins. */
+  let rec matchRules = (subject, rs, supply) => {
+    if (!SubsetList.exists(rs, (p, _) => { guarded(p) })) { (Syntax.ECase(subject, rs), supply) } else {
+      match(rs) {
+        [] => { (Syntax.ECase(subject, []), supply) },
+        [(Var(pat), Var(body)), ..rest] => {
+          let (pat, guards, aliases, next) = checks(pat, supply);
+          let (name, next) = generated(next, owner, 0, "next");
+          let (fallback, next) = match(rest) {
+            [] => {
+              let (result, next) = generated(next, owner, 0, "unmatched");
+              (
+                Syntax.ECase(Syntax.EList([]), [(Syntax.PList([variable(0, result)]), id(0, result))]),
+                next
+              )
+            },
+            _ => { matchRules(subject, rest, next) }
+          };
+          let call = Syntax.EApp(id(0, name), Syntax.ETuple([]));
+          let branch = Syntax.ECase(subject, [(pat, conditions(guards, body, call)), (Syntax.PWild, call)]);
+          (
+            Syntax.ELet(
+              [binding(0, name, Syntax.EFn([(Syntax.PTuple([]), fallback)])), ..aliases],
+              [branch]
+            ),
+            next
+          )
+        }
+      }
+    }
+  };
+  let matchCase = (subject, rs, supply) => {
+    if (SubsetList.exists(rs, (p, _) => { guarded(p) })) {
+      let (name, next) = generated(supply, owner, 0, "subject");
+      let (body, next) = matchRules(id(0, name), rs, next);
+      (Syntax.ELet([binding(0, name, subject)], [body]), next)
+    } else { (Syntax.ECase(subject, rs), supply) }
+  };
+
+  let rec expression = (env, e, supply) => {
+    let unary = (constructor, e) => {
+      let (e, next) = expression(env, e, supply);
+      (constructor(e), next)
+    };
+    let binary = (constructor, a, b) => {
+      let (a, next) = expression(env, a, supply);
+      let (b, next) = expression(env, b, next);
+      (constructor(a, b), next)
+    };
+    match(e) {
+      Syntax.EId(p, ([], "Panic")) => {
+        let Scope(values, _) = env;
+        match(lookup(values, "Panic")) {
+          Some(_) => {
+            (Syntax.EId(p, resolve(env, "value", ([], "Panic"))), supply)
+          },
+          None => {
+            let Supply(prefix, next, symbols) = supply;
+            match(runtime) {
+              Some(name) => {
+                (
+                  Syntax.EId(p, ([name], "panic")),
+                  Supply(prefix, next, [RuntimeUse(owner, p), ..symbols])
+                )
+              },
+              None => {
+                (
+                  e,
+                  Supply(
+                    prefix,
+                    next,
+                    [
+                      Invalid(
+                        owner,
+                        p,
+                        "built-in Panic requires --panic-runtime FILE.wm for reverse translation"
+                      ),
+                      ..symbols
+                    ]
+                  )
+                )
+              }
+            }
+          }
+        }
+      },
+      Syntax.EId(p, id) => { (Syntax.EId(p, resolve(env, "value", id)), supply) },
+      Syntax.ESelect(p, l) => { (Syntax.ESelect(p, label(prefix, l)), supply) },
+      Syntax.ERecord(p, fs) => {
+        let (es, next) = expressions(env, SubsetList.map(fs, (_, e) => { e }), supply);
+        (Syntax.ERecord(p, pairFields(fs, es)), next)
+      },
+      Syntax.ETuple(es) => {
+        let (es, next) = expressions(env, es, supply);
+        (Syntax.ETuple(es), next)
+      },
+      Syntax.EList(es) => {
+        let (es, next) = expressions(env, es, supply);
+        (Syntax.EList(es), next)
+      },
+      Syntax.ESeq(es) => {
+        let (es, next) = expressions(env, es, supply);
+        (Syntax.ESeq(es), next)
+      },
+      Syntax.ELet(ds, es) => {
+        let (ds, localEnv, _, next) = declarations(env, ds, supply);
+        let (es, next) = expressions(localEnv, es, next);
+        (Syntax.ELet(ds, es), next)
+      },
+      Syntax.EApp(a, b) => { binary(Syntax.EApp, a, b) },
+      Syntax.ETyped(e, t) => { unary((e) => { Syntax.ETyped(e, ty(env, t)) }, e) },
+      Syntax.EAndalso(a, b) => { binary(Syntax.EAndalso, a, b) },
+      Syntax.EOrelse(a, b) => { binary(Syntax.EOrelse, a, b) },
+      Syntax.EIf(c, a, b) => {
+        let (c, next) = expression(env, c, supply);
+        let (a, next) = expression(env, a, next);
+        let (b, next) = expression(env, b, next);
+        (Syntax.EIf(c, a, b), next)
+      },
+      Syntax.ECase(e, rs) => {
+        let (e, next) = expression(env, e, supply);
+        let (rs, next) = rules(env, rs, next);
+        matchCase(e, rs, next)
+      },
+      Syntax.EFn(rs) => {
+        let (rs, next) = rules(env, rs, supply);
+        if (SubsetList.exists(rs, (p, _) => { guarded(p) })) {
+          let (name, next) = generated(next, owner, 0, "argument");
+          let (body, next) = matchRules(id(0, name), rs, next);
+          (Syntax.EFn([(variable(0, name), body)]), next)
+        } else { (Syntax.EFn(rs), next) }
+      },
+      Syntax.ECopy(p, a, b, t) => {
+        let (a, next) = expression(env, a, supply);
+        let (b, next) = expression(env, b, next);
+        (Syntax.ECopy(p, a, b, ty(env, t)), next)
+      },
+      _ => { (e, supply) }
+    }
+  }
+  and expressions = (env, es, supply) => {
+    match(es) {
+      [] => { ([], supply) },
+      [e, ..rest] => {
+        let (e, next) = expression(env, e, supply);
+        let (rest, next) = expressions(env, rest, next);
+        ([e, ..rest], next)
+      }
+    }
+  }
+  and rules = (env, rs, supply) => {
+    match(rs) {
+      [] => { ([], supply) },
+      [(Var(pat), Var(e)), ..rest] => {
+        let (pat, bindings, next) = pattern(env, pat, supply);
+        let (e, next) = expression(plus(env, bindings), e, next);
+        let (rest, next) = rules(env, rest, next);
+        ([(pat, e), ..rest], next)
+      }
+    }
+  }
+  and declaration = (env, d, supply) => {
+    match(d) {
+      Syntax.DVal(p, vs, plain, recs) => {
+        let (plainPs, plainDelta, next) = patterns(env, SubsetList.map(plain, (pat, _) => { pat }), supply);
+        let (recPs, recDelta, next) = patterns(env, SubsetList.map(recs, (pat, _) => { pat }), next);
+        let next = if (SubsetList.exists(List.append(plainPs, recPs), guarded)) {
+          let Supply(prefix, count, symbols) = next;
+          Supply(
+            prefix,
+            count,
+            [
+              Invalid(
+                owner,
+                p,
+                "numeric/pinned binding patterns are outside the reverse-WM profile; use match"
+              ),
+              ..symbols
+            ]
+          )
+        } else { next };
+        let (plainEs, next) = expressions(env, SubsetList.map(plain, (_, e) => { e }), next);
+        let (recEs, next) = expressions(plus(env, recDelta), SubsetList.map(recs, (_, e) => { e }), next);
+        let rec zip = (ps, es) => {
+          match(ps, es) {
+            ([p, ..ps], [e, ..es]) => { [(p, e), ..zip(ps, es)] },
+            _ => { [] }
+          }
+        };
+        (
+          // Both lists originate from the same binding group.
+          Syntax.DVal(p, vs, zip(plainPs, plainEs), zip(recPs, recEs)),
+          plus(plainDelta, recDelta),
+          validate(next, owner, p, plus(plainDelta, recDelta))
+        )
+      },
+      Syntax.DType(p, bs) => {
+        let (names, delta, next) = typeBindings(p, bs, supply);
+        (
+          Syntax.DType(p, typeAliases(env, bs, names)),
+          delta,
+          validate(next, owner, p, delta)
+        )
+      },
+      Syntax.DDatatype(p, bs) => {
+        let (names, types, next) = datatypeTypes(p, bs, supply);
+        let (bs, values, next) = datatypes(plus(env, types), bs, names, next);
+        (
+          Syntax.DDatatype(p, bs),
+          plus(types, values),
+          validate(next, owner, p, plus(types, values))
+        )
+      },
+      Syntax.DOpen(p, paths) => {
+        let delta = SubsetList.foldLeft(
+          paths,
+          empty,
+          (path, acc) => {
+            match(path) {
+              [name] => {
+                match(SubsetList.find(imports, (key, _) => { key == name })) {
+                  Some(_, body) => { plus(acc, body) },
+                  None => { acc }
+                }
+              },
+              _ => { acc }
+            }
+          }
+        );
+        (d, delta, supply)
+      }
+    }
+  }
+  and typeBindings = (p, bs, supply) => {
+    match(bs) {
+      [] => { ([], empty, supply) },
+      [(_, Var(name), _), ..rest] => {
+        let (binding, next) = fresh(supply, owner, p, "type", name, false);
+        let Binding(_, target, _) = binding;
+        let (names, more, next) = typeBindings(p, rest, next);
+        ([target, ..names], plus(Scope([], [binding]), more), next)
+      }
+    }
+  }
+  and datatypeTypes = (p, bs, supply) => {
+    typeBindings(
+      p,
+      SubsetList.map(bs, (vs, name, _) => { (vs, name, Syntax.TyVar("'unused")) }),
+      supply
+    )
+  }
+  and typeAliases = (env, bs, names) => {
+    match(bs, names) {
+      ([(Var(vs), _, Var(t)), ..bs], [name, ..names]) => { [(vs, name, ty(env, t)), ..typeAliases(env, bs, names)] },
+      _ => { [] }
+    }
+  }
+  and datatypes = (env, bs, names, supply) => {
+    match(bs, names) {
+      ([(Var(vs), _, Var(cs)), ..rest], [name, ..names]) => {
+        let (cs, bindings, next) = constructors(env, cs, supply);
+        let (rest, more, next) = datatypes(env, rest, names, next);
+        ([(vs, name, cs), ..rest], plus(bindings, more), next)
+      },
+      _ => { ([], empty, supply) }
+    }
+  }
+  and constructors = (env, cs, supply) => {
+    match(cs) {
+      [] => { ([], empty, supply) },
+      [(Var(p), Var(name), Var(arg)), ..rest] => {
+        let (binding, next) = fresh(supply, owner, p, "value", name, true);
+        let Binding(_, target, _) = binding;
+        let (rest, more, next) = constructors(env, rest, next);
+        (
+          [
+            (
+              p,
+              target,
+              match(arg) {
+                None => { None },
+                Some(t) => { Some(ty(env, t)) }
+              }
+            ),
+            ..rest
+          ],
+          plus(Scope([binding], []), more),
+          next
+        )
+      }
+    }
+  }
+  and declarations = (env, ds, supply) => {
+    match(ds) {
+      [] => { ([], env, empty, supply) },
+      [d, ..rest] => {
+        let (d, delta, next) = declaration(env, d, supply);
+        let (rest, final, more, next) = declarations(plus(env, delta), rest, next);
+        ([d, ..rest], final, plus(delta, more), next)
+      }
+    }
+  };
+
+  let rec phrases = (prog, exports, supply) => {
+    match(prog) {
+      [] => { ([], exports, supply) },
+      [Syntax.TopDecs([Syntax.SStructure(p, [(Var(name), Var(ds))])]), ..rest] => {
+        let (ds, _, body, next) = declarations(empty, ds, supply);
+        let (rest, exports, next) = phrases(rest, body, next);
+        ([Syntax.TopDecs([Syntax.SStructure(p, [(name, ds)])]), ..rest], exports, next)
+      },
+      [Syntax.TopExp(p, e), ..rest] => {
+        let (e, next) = expression(exports, e, supply);
+        let (rest, exports, next) = phrases(rest, exports, next);
+        ([Syntax.TopExp(p, e), ..rest], exports, next)
+      },
+      [phrase, ..rest] => {
+        let (rest, exports, next) = phrases(rest, exports, supply);
+        ([phrase, ..rest], exports, next)
+      }
+    }
+  };
+  phrases(prog, empty, initial)
+};
+
+let module = (owner, imports, prog, initial) => { moduleWithRuntime(None, owner, imports, prog, initial) };
+
+let runtimeUsed = match {
+  (Supply(_, _, symbols), Var(owner)) => {
+    SubsetList.exists(
+      symbols,
+      match {
+        RuntimeUse(name, _) => { name == owner },
+        _ => { false }
+      }
+    )
+  }
+};
+
+let projectWithRuntime = (runtime, prefix, modules) => {
+  let rec loop = (modules, cache, supply) => {
+    match(modules) {
+      [] => { ([], supply) },
+      [
+        (Var(name), Var(dependencies), (Var(path), Var(src), Var(prog), Var(cs))),
+        ..rest
+      ] => {
+        let imports = SubsetList.filter(cache, (key, _) => { member(dependencies, key) });
+        let (prog, exports, next) = moduleWithRuntime(runtime, name, imports, prog, supply);
+        let next = if (runtimeUsed(next, name)) {
+          match(runtime) {
+            Some(runtimeName) => {
+              if (SubsetList.exists(cache, (key, _) => { key == runtimeName })) { next } else {
+                let Supply(prefix, count, symbols) = next;
+                Supply(
+                  prefix,
+                  count,
+                  [
+                    Invalid(
+                      name,
+                      0,
+                      "panic runtime dependency cycle involving " ++ name ++ " and " ++ runtimeName
+                    ),
+                    ..symbols
+                  ]
+                )
+              }
+            },
+            None => { next }
+          }
+        } else { next };
+        let dependencies = if (runtimeUsed(next, name)) {
+          match(runtime) {
+            Some(runtimeName) => {
+              if (member(dependencies, runtimeName)) { dependencies } else { List.append(dependencies, [runtimeName]) }
+            },
+            None => { dependencies }
+          }
+        } else { dependencies };
+        let (rest, next) = loop(rest, [(name, exports), ..cache], next);
+        ([(name, dependencies, (path, src, prog, cs)), ..rest], next)
+      }
+    }
+  };
+  loop(modules, [], Supply(prefix, 0, []))
+};
+
+let project = (prefix, modules) => { projectWithRuntime(None, prefix, modules) };

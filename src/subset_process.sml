@@ -18,4 +18,12 @@ structure SubsetProcess = struct
       val () = SubsetHost.exit success
       val rec unreachable = fn () => unreachable ()
     in unreachable () end
+
+  (* Invariant failure: report the byte-string message and a newline, then stop.
+     A failed validation/write must still terminate; panic cannot recover through Result. *)
+  val panic = fn (message : string) =>
+    case SubsetResult.andThen (SubsetIo.bytes message, fn bytes =>
+      SubsetIo.writeStderr (SubsetList.append (bytes, [#"\n"]))) of
+      SubsetResult.Ok () => exit false
+    | SubsetResult.Err _ => exit false
 end

@@ -113,6 +113,20 @@
       ],
       "primitives": []
     },
+    "SubsetUtf16Source": {
+      "source": "src/subset_utf16_source.sml",
+      "sourceDependencies": [
+        "SubsetResult",
+        "SubsetList",
+        "SubsetUnicode",
+        "SubsetUtf8",
+        "SubsetUtf16",
+        "SubsetChar"
+      ],
+      "primitives": [
+        "SubsetTextHost.codes"
+      ]
+    },
     "SubsetSmlEscape": {
       "source": "src/subset_sml_escape.sml",
       "sourceDependencies": [
@@ -162,9 +176,10 @@
     "recursion",
     "character literals",
     "character equality",
-    "real literals",
-    "real comparison operators",
-    "real arithmetic operators",
+    "signed 32-bit integer literals",
+    "integer comparison operators",
+    "integer arithmetic, div and mod",
+    "real comparison operators for optional compareReal",
     "string literals",
     "string concatenation"
   ],

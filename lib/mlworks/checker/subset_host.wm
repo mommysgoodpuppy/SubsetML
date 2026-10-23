@@ -1,0 +1,42 @@
+from "../../../src/subset_result.wm" import * as SubsetResult;
+
+/* Type declarations expressed as checked stubs. Select the native adapter;
+   these bodies deliberately cannot perform host operations. */
+
+let canonicalPath = (name: String) => {
+  (SubsetResult.Err("native adapter required"): SubsetResult.Result<String, String>)
+};
+let readFile = (name: String) => {
+  (SubsetResult.Err("native adapter required"): SubsetResult.Result<String, String>)
+};
+let writeFile = (data: String, name: String) => {
+  (SubsetResult.Err("native adapter required"): SubsetResult.Result<Void, String>)
+};
+let writeStdout = (data: String) => {
+  (SubsetResult.Err("native adapter required"): SubsetResult.Result<Void, String>)
+};
+let writeStderr = (data: String) => {
+  (SubsetResult.Err("native adapter required"): SubsetResult.Result<Void, String>)
+};
+let arguments = () => {
+  (SubsetResult.Err("native adapter required"): SubsetResult.Result<List<String>, String>)
+};
+let exit = (success: Bool) => { void };
+let makeDir = (name: String) => {
+  (SubsetResult.Err("native adapter required"): SubsetResult.Result<Void, String>)
+};
+let removeDir = (name: String) => {
+  (SubsetResult.Err("native adapter required"): SubsetResult.Result<Void, String>)
+};
+let removeFile = (name: String) => {
+  (SubsetResult.Err("native adapter required"): SubsetResult.Result<Void, String>)
+};
+let rename = (source: String, destination: String) => {
+  (SubsetResult.Err("native adapter required"): SubsetResult.Result<Void, String>)
+};
+let isDir = (name: String) => {
+  (SubsetResult.Err("native adapter required"): SubsetResult.Result<Bool, String>)
+};
+let listDir = (name: String) => {
+  (SubsetResult.Err("native adapter required"): SubsetResult.Result<List<String>, String>)
+};

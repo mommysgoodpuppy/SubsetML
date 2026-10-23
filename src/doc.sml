@@ -20,23 +20,23 @@ structure Doc = struct
 
   open Syntax
 
-  type line = real * string * pos option
+  type line = int * string * pos option
 
   type doc = line list
 
   (* Lines up to this width stay on one line where the printers have a choice. *)
-  val width = 80.0
+  val width = 80
 
-  val text = fn s => [(0.0, s, NONE)]
+  val text = fn s => [(0, s, NONE)]
 
-  val atom = fn (p, s) => [(0.0, s, SOME p)]
+  val atom = fn (p, s) => [(0, s, SOME p)]
 
   val empty = text ""
 
   val minTag = fn
       (NONE, b) => b
     | (a, NONE) => a
-    | (SOME a, SOME b) => SOME (if (a : real) <= b then a else b)
+    | (SOME a, SOME b) => SOME (if (a : int) <= b then a else b)
 
   (* Horizontal composition: b continues the last line of a, and b's later lines are indented
      relative to that line. *)
@@ -49,7 +49,7 @@ structure Doc = struct
 
   val cats = fn ds => SmlList.foldl (fn (d, acc) => cat (acc, d)) empty ds
 
-  val indent = fn (n : real, d : doc) => SmlList.map (fn (i, t, p) => (i + n, t, p)) d
+  val indent = fn (n : int, d : doc) => SmlList.map (fn (i, t, p) => (i + n, t, p)) d
 
   (* Vertical composition. *)
   val stack = fn ds => SmlList.concat ds
@@ -82,9 +82,9 @@ structure Doc = struct
           val count = SubsetList.length ds
           val rec items = fn
               (_, []) => []
-            | (i, d :: rest) => (if i < count - 1.0 then cat (d, text sep) else d) :: items (i + 1.0, rest)
+            | (i, d :: rest) => (if i < count - 1 then cat (d, text sep) else d) :: items (i + 1, rest)
         in
-          stack [text openD, indent (2.0, stack (items (0.0, ds))), text closeD]
+          stack [text openD, indent (2, stack (items (0, ds))), text closeD]
         end
     end
 
@@ -103,7 +103,7 @@ structure Doc = struct
   val lineStart = fn (src, i) =>
     let
       val rec back = fn k =>
-        if k <= 0.0 then 0.0 else (if CompilerText.sub (src, k - 1.0) = #"\n" then k else back (k - 1.0))
+        if k <= 0 then 0 else (if CompilerText.sub (src, k - 1) = #"\n" then k else back (k - 1))
     in
       back (if i <= SubsetSource.length src then i else SubsetSource.length src)
     end
@@ -111,10 +111,10 @@ structure Doc = struct
   (* Whether the source line before the one containing offset i is blank. *)
   val blankLineBefore = fn (src, i) =>
     let val start = lineStart (src, i) in
-      start > 0.0
+      start > 0
       andalso (let
-                 val prev = lineStart (src, start - 1.0)
-                 val SubsetResult.Ok bytes = SubsetSource.slice (src, prev, start - 1.0 - prev)
+                 val prev = lineStart (src, start - 1)
+                 val SubsetResult.Ok bytes = SubsetSource.slice (src, prev, start - 1 - prev)
                in SubsetList.all (bytes, SubsetChar.isSpace) end)
     end
 
@@ -127,7 +127,7 @@ structure Doc = struct
           val rec drop = fn
               ([], remaining) => []
             | (c :: rest, remaining) =>
-                if remaining > 0.0 andalso c = #" " then drop (rest, remaining - 1.0)
+                if remaining > 0 andalso c = #" " then drop (rest, remaining - 1)
                 else c :: rest
         in CompilerText.stringOf (drop (bytes, column)) end
       val lines = SubsetBytes.fields (CompilerText.characters body, fn c => c = #"\n")
@@ -189,7 +189,7 @@ structure Doc = struct
       val rec go = fn (ls, acc, lastTag, cs, seenCode) =>
         case ls of
           [] =>
-            let val (acc', _, _) = flush (acc, lastTag, 0.0, SubsetSource.length src + 1.0, cs) in acc' end
+            let val (acc', _, _) = flush (acc, lastTag, 0, SubsetSource.length src + 1, cs) in acc' end
         | (ind, t, NONE) :: rest => go (rest, (spaces ind ^ t, false) :: acc, lastTag, cs, seenCode)
         | (ind, t, SOME p) :: rest =>
             let
@@ -199,7 +199,7 @@ structure Doc = struct
               go (rest, (spaces ind ^ t, true) :: acc2, (if p >= lastTag1 then p else lastTag1), cs1, true)
             end
     in
-      SubsetString.concat (SmlList.map (fn (t, _) => t ^ "\n") (SmlList.rev (go (lines, [], ~1.0, comments, false))))
+      SubsetString.concat (SmlList.map (fn (t, _) => t ^ "\n") (SmlList.rev (go (lines, [], ~1, comments, false))))
     end
 
 end

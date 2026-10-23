@@ -1,0 +1,3 @@
+let viaResult = Monad.via Result.carrier;
+let number: Result<Number, String> = viaResult (x) => {Ok(x)} (Ok(1));
+let text: Result<String, Bool> = viaResult (x) => {Ok(x)} (Ok("text"));

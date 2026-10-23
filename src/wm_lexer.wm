@@ -11,7 +11,7 @@ from "./lexer.sml" import * as Lexer;
 
 /* Lexical analysis of Workman source, following frontend-v3's lexical design
    (../wm-mini/tooling/frontend-v3/lexical-design.md), for the fragment that corresponds to
-   SubsetML. Identifiers may also contain primes, which only SML fallbacks produce. */
+   SubsetML. Identifiers may also contain primes. */
 
 from "./syntax.wm" import * as Syntax;
 from "./sml_list.wm" import * as SmlList;
@@ -29,7 +29,7 @@ type Token =
   | WName<List<String>> // a dotted path such as Lexer.lex or r.x
   | WSelect<String> // SML fallback `#lab`
   | WScon<Scon> // literal; the parser forms negative numbers
-  | WSml<String> // an SML fallback declaration, up to its `;`
+  | WOpen<List<List<String>>> // internal resolved header open; never lexed from source
   | WEOF;
 
 type Step<a> = Ok<a, Number> | Err<String, Pos>;
@@ -281,74 +281,6 @@ let lex = (src) => {
         }
       };
 
-      /* SML fallback declarations start a line with one of these words and end at the first
-         `;` outside brackets, let ... end, strings and comments. */
-      let smlStart = (i) => {
-        let j = skipWhile(isIdentChar, i);
-        let word = CompilerText.substring(source, i, j - i);
-        if (if (if (word == "val") { true } else { word == "datatype" }) { true } else { word == "open" }) { !trailing(i) } else { false }
-      };
-
-      let rec skipSmlString = (i) => {
-        if (i >= n) { n } else {
-          match(at(i)) {
-            '\\' => { skipSmlString(i + 2) },
-            '"' => { i + 1 },
-            _ => { skipSmlString(i + 1) }
-          }
-        }
-      };
-
-      let rec skipSmlComment = (i, depth) => {
-        match((depth: Number) == 0, i + 1 >= n) {
-          (true, _) => { i },
-          (false, true) => { n },
-          (false, false) => {
-            match(at(i), at(i + 1)) {
-              ('(', '*') => { skipSmlComment(i + 2, depth + 1) },
-              ('*', ')') => { skipSmlComment(i + 2, depth - 1) },
-              _ => { skipSmlComment(i + 1, depth) }
-            }
-          }
-        }
-      };
-
-      let smlPhraseEnd = (start) => {
-        let rec go = (i, depth) => {
-          if (i >= n) { Err("unterminated SML declaration (expected `;`)", start) } else {
-            match(at(i)) {
-              '"' => { go(skipSmlString(i + 1), depth) },
-              '#' => {
-                if (has(i + 1, '"')) { go(skipSmlString(i + 2), depth) } else { go(i + 1, depth) }
-              },
-              '(' => {
-                if (has(i + 1, '*')) { go(skipSmlComment(i + 2, 1), depth) } else { go(i + 1, depth + 1) }
-              },
-              '[' => { go(i + 1, depth + 1) },
-              '{' => { go(i + 1, depth + 1) },
-              ')' => { go(i + 1, depth - 1) },
-              ']' => { go(i + 1, depth - 1) },
-              '}' => { go(i + 1, depth - 1) },
-              ';' => {
-                if ((depth: Number) == 0) { Ok(void, i) } else { go(i + 1, depth) }
-              },
-              Var(c) => {
-                if (SubsetChar.isAlpha(c)) {
-                  let j = skipWhile(isIdentChar, i);
-                  match(CompilerText.substring(source, i, j - i)) {
-                    "let" => { go(j, depth + 1) },
-                    "end" => { go(j, depth - 1) },
-                    _ => { go(j, depth) }
-                  }
-                } else { go(i + 1, depth) }
-              }
-            }
-          }
-        };
-        go(start, 0)
-      };
-
-      // Token helpers return the next token; only this loop advances the scan.
       let rec loop = (i, acc, cs) => {
         if (i >= n) { Tokens(SmlList.rev([(WEOF, n), ..acc]), SmlList.rev(cs)) } else {
           match(at(i), if (startsWith(i, "//")) { true } else { startsWith(i, "--") }, startsWith(i, "/*")) {
@@ -422,18 +354,9 @@ let lex = (src) => {
                   }
                 },
                 (_, _, true) => {
-                  if (smlStart(i)) {
-                    match(smlPhraseEnd(i)) {
-                      Ok(_, j) => {
-                        loop(j + 1, [(WSml(CompilerText.substring(source, i, j - i)), i), ..acc], cs)
-                      },
-                      Err(message, offset) => { LexError(message, offset) }
-                    }
-                  } else {
-                    match(lexPath(i)) {
-                      Ok(tok, j) => { loop(j, [(tok, i), ..acc], cs) },
-                      Err(message, offset) => { LexError(message, offset) }
-                    }
+                  match(lexPath(i)) {
+                    Ok(tok, j) => { loop(j, [(tok, i), ..acc], cs) },
+                    Err(message, offset) => { LexError(message, offset) }
                   }
                 },
                 _ => {

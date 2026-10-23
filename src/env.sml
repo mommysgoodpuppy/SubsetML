@@ -15,7 +15,7 @@ structure Env = struct
 
   (* A type structure: a type function (arity, and a body over TGen 0 .. arity-1) and the
      value constructors when it is a datatype. *)
-  datatype tystr = TyStr of real * ty * (string * scheme) list
+  datatype tystr = TyStr of int * ty * (string * scheme) list
 
   (* Structures (each marked if it comes from the Basis), types, and values. *)
   datatype env =

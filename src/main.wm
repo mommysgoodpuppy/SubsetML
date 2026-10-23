@@ -10,14 +10,17 @@ from "./sml_list.sml" import * as SmlList;
 from "./subset_list.sml" import * as SubsetList;
 from "./translate.sml" import * as Translate;
 from "./sml_list_pair.sml" import * as SmlListPair;
+from "./wm_project.sml" import * as WmProject;
 from "./wm_parse.sml" import * as WmParse;
+from "./backend_names.sml" import * as BackendNames;
 from "./unify.sml" import * as Unify;
-from "./sml_option.sml" import * as SmlOption;
+from "./module_project.sml" import * as ModuleProject;
 from "./print.sml" import * as Print;
 from "./normalize.sml" import * as Normalize;
 from "./basis.sml" import * as Basis;
 from "./elab.sml" import * as Elab;
-from "./module_project.sml" import * as ModuleProject;
+from "./native_int.sml" import * as NativeInt;
+from "./sml_target.sml" import * as SmlTarget;
 */
 
 /* Command-line driver.
@@ -28,6 +31,8 @@ from "./module_project.sml" import * as ModuleProject;
      subsetml fmt FILE...           reprint each file as SubsetML
      subsetml wm OUTDIR FILE...     translate the program's files to Workman modules in OUTDIR
      subsetml sml OUTDIR FILE.wm... translate Workman modules to SubsetML files in OUTDIR
+     subsetml sml-entry OUTDIR ENTRY.wm discover and translate the supported import graph
+     subsetml sml OUTDIR --panic-runtime R.wm FILE.wm... select the native panic provider
      subsetml roundtrip FILE...     check that SML -> Workman -> SML preserves each file's syntax */
 
 from "./subset_io.wm" import * as SubsetIo;
@@ -41,14 +46,17 @@ from "./sml_list.wm" import * as SmlList;
 from "./subset_list.wm" import * as SubsetList;
 from "./translate.wm" import * as Translate;
 from "./sml_list_pair.wm" import * as SmlListPair;
+from "./wm_project.wm" import * as WmProject;
 from "./wm_parse.wm" import * as WmParse;
+from "./backend_names.wm" import * as BackendNames;
 from "./unify.wm" import * as Unify;
-from "./sml_option.wm" import * as SmlOption;
+from "./module_project.wm" import * as ModuleProject;
 from "./print.wm" import * as Print;
 from "./normalize.wm" import * as Normalize;
 from "./basis.wm" import * as Basis;
 from "./elab.wm" import * as Elab;
-from "./module_project.wm" import * as ModuleProject;
+from "./native_int.wm" import * as NativeInt;
+from "./sml_target.wm" import * as SmlTarget;
 
 let eprint = (text) => {
   match(SubsetIo.writeStderr(CompilerText.characters(text))) {
@@ -147,7 +155,7 @@ let sourceErrorText = match {
 
 let usage = () => {
   (
-    eprint("usage: subsetml (check | parse | fmt | roundtrip) FILE...\n       subsetml wm OUTDIR FILE...\n       subsetml sml OUTDIR FILE.wm...\n");
+    eprint("usage: subsetml (check | parse | fmt | roundtrip) FILE...\n       subsetml native OUTDIR FILE.sml...\n       subsetml sml-target (mlton | mlworks) OUTDIR [--adapter CHECKER.sml NATIVE.sml]... FILE.sml...\n       subsetml wm OUTDIR FILE...\n       subsetml sml OUTDIR [--panic-runtime R.wm] FILE.wm...\n       subsetml sml-entry OUTDIR [--panic-runtime R.wm] [--native-adapter CHECKER.wm NATIVE.sml STRUCTURE]... ENTRY.wm\n");
     SubsetProcess.exit(false)
   )
 };
@@ -202,53 +210,210 @@ let translate = (outDir, parsed) => {
   }
 };
 
-// Workman to SubsetML: foo_bar.wm becomes foo_bar.sml holding structure FooBar.
-let fromWm = (outDir, files) => {
-  let loaded = SmlList.map((path) => {
-    let src = readFile(path);
-    match(WmParse.parseModule(src)) {
-      WmParse.ParseError(msg, pos) => { (eprint(errorLine(path, src, msg, pos)); None) },
-      WmParse.Module(ds, es, cs) => {
-        Some(
-          path,
-          src,
-          [
-            Syntax.TopDecs([Syntax.SStructure(0, [(WmParse.structureName(path), ds)])]),
-            ..SmlList.map((e) => { Syntax.TopExp(0, e) })(es)
-          ],
-          cs
+/* Reverse translation uses the same canonical resolver as SML metadata loading.
+   Explicit source lists and entry discovery share preparation, resolution and checking. */
+let fromWmLoaded = (outDir, runtimePath, entryPath, adapterSpecs, sources) => {
+  let keywordPrefix = Translate.keywordPrefix(sources);
+  let rec traverse = (items, f) => {
+    match(items) {
+      [] => { SubsetResult.Ok([]) },
+      [item, ..rest] => {
+        SubsetResult.andThen(
+          f(item),
+          (value) => {
+            SubsetResult.map(traverse(rest, f), (values) => { [value, ..values] })
+          }
         )
       }
     }
-  })(files);
-  let modules = SmlList.concat(SmlList.map(match {
-    Some(m) => { [m] },
-    None => { [] }
-  })(loaded));
-  let recovered = SmlList.map((m) => { Translate.recover(modules, m) })(modules);
-  let ok = (SubsetList.length(modules): Number) == SubsetList.length(files);
-  let results = SmlList.map(match {
-    Unify.Err(msg, _) => { (eprint("error translating Workman: " ++ msg ++ "\n"); None) },
-    Unify.Ok((Var(path), Var(src), Var(prog), Var(cs)), _) => {
-      let (_, phrases) = Translate.module(prog);
-      let (ds, es) = Translate.parts(phrases);
-      let stem = Translate.baseName(path);
-      let name = if (CompilerText.isSuffix(stem, ".wm")) { CompilerText.slice(stem, 0, CompilerText.size(stem) - 3) } else { stem };
-      Some(outDir ++ "/" ++ name ++ ".sml", Translate.fromWm(path, src, ds, es, cs))
-    }
-  })(recovered);
-  if (if (ok) { SmlList.all(SmlOption.isSome)(results) } else { false }) {
-    (
-      SmlList.app(match {
-        Some(entry) => {
-          let (path, text) = entry;
-          writeFile(path, text)
-        },
-        None => { void }
-      })(results);
-      true
+  };
+  let translate = (units, adapters) => {
+    /* The selected runtime is the first canonical source. Its closure is checked first;
+       resolution adds it as a private dependency only where the built-in is used. */
+    let runtime = match(runtimePath, units) {
+      (Some(_), [unit, .._]) => { Some(WmProject.name(unit)) },
+      _ => { None }
+    };
+    let dependenciesOf = (name) => (planned) => {
+      match(SubsetList.find(planned, (key, _, _) => { key == name })) {
+        None => { [] },
+        Some(_, dependencies, _) => { dependencies }
+      }
+    };
+    let unitsNamed = (names) => {
+      traverse(
+        names,
+        (name) => {
+          match(SubsetList.find(units, (unit) => { WmProject.name(unit) == name })) {
+            None => {
+              WmProject.failure("translation", "", "missing runtime dependency " ++ name, 0)
+            },
+            Some(unit) => { SubsetResult.Ok(unit) }
+          }
+        }
+      )
+    };
+    SubsetResult.andThen(
+      traverse(units, (unit) => { WmProject.prepare(units, unit) }),
+      (prepared) => {
+        SubsetResult.andThen(
+          WmProject.order(prepared),
+          (ordered) => {
+            let declarations = traverse(
+              ordered,
+              match {
+                WmProject.Source(unit, _, tokens) => {
+                  match(WmParse.recordLayoutsTokens(WmProject.name(unit), WmProject.textOf(unit), tokens)) {
+                    WmParse.Done(layouts, _) => { SubsetResult.Ok(layouts) },
+                    WmParse.Fail(message, pos) => {
+                      WmProject.failure(WmProject.pathOf(unit), WmProject.textOf(unit), message, pos)
+                    }
+                  }
+                }
+              }
+            );
+            SubsetResult.andThen(
+              declarations,
+              (groups) => {
+                SubsetResult.andThen(
+                  traverse(
+                    ordered,
+                    match {
+                      WmProject.Source(unit, edges, tokens) => {
+                        match(WmParse.parseModuleProject(
+                          SmlList.concat(groups),
+                          WmProject.name(unit),
+                          WmProject.textOf(unit),
+                          tokens,
+                          keywordPrefix
+                        )) {
+                          WmParse.ParseError(message, pos) => {
+                            WmProject.failure(WmProject.pathOf(unit), WmProject.textOf(unit), message, pos)
+                          },
+                          WmParse.Module(ds, es, cs) => {
+                            SubsetResult.map(
+                              WmProject.imported(units, unit, edges),
+                              (dependencies) => {
+                                (
+                                  WmProject.name(unit),
+                                  SmlList.map(WmProject.name)(dependencies),
+                                  (
+                                    WmProject.pathOf(unit),
+                                    WmProject.textOf(unit),
+                                    [
+                                      Syntax.TopDecs([Syntax.SStructure(0, [(WmProject.name(unit), ds)])]),
+                                      ..SmlList.map((e) => { Syntax.TopExp(0, e) })(es)
+                                    ],
+                                    cs
+                                  )
+                                )
+                              }
+                            )
+                          }
+                        }
+                      }
+                    }
+                  ),
+                  (modules) => {
+                    let (renamed, names) = BackendNames.projectWithRuntime(runtime, keywordPrefix, modules);
+                    let checked = match(BackendNames.failure(names)) {
+                      None => { Translate.recoverProjectWithRuntime(runtime, renamed) },
+                      Some(_, pos, message) => { Unify.Err(message, pos) }
+                    };
+                    match(checked) {
+                      Unify.Err(message, pos) => {
+                        WmProject.failure("translation", "", BackendNames.diagnostic(names, message), pos)
+                      },
+                      Unify.Ok(recovered, _) => {
+                        SubsetResult.andThen(
+                          traverse(
+                            SmlListPair.zip(ordered, recovered),
+                            match {
+                              (WmProject.Source(unit, _, _), (_, Var(src), Var(prog), Var(cs))) => {
+                                SubsetResult.map(
+                                  unitsNamed(dependenciesOf(WmProject.name(unit))(renamed)),
+                                  (dependencies) => {
+                                    let (_, phrases) = Translate.module(prog);
+                                    let (ds, es) = Translate.parts(phrases);
+                                    (
+                                      outDir ++ "/" ++ WmProject.output(unit),
+                                      WmProject.metadata(dependencies) ++ Translate.fromWmNamed(WmProject.name(unit), src, ds, es, cs)
+                                    )
+                                  }
+                                )
+                              }
+                            }
+                          ),
+                          (results) => {
+                            match(entryPath) {
+                              None => { SubsetResult.Ok(results) },
+                              Some(path) => {
+                                match(ModuleProject.identify(path)) {
+                                  SubsetResult.Err(error) => { WmProject.failure(path, "", SubsetIo.errorText(error), 0) },
+                                  SubsetResult.Ok(ModuleProject.Resolved(id, _)) => {
+                                    match(SubsetList.find(units, (unit) => { ModuleProject.same(WmProject.identity(unit), id) })) {
+                                      None => { WmProject.failure(path, "", "missing build entry", 0) },
+                                      Some(entry) => {
+                                        SubsetResult.map(
+                                          WmProject.mlb(units, ordered, renamed, entry, adapters),
+                                          (text) => { List.append(results, [(outDir ++ "/project.mlb", text)]) }
+                                        )
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        )
+                      }
+                    }
+                  }
+                )
+              }
+            )
+          }
+        )
+      }
     )
-  } else { false }
+  };
+  match(SubsetResult.andThen(
+    WmProject.plan(sources),
+    (units) => {
+      SubsetResult.andThen(
+        WmProject.adapters(units, adapterSpecs),
+        (adapters) => { translate(units, adapters) }
+      )
+    }
+  )) {
+    SubsetResult.Err(WmProject.Error(path, src, message, pos)) => { (eprint(errorLine(path, src, message, pos)); false) },
+    SubsetResult.Ok(results) => { (SmlList.app(writeFile)(results); true) }
+  }
+};
+
+let fromWm = (outDir, runtimePath, files) => {
+  fromWmLoaded(
+    outDir,
+    runtimePath,
+    None,
+    [],
+    SmlList.map((path) => { (path, readFile(path)) })(match(runtimePath) {
+      None => { files },
+      Some(path) => { [path, ..files] }
+    })
+  )
+};
+
+let fromWmEntry = (outDir, runtimePath, adapterSpecs, entry) => {
+  match(WmProject.discover(match(runtimePath) {
+    None => { [entry] },
+    Some(runtime) => { [runtime, entry] }
+  })) {
+    SubsetResult.Err(WmProject.Error(path, src, message, pos)) => { (eprint(errorLine(path, src, message, pos)); false) },
+    SubsetResult.Ok(sources) => {
+      fromWmLoaded(outDir, runtimePath, Some(entry), adapterSpecs, sources)
+    }
+  }
 };
 
 // SML -> Workman -> SML must give back the same declarations, up to Normalize.
@@ -394,9 +559,73 @@ let main = () => {
         }
       )
     },
+    ["native", outDir, ..files] => {
+      withParsed(
+        files,
+        (parsed) => {
+          match(NativeInt.emit(parsed)) {
+            Unify.Err(message, pos) => { (eprint("native error: " ++ message ++ "\n"); false) },
+            Unify.Ok(outputs, _) => {
+              (
+                SmlList.app((path, text) => { writeFile(outDir ++ "/" ++ NativeInt.basename(path), text) })(outputs);
+                true
+              )
+            }
+          }
+        }
+      )
+    },
+    ["sml-target", target, outDir, ..options] => {
+      let rec parse = (remaining, adapters) => {
+        match(remaining) {
+          ["--adapter", checker, native, ..rest] => { parse(rest, [(checker, native), ..adapters]) },
+          [] => { usage() },
+          Var(files) => {
+            withParsed(
+              files,
+              (parsed) => {
+                match(SmlTarget.emit(target, SmlList.rev(adapters), parsed)) {
+                  SubsetResult.Err(message) => { (eprint("SML target error: " ++ message ++ "\n"); false) },
+                  SubsetResult.Ok(outputs) => {
+                    (
+                      SmlList.app((name, text) => { writeFile(outDir ++ "/" ++ name, text) })(outputs);
+                      true
+                    )
+                  }
+                }
+              }
+            )
+          }
+        }
+      };
+      parse(options, [])
+    },
     ["wm", outDir, ..files] => { withParsed(files, (parsed) => { translate(outDir, parsed) }) },
+    ["sml-entry", outDir, ..options] => {
+      let rec parse = (remaining, runtime, adapters) => {
+        match(remaining) {
+          [entry] => {
+            finish(fromWmEntry(outDir, runtime, SmlList.rev(adapters), entry))
+          },
+          ["--panic-runtime", path, ..rest] => {
+            match(runtime) {
+              None => { parse(rest, Some(path), adapters) },
+              Some(_) => { usage() }
+            }
+          },
+          ["--native-adapter", checker, native, exported, ..rest] => {
+            parse(rest, runtime, [(checker, native, exported), ..adapters])
+          },
+          _ => { usage() }
+        }
+      };
+      parse(options, None, [])
+    },
+    ["sml", outDir, "--panic-runtime", runtime, ..files] => {
+      if (SmlList.null(files)) { usage() } else { finish(fromWm(outDir, Some(runtime), files)) }
+    },
     ["sml", outDir, ..files] => {
-      if (SmlList.null(files)) { usage() } else { finish(fromWm(outDir, files)) }
+      if (SmlList.null(files)) { usage() } else { finish(fromWm(outDir, None, files)) }
     },
     ["roundtrip", ..files] => { withParsed(files, roundTrip) },
     _ => { usage() }

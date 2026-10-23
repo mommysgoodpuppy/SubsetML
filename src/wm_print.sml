@@ -8,15 +8,15 @@ from "./subset_list.sml" import * as SubsetList;
 from "./sml_list.sml" import * as SmlList;
 from "./subset_result.sml" import * as SubsetResult;
 from "./parser.sml" import * as Parser;
-from "./sml_print.sml" import * as SmlPrint;
+from "./subset_process.sml" import * as SubsetProcess;
 *)
 
 (* Prints abstract syntax as Workman source, following the frontend-v3 spelling
    (../wm-mini/tooling/frontend-v3/lexical-design.md). The mapping is designed to be read back
    by WmParse; docs/translation.md lists every rule.
 
-   A construct with no Workman counterpart is printed in SML syntax instead (SmlPrint), so the
-   output never silently changes meaning. *)
+   Translate rejects unsupported declaration forms before printing; no embedded SML
+   declarations are emitted. Expression compatibility forms retain their own mappings. *)
 structure WmPrint = struct
 
   open Syntax
@@ -83,10 +83,10 @@ structure WmPrint = struct
       val digits = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"]
       val rec digit = fn (index, values) =>
         case values of first :: rest =>
-          if index <= 0.0 then first else digit (index - 1.0, rest)
+          if index <= 0 then first else digit (index - 1, rest)
       val rec split = fn (low, high) =>
-        if low >= 16.0 then split (low - 16.0, high + 1.0) else (high, low)
-      val (high, low) = split (n, 0.0)
+        if low >= 16 then split (low - 16, high + 1) else (high, low)
+      val (high, low) = split (n, 0)
     in digit (high, digits) ^ digit (low, digits) end
 
   val escapeChar = fn (quote, c) =>
@@ -147,6 +147,7 @@ structure WmPrint = struct
         PWild => text "_"
       | PScon (pos, c) => atom (pos, scon c)
       | PId (pos, ([], "nil")) => atom (pos, "[]")
+      | PPinned (pos, id) => atom (pos, valueName id)
       | PId (pos, id) =>
           if isConName id orelse binds then atom (pos, valueName id)
           else cats [text "Var(", atom (pos, valueName id), text ")"]
@@ -178,7 +179,7 @@ structure WmPrint = struct
             val field = fn
                 (l, PId (_, ([], x))) =>
                   if x = l andalso not (isConName ([], x)) then text l
-                  else cats [text (l ^ " = "), child (false, PId (0.0, ([], x)))]
+                  else cats [text (l ^ " = "), child (false, PId (0, ([], x)))]
               | (l, q) => cats [text (l ^ " = "), child (false, q)]
           in
             cat (atom (pos, "."), group ("{ ", ",", " }", SmlList.map field fields))
@@ -213,24 +214,24 @@ structure WmPrint = struct
   (* --------------------------------------------------------------------------------------- *)
   (* Expressions
 
-     Levels follow the Workman grammar: 0 for if, match, lambdas and SML fallbacks, then
+     Levels follow the Workman grammar: 0 for if, match, lambdas and expression compatibility forms, then
      || 1, && 2, == != 3, comparisons 4, ++ + - 5, * / 6, prefix 7, calls 9, atoms 10. *)
 
   val binop = fn
-      "=" => SOME ("==", 3.0)
-    | "<>" => SOME ("!=", 3.0)
-    | "<" => SOME ("<", 4.0)
-    | ">" => SOME (">", 4.0)
-    | "<=" => SOME ("<=", 4.0)
-    | ">=" => SOME (">=", 4.0)
-    | "+" => SOME ("+", 5.0)
-    | "-" => SOME ("-", 5.0)
-    | "^" => SOME ("++", 5.0)
-    | "*" => SOME ("*", 6.0)
-    | "/" => SOME ("/", 6.0)
+      "=" => SOME ("==", 3)
+    | "<>" => SOME ("!=", 3)
+    | "<" => SOME ("<", 4)
+    | ">" => SOME (">", 4)
+    | "<=" => SOME ("<=", 4)
+    | ">=" => SOME (">=", 4)
+    | "+" => SOME ("+", 5)
+    | "-" => SOME ("-", 5)
+    | "^" => SOME ("++", 5)
+    | "*" => SOME ("*", 6)
+    | "/" => SOME ("/", 6)
     | _ => NONE
 
-  val parenAt = fn (need : real, (level, d)) =>
+  val parenAt = fn (need : int, (level, d)) =>
     if level >= need then d else cats [text "(", d, text ")"]
 
   (* An expression usable as `e.lab`: a variable or a chain of such selections. *)
@@ -245,8 +246,8 @@ structure WmPrint = struct
     | e => ([], [e])
 
   val rec expL = fn
-      EScon (p, c) => (if isNegative c then 7.0 else 10.0, atom (p, scon c))
-    | EId (p, ([], "nil")) => (10.0, atom (p, "[]"))
+      EScon (p, c) => (if isNegative c then 7 else 10, atom (p, scon c))
+    | EId (p, ([], "nil")) => (10, atom (p, "[]"))
     | EId (p, (["Real"], opr)) =>
         if opr = "==" orelse opr = "!=" then
           let
@@ -258,17 +259,18 @@ structure WmPrint = struct
               EApp (EId (p, (["Real"], opr)),
                     ETuple [EId (p, ([], "realLeft")), EId (p, ([], "realRight"))]))])
           end
-        else (10.0, atom (p, valueName (["Real"], opr)))
-    | EId (p, id) => (10.0, atom (p, valueName id))
+        else (10, atom (p, valueName (["Real"], opr)))
+    | EId (p, id) => (10, atom (p, valueName id))
     | ERecord (p, fields) =>
-        (10.0, cat (atom (p, "."),
+        (10, cat (atom (p, "."),
                   group ("{ ", ",", " }", SmlList.map (fn (l, e) => cats [text (l ^ " = "), exp e]) fields)))
-    | ESelect (p, l) => (10.0, atom (p, "#" ^ l))
-    | ETuple [] => (10.0, text "void")
-    | ETuple es => (10.0, group ("(", ",", ")", SmlList.map exp es))
-    | EList es => (10.0, group ("[", ",", "]", SmlList.map exp es))
-    | ESeq es => (10.0, group ("(", ";", ")", SmlList.map exp es))
-    | ELet (ds, es) => (10.0, block (ds, es))
+    | ECopy (_, source, _, _) => expL source
+    | ESelect (p, l) => (10, atom (p, "#" ^ l))
+    | ETuple [] => (10, text "void")
+    | ETuple es => (10, group ("(", ",", ")", SmlList.map exp es))
+    | EList es => (10, group ("[", ",", "]", SmlList.map exp es))
+    | ESeq es => (10, group ("(", ";", ")", SmlList.map exp es))
+    | ELet (ds, es) => (10, block (ds, es))
     | EApp (EId (p, ([], "::")), ETuple [h, t]) =>
         let
           val rec spine = fn
@@ -282,13 +284,13 @@ structure WmPrint = struct
               NONE => []
             | SOME e => [cat (text "..", exp e)]
         in
-          (10.0, cat (atom (p, ""), group ("[", ",", "]", SmlList.map exp items @ tailDocs)))
+          (10, cat (atom (p, ""), group ("[", ",", "]", SmlList.map exp items @ tailDocs)))
         end
     | EApp (EId (p, (["Real"], opr)), ETuple [l, r]) =>
         if opr = "==" orelse opr = "!=" then
           let val left = case l of ETyped (x, TyCon ([], ([], "real"))) => x | _ => l in
-            (3.0, cats [text "(", exp left, text ": Number)", atom (p, " " ^ opr ^ " "),
-                        parenAt (4.0, expL r)])
+            (3, cats [text "(", exp left, text ": Number)", atom (p, " " ^ opr ^ " "),
+                        parenAt (4, expL r)])
           end
         else call (EId (p, (["Real"], opr)), ETuple [l, r])
     | EApp (EId (p, ([], opr)), ETuple [l, r]) =>
@@ -297,31 +299,31 @@ structure WmPrint = struct
              if opr = "@" then call (EId (p, (["List"], "append")), ETuple [l, r])
              else
                (* div, mod, o and before: no Workman operator, so the SML operator stays. *)
-               (0.0, cats [parenAt (9.0, expL l), atom (p, " " ^ opr ^ " "), parenAt (9.0, expL r)])
+               (0, cats [parenAt (9, expL l), atom (p, " " ^ opr ^ " "), parenAt (9, expL r)])
          | (SOME entry, _) =>
              let val (spelling, level) = entry in (level, cats [parenAt (level, expL l), atom (p, " " ^ spelling ^ " "),
-                           parenAt (level + 1.0, expL r)]) end
+                           parenAt (level + 1, expL r)]) end
          | (NONE, false) => call (EId (p, ([], opr)), ETuple [l, r]))
-    | EApp (EId (p, ([], "not")), e) => (7.0, cat (atom (p, "!"), parenAt (7.0, expL e)))
+    | EApp (EId (p, ([], "not")), e) => (7, cat (atom (p, "!"), parenAt (7, expL e)))
     | EApp (EId (p, ([], "~")), e) =>
         let val (level, d) = expL e in
           (* `-3` would read back as a negative literal, so a literal operand keeps parentheses. *)
-          (7.0, cat (atom (p, "-"),
-                   case (e, level >= 9.0) of
+          (7, cat (atom (p, "-"),
+                   case (e, level >= 9) of
                      (EScon (_, _), _) => cats [text "(", d, text ")"]
                    | (_, true) => d
                    | (_, false) => cats [text "(", d, text ")"]))
         end
     | EApp (ESelect (p, l), e) =>
         if selectable e andalso startsAlpha l
-        then (10.0, cats [exp e, atom (p, "." ^ l)])
+        then (10, cats [exp e, atom (p, "." ^ l)])
         else call (ESelect (p, l), e)
     | EApp (f, a) => call (f, a)
-    | ETyped (e, t) => (10.0, cats [text "(", exp e, text ": ", ty t, text ")"])
-    | EAndalso (a, b) => expL (EIf (a, b, EId (0.0, ([], "false"))))
-    | EOrelse (a, b) => expL (EIf (a, EId (0.0, ([], "true")), b))
+    | ETyped (e, t) => (10, cats [text "(", exp e, text ": ", ty t, text ")"])
+    | EAndalso (a, b) => expL (EIf (a, b, EId (0, ([], "false"))))
+    | EOrelse (a, b) => expL (EIf (a, EId (0, ([], "true")), b))
     | EIf (c, a, b) =>
-        (0.0, cats [text "if (", exp c, text ") ", block (blockParts a), text " else ",
+        (0, cats [text "if (", exp c, text ") ", block (blockParts a), text " else ",
                   block (blockParts b)])
     | ECase (e, rules) =>
         let
@@ -330,12 +332,12 @@ structure WmPrint = struct
               ETuple (first :: second :: more) => join (", ", SmlList.map exp (first :: second :: more))
             | _ => exp e
         in
-          (0.0, cat (cats [text "match(", scrutinee, text ") "], arms rules))
+          (0, cat (cats [text "match(", scrutinee, text ") "], arms rules))
         end
     | EFn [(p, body)] =>
-        if paramOk p then (0.0, cats [params p, text " => ", lambdaBody body])
-        else (0.0, cat (text "match ", arms [(p, body)]))
-    | EFn rules => (0.0, cat (text "match ", arms rules))
+        if paramOk p then (0, cats [params p, text " => ", lambdaBody body])
+        else (0, cat (text "match ", arms [(p, body)]))
+    | EFn rules => (0, cat (text "match ", arms rules))
 
   and exp = fn e => let val (_, d) = expL e in d end
 
@@ -348,7 +350,7 @@ structure WmPrint = struct
         | ETuple es => group ("(", ",", ")", SmlList.map exp es)
         | _ => cats [text "(", exp a, text ")"]
     in
-      (9.0, cat (parenAt (9.0, expL f), args))
+      (9, cat (parenAt (9, expL f), args))
     end
 
   (* A curried lambda chains without braces: (a) => (b) => { e }. *)
@@ -363,9 +365,9 @@ structure WmPrint = struct
       val count = SubsetList.length rules
       val rec go = fn
           (_, []) => []
-        | (i, r :: rest) => (if i < count - 1.0 then cat (arm r, text ",") else arm r) :: go (i + 1.0, rest)
+        | (i, r :: rest) => (if i < count - 1 then cat (arm r, text ",") else arm r) :: go (i + 1, rest)
     in
-      stack [text "{", indent (2.0, stack (go (0.0, rules))), text "}"]
+      stack [text "{", indent (2, stack (go (0, rules))), text "}"]
     end
 
   (* `{ decs; e1; ...; en }`, on one line when it is a single short expression. *)
@@ -374,15 +376,15 @@ structure WmPrint = struct
       val count = SubsetList.length es
       val rec exps = fn
           (_, []) => []
-        | (i, e :: rest) => (if i < count - 1.0 then cat (exp e, text ";") else exp e) :: exps (i + 1.0, rest)
-      val items = SmlList.map (fn d => dec ([], d)) ds @ exps (0.0, es)
+        | (i, e :: rest) => (if i < count - 1 then cat (exp e, text ";") else exp e) :: exps (i + 1, rest)
+      val items = SmlList.map (fn d => dec ([], d)) ds @ exps (0, es)
     in
       case items of
         [single] =>
-          if SmlList.null ds andalso (case flat single of SOME text => CompilerText.size text <= 60.0 | NONE => false)
+          if SmlList.null ds andalso (case flat single of SOME text => CompilerText.size text <= 60 | NONE => false)
           then cats [text "{ ", single, text " }"]
-          else stack [text "{", indent (2.0, single), text "}"]
-      | _ => stack [text "{", indent (2.0, stack items), text "}"]
+          else stack [text "{", indent (2, single), text "}"]
+      | _ => stack [text "{", indent (2, stack items), text "}"]
     end
 
   (* --------------------------------------------------------------------------------------- *)
@@ -404,14 +406,14 @@ structure WmPrint = struct
     case d of
       DVal (p, [], plain, []) => andGroup (atom (p, "let "), SmlList.map binding plain)
     | DVal (p, [], [], recs) => andGroup (atom (p, "let rec "), SmlList.map binding recs)
-    | DVal (_, _, _, _) => fallback d
+    | DVal (_, _, _, _) => unsupportedDeclaration ()
     | DType (p, [(vs, tycon, TyRecord fields)]) =>
         cats [atom (p, "record "), text (capitalize tycon ^ typeParams vs ^ " = "),
               group ("{", ",", "}", SmlList.map (fn (l, t) => cats [text (l ^ ": "), ty t]) fields),
               text ";"]
     | DType (p, binds) =>
         if SmlList.exists (fn (_, _, t) => case t of TyRecord _ => true | _ => false) binds
-        then fallback d
+        then unsupportedDeclaration ()
         else
           andGroup (atom (p, "type "),
                     SmlList.map (fn (vs, tycon, t) => cats [text (capitalize tycon ^ typeParams vs ^ " = "), ty t])
@@ -432,7 +434,7 @@ structure WmPrint = struct
                 | _ => cats [head, text " ", join (" | ", docs)]
             in
               if fits oneLine then oneLine
-              else stack [head, indent (2.0, stack (SmlList.map (fn c => cat (text "| ", c)) docs))]
+              else stack [head, indent (2, stack (SmlList.map (fn c => cat (text "| ", c)) docs))]
             end
         in
           andGroup (atom (p, "type "), SmlList.map bind binds)
@@ -443,11 +445,10 @@ structure WmPrint = struct
           let val SubsetResult.Ok name = SubsetList.last id in
             atom (p, "from \"./" ^ fileName (dotted ([], name)) ^ "\" import *;")
           end) ids)
-        else fallback d
+        else unsupportedDeclaration ()
 
-  (* A declaration with no Workman form, in SML syntax and ended by `;` so that WmParse can
-     find its extent. *)
-  and fallback = fn d => cat (SmlPrint.dec d, text ";")
+  (* Translate.declarationGaps checks the complete tree before invoking this printer. *)
+  and unsupportedDeclaration = fn () => SubsetProcess.panic "unsupported declaration reached WM printer"
 
   (* `WmPrint` is in `wm_print.wm`. *)
   and fileName = fn name =>

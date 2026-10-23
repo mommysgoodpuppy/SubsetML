@@ -1,5 +1,9 @@
 # Candidate self-hosting kernel
 
+Update: the active compiler and indexed Basis APIs now use signed 32-bit
+integers. See [integer migration](integer-migration.md). Real-valued index
+observations below describe the preceding implementation and its legacy WM mirrors.
+
 This is a design inventory, not an implemented primitive ABI or a proof of minimality.
 The [Basis portability rule](basis.md#portability-rule) requires source implementations for
 anything reasonably expressible in the language. Reserve target code for operations
@@ -73,15 +77,18 @@ all SML implementations.
 | types, integer map, unification, environments, elaborator, bootstrap environment, normalization and translation | source lists, exact-natural arithmetic, byte text operations | compiler core checks and runs in Workman; no numeric formatter, floor/div/mod helper or native text indexing |
 | `src/main.sml` | SubsetIo whole-file byte reads/writes, stdout/stderr; SubsetProcess arguments and exit | six host operations above; stream mechanics stay inside adapters |
 
-`lib/num.sml` currently uses MLton integers, exceptions and full-SML functions behind its
-real-valued interface. Those implementation details are bootstrap scaffolding, not intrinsic
-requirements for a future SubsetML compiler. Replacing partial calls requires auditing callers
-and handling their Result values; renaming bindings alone is insufficient.
+`lib/num.sml` is legacy full-SML scaffolding behind real-valued compatibility
+interfaces. The [SML target compiler workflow](sml-targets.md) no longer needs
+it: the active compiler algorithms use the source Basis and a shared native
+text extractor. Legacy consumers still require an audit before changing their
+partial calls to Result-returning interfaces.
 
 The generated translator/checker runs in Workman using the staged kernel adapters. Checking
 and translating the compiler itself also requires its recursive algorithms to work within the
-target runtime. Native self-hosting still needs a code generator and runtime; these are not
-implemented yet. A compiler that emits artifacts can use an external build/link step:
+target runtime. Existing SML implementations supply code generation and runtime
+services for the new SML targets; PS2 execution of the complete compiler remains
+to be verified. An independent machine-code backend/runtime is not implemented.
+A compiler that emits artifacts can use an external build/link step:
 self-hosting does not require it to launch a compiler, dynamically load code or expose an FFI.
 `make bootstrap-check` currently validates SubsetML → Workman → SubsetML and rebuilds with MLton;
 it does not establish execution of the whole compiler in Workman or a native backend.
@@ -99,7 +106,7 @@ removing that limit would require source traversal changes, not another host ope
   Unicode text is encoded or rejected at I/O boundaries, and specify byte-based indices.
   The source code converters already enforce codes 0–255; text primitives must enforce the
   same character domain.
-- Give indices/counts exact bounds. With real-only numbers, NaN, infinity, negative/fractional
+- Give indices/counts exact bounds. For the existing real-valued index APIs, NaN, infinity, negative/fractional
   indices and values beyond exact integer representation must be addressed explicitly.
 - Define numeric equality, non-finite arithmetic, floor/division behavior, and formatting. Do
   not inherit accidental differences between MLton and Workman.

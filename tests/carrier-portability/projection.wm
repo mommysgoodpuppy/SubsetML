@@ -1,0 +1,3 @@
+let extracted = Result.carrier.fn;
+let number: Result<Number, String> = extracted (x) => {Ok(x)} (Ok(1));
+let text: Result<String, Bool> = extracted (x) => {Ok(x)} (Ok("text"));

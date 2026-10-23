@@ -60,6 +60,7 @@ let withCons = (tn, cons) => { TyStr(arityOf(tn), TCon(tn, arguments(tn)), cons)
 let topTypes = [
   ("unit", TyStr(0, unitTy, [])),
   ("bool", withCons(boolName, boolCons)),
+  ("int", tyStr(intName)),
   ("real", tyStr(realName)),
   ("string", tyStr(stringName)),
   ("char", tyStr(charName)),
@@ -100,10 +101,23 @@ let topValues = [
   ("null", "'a list -> bool"),
   ("valOf", "'a option -> 'a"),
   ("isSome", "'a option -> bool"),
-  ("/", "real * real -> real")
+  ("/", "real * real -> real"),
+  ("div", "int * int -> int"),
+  ("mod", "int * int -> int")
 ];
 
 let structures = [
+  (
+    ["Int"],
+    [],
+    [
+      ("toString", "int -> string"),
+      ("fromString", "string -> int option"),
+      ("precision", "int option"),
+      ("minInt", "int option"),
+      ("maxInt", "int option")
+    ]
+  ),
   (
     ["List"],
     [],
@@ -280,9 +294,7 @@ let structures = [
   (["Num", "CharVector"], [], [("tabulate", "real * (real -> char) -> string")])
 ];
 
-/* Overloaded identifiers (Appendix E). The classes keep int, which SubsetML omits, so that an
-   operation SML would default to int is reported instead of silently typed (spec §9.3). `/`
-   has one type here and appears among the values above. */
+// Appendix E numeric classes. Unresolved classes default to int; / stays real-only.
 let numClass = KClass([intName, realName]);
 let binary = (result) => { TArrow(tupleTy([alpha, alpha]), result) };
 

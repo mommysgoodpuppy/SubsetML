@@ -15,6 +15,7 @@ subset_utf16.sml
 subset_string.sml
 subset_natural.sml
 subset_source.sml
+subset_utf16_source.sml
 subset_sml_escape.sml
 subset_io.sml
 subset_process.sml
@@ -36,9 +37,13 @@ doc.sml
 sml_print.sml
 wm_print.sml
 wm_lexer.sml
+backend_names.sml
 wm_parse.sml
 normalize.sml
 translate.sml
 module_imports.sml
 module_project.sml
+wm_project.sml
+native_int.sml
+sml_target.sml
 main.sml

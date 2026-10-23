@@ -33,7 +33,7 @@ structure Parser = struct
 
   val peek = fn
       t :: _ => t
-    | [] => (TEOF, 0.0)
+    | [] => (TEOF, 0)
 
   val advance = fn
       _ :: rest => rest
@@ -51,23 +51,23 @@ structure Parser = struct
 
   (* Precedence and right associativity of the fixed infix identifiers. *)
   val fixity = fn
-      "*" => SOME (7.0, false)
-    | "/" => SOME (7.0, false)
-    | "div" => SOME (7.0, false)
-    | "mod" => SOME (7.0, false)
-    | "+" => SOME (6.0, false)
-    | "-" => SOME (6.0, false)
-    | "^" => SOME (6.0, false)
-    | "::" => SOME (5.0, true)
-    | "@" => SOME (5.0, true)
-    | "=" => SOME (4.0, false)
-    | "<>" => SOME (4.0, false)
-    | "<" => SOME (4.0, false)
-    | ">" => SOME (4.0, false)
-    | "<=" => SOME (4.0, false)
-    | ">=" => SOME (4.0, false)
-    | "o" => SOME (3.0, false)
-    | "before" => SOME (0.0, false)
+      "*" => SOME (7, false)
+    | "/" => SOME (7, false)
+    | "div" => SOME (7, false)
+    | "mod" => SOME (7, false)
+    | "+" => SOME (6, false)
+    | "-" => SOME (6, false)
+    | "^" => SOME (6, false)
+    | "::" => SOME (5, true)
+    | "@" => SOME (5, true)
+    | "=" => SOME (4, false)
+    | "<>" => SOME (4, false)
+    | "<" => SOME (4, false)
+    | ">" => SOME (4, false)
+    | "<=" => SOME (4, false)
+    | ">=" => SOME (4, false)
+    | "o" => SOME (3, false)
+    | "before" => SOME (0, false)
     | _ => NONE
 
   val isInfix = fn s => SmlOption.isSome (fixity s)
@@ -75,7 +75,7 @@ structure Parser = struct
   val precedence = fn s =>
     case fixity s of
       SOME payload => let val (p, _) = payload in p end
-    | NONE => ~1.0
+    | NONE => ~1
 
   val rightAssoc = fn s =>
     case fixity s of
@@ -207,10 +207,10 @@ structure Parser = struct
             val rec absorb = fn (rhs, more) =>
               case more of
                 (opr2, _, _) :: _ =>
-                  (* Precedences are finite constants, so Unordered cannot occur. *)
-                  (case (SubsetOrder.compareReal (precedence opr2, precedence opr), rightAssoc opr2) of
-                     (SubsetResult.Ok SubsetOrder.Greater, _) => absorb (climb (make, rhs, more, precedence opr + 1.0))
-                   | (SubsetResult.Ok SubsetOrder.Equal, true) => absorb (climb (make, rhs, more, precedence opr))
+                  (* Integer precedences have a total order. *)
+                  (case (SubsetOrder.compareInt (precedence opr2, precedence opr), rightAssoc opr2) of
+                     (SubsetOrder.Greater, _) => absorb (climb (make, rhs, more, precedence opr + 1))
+                   | (SubsetOrder.Equal, true) => absorb (climb (make, rhs, more, precedence opr))
                    | _ => (rhs, more))
               | [] => (rhs, more)
             val (rhs', more') = absorb (rhs, more)
@@ -244,12 +244,12 @@ structure Parser = struct
       | (xs, rest) =>
           bind (group xs) (fn first => fn _ =>
             bind (pairs (rest, [])) (fn ps => fn _ =>
-              Done (let val (tree, _) = climb (make, first, ps, 0.0) in tree end, [])))
+              Done (let val (tree, _) = climb (make, first, ps, 0) in tree end, [])))
     end
 
   val applyExp = fn
       f :: args => Done (SmlList.foldl (fn (a, f) => EApp (f, a)) f args, [])
-    | [] => Fail ("internal error: empty application", 0.0)
+    | [] => Fail ("internal error: empty application", 0)
 
   val infixExp = fn (opr, p, l, r) => EApp (EId (p, ([], opr)), ETuple [l, r])
 

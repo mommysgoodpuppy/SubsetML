@@ -1,0 +1,4 @@
+let both = (domain) => {
+  (Monad.via domain (x) => {Ok(x + 1)} (Ok(1)),
+   Monad.via domain (x) => {Ok(x ++ "!")} (Ok("hi")))
+};

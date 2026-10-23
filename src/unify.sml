@@ -21,24 +21,27 @@ structure Unify = struct
   open Types
 
   datatype var =
-      Free of kind * real                (* kind, level *)
+      Free of kind * int                (* kind, level *)
     | Bound of ty
 
   (* A `# lab` selection waiting for its record type to be known (Definition §4.11):
      position, level, record type, label, field type. *)
-  type selection = Syntax.pos * real * ty * string * ty
+  type selection = Syntax.pos * int * ty * string * ty
 
   (* Variables, the next fresh number (also used for type name stamps), pending selections,
      the label sets of the record type declarations so far (spec R2), and, when translating
-     from Workman, the equality sites seen so far (see `lenient`). *)
+     from Workman, equality sites plus resolved numeric/library identifier sites
+     used by native integer emission (see `lenient`). *)
   datatype state =
-      State of var IntMap.map * real * selection list * string list list * (Syntax.pos * ty) list option
+      State of var IntMap.map * int * selection list * string list list * (Syntax.pos * ty) list option
 
   val initial = State (IntMap.empty, firstStamp, [], [], NONE)
 
   (* For translating Workman, whose `==` also compares numbers: `=` and `<>` accept any
      operands, and each use is recorded with its operand type, so that the uses on real can
-     become Real.== and Real.!= (Translate.realEquality). *)
+     become Real.== and Real.!= (Translate.realEquality). Elab also records numeric
+     identifier function types here for NativeInt; these are distinct from equality
+     operand entries and are ignored by the real-equality rewrite. *)
   val lenient = State (IntMap.empty, firstStamp, [], [], SOME [])
 
   datatype 'a res =
@@ -61,14 +64,14 @@ structure Unify = struct
     | Mismatch m => Mismatch m
 
   val fresh = fn (State (vars, next, sels, recs, eqs), kind, level) =>
-    (TVar next, State (IntMap.insert (vars, next, Free (kind, level)), next + 1.0, sels, recs, eqs))
+    (TVar next, State (IntMap.insert (vars, next, Free (kind, level)), next + 1, sels, recs, eqs))
 
-  val freshStamp = fn State (vars, next, sels, recs, eqs) => (next, State (vars, next + 1.0, sels, recs, eqs))
+  val freshStamp = fn State (vars, next, sels, recs, eqs) => (next, State (vars, next + 1, sels, recs, eqs))
 
   val lookup = fn (State (vars, _, _, _, _), v) =>
     case IntMap.find (vars, v) of
       SOME info => info
-    | NONE => Free (KPlain, 0.0)
+    | NONE => Free (KPlain, 0)
 
   val set = fn (State (vars, next, sels, recs, eqs), v, info) =>
     State (IntMap.insert (vars, v, info), next, sels, recs, eqs)
@@ -95,7 +98,7 @@ structure Unify = struct
     let
       val rec go = fn (t, acc) =>
         case prune (st, t) of
-          TVar v => if SmlList.exists (fn w => Real.== (w, v)) acc then acc else acc @ [v]
+          TVar v => if SmlList.exists (fn w => (w = v)) acc then acc else acc @ [v]
         | TCon (_, ts) => SmlList.foldl go acc ts
         | TArrow (a, b) => go (b, go (a, acc))
         | TRecord fields => SmlList.foldl (fn ((_, a), acc) => go (a, acc)) acc fields
@@ -108,17 +111,17 @@ structure Unify = struct
   (* Printing *)
 
   val varName = fn i =>
-    "'" ^ (if i < 26.0 then (case SubsetChar.fromCode (97.0 + i) of SubsetResult.Ok c => CompilerText.str c | SubsetResult.Err error => "t" ^ CompilerText.natural i) else "t" ^ CompilerText.natural i)
+    "'" ^ (if i < 26 then (case SubsetChar.fromCode (97 + i) of SubsetResult.Ok c => CompilerText.str c | SubsetResult.Err error => "t" ^ CompilerText.natural i) else "t" ^ CompilerText.natural i)
 
   (* Prints types, naming their free variables consistently across the list. *)
   val showAll = fn (st, ts) =>
     let
       val ts' = SmlList.map (fn t => resolve (st, t)) ts
-      val vars = SmlList.foldl (fn (t, acc) => acc @ SmlList.filter (fn v => not (SmlList.exists (fn w => Real.== (w, v)) acc))
+      val vars = SmlList.foldl (fn (t, acc) => acc @ SmlList.filter (fn v => not (SmlList.exists (fn w => (w = v)) acc))
                                                                (freeVars (st, t))) [] ts'
       val rec indexOf = fn
-          (_, [], _) => 0.0
-        | (v, w :: rest, i) => if Real.== (v, w) then i else indexOf (v, rest, i + 1.0)
+          (_, [], _) => 0
+        | (v, w :: rest, i) => if (v = w) then i else indexOf (v, rest, i + 1)
       (* Explicit type variables keep their names, so free variables avoid them. *)
       val rec rigids = fn
           TRigid name => [name]
@@ -128,10 +131,10 @@ structure Unify = struct
         | _ => []
       val taken = SmlList.concat (SmlList.map rigids ts')
       val rec nth = fn (i, candidate) =>
-        if SmlList.exists (fn r => r = varName candidate) taken then nth (i, candidate + 1.0)
-        else (if Real.== (i, 0.0) then varName candidate else nth (i - 1.0, candidate + 1.0))
+        if SmlList.exists (fn r => r = varName candidate) taken then nth (i, candidate + 1)
+        else (if (i = 0) then varName candidate else nth (i - 1, candidate + 1))
       val varText = fn v =>
-        let val name = nth (indexOf (v, vars, 0.0), 0.0) in
+        let val name = nth (indexOf (v, vars, 0), 0) in
           case lookup (st, v) of
             Free (KEq, _) => "'" ^ name
           | Free (KClass names, _) => name ^ " (" ^ SubsetString.concatWith ((SmlList.map nameOf names), " or ") ^ ")"
@@ -145,17 +148,17 @@ structure Unify = struct
           | TGen i => varName i
           | TRigid name => name
           | TCon (n, []) => nameOf n
-          | TCon (n, [a]) => show (2.0, a) ^ " " ^ nameOf n
-          | TCon (n, args) => "(" ^ SubsetString.concatWith (SmlList.map (fn a => show (0.0, a)) args, ", ") ^ ") " ^ nameOf n
-          | TArrow (a, b) => paren (0.0, show (1.0, a) ^ " -> " ^ show (0.0, b))
+          | TCon (n, [a]) => show (2, a) ^ " " ^ nameOf n
+          | TCon (n, args) => "(" ^ SubsetString.concatWith (SmlList.map (fn a => show (0, a)) args, ", ") ^ ") " ^ nameOf n
+          | TArrow (a, b) => paren (0, show (1, a) ^ " -> " ^ show (0, b))
           | TRecord [] => "unit"
           | TRecord fields =>
               (case tupleComponents fields of
-                 SOME parts => paren (1.0, SubsetString.concatWith (SmlList.map (fn a => show (2.0, a)) parts, " * "))
-               | NONE => "{" ^ SubsetString.concatWith (SmlList.map (fn (l, a) => l ^ " : " ^ show (0.0, a)) fields, ", ") ^ "}")
+                 SOME parts => paren (1, SubsetString.concatWith (SmlList.map (fn a => show (2, a)) parts, " * "))
+               | NONE => "{" ^ SubsetString.concatWith (SmlList.map (fn (l, a) => l ^ " : " ^ show (0, a)) fields, ", ") ^ "}")
         end
     in
-      SmlList.map (fn t => show (0.0, t)) ts'
+      SmlList.map (fn t => show (0, t)) ts'
     end
 
   val show = fn (st, t) =>
@@ -166,7 +169,7 @@ structure Unify = struct
   (* --------------------------------------------------------------------------------------- *)
   (* Unification *)
 
-  val sameName = fn (a, b) => Real.== (stampOf a, stampOf b)
+  val sameName = fn (a, b) => (stampOf a = stampOf b)
 
   (* The kind of a variable that must satisfy both kinds. *)
   val combine = fn
@@ -199,14 +202,14 @@ structure Unify = struct
 
   val rec occurs = fn (st, v, t) =>
     case prune (st, t) of
-      TVar w => Real.== (v, w)
+      TVar w => (v = w)
     | TCon (_, ts) => SmlList.exists (fn a => occurs (st, v, a)) ts
     | TArrow (a, b) => occurs (st, v, a) orelse occurs (st, v, b)
     | TRecord fields => SmlList.exists (fn (_, a) => occurs (st, v, a)) fields
     | _ => false
 
   (* Makes t satisfy kind k. *)
-  val rec require = fn (st, k, t) =>
+  val rec requireKind = fn (st, k, t) =>
     case (k, prune (st, t)) of
       (KPlain, _) => Unified st
     | (_, TVar w) =>
@@ -231,11 +234,11 @@ structure Unify = struct
   and requireAll = fn (st, k, ts) =>
     case ts of
       [] => Unified st
-    | t :: rest => andThen (require (st, k, t), fn st => requireAll (st, k, rest))
+    | t :: rest => andThen (requireKind (st, k, t), fn st => requireAll (st, k, rest))
 
   val rec unify = fn (st, a, b) =>
     case (prune (st, a), prune (st, b)) of
-      (TVar v, TVar w) => if Real.== (v, w) then Unified st else bindVar (st, v, TVar w)
+      (TVar v, TVar w) => if (v = w) then Unified st else bindVar (st, v, TVar w)
     | (TVar v, t) => bindVar (st, v, t)
     | (t, TVar v) => bindVar (st, v, t)
     | (TCon (n, args), TCon (m, args')) =>
@@ -259,7 +262,7 @@ structure Unify = struct
     | Free (k, level) =>
         if occurs (st, v, t) then Mismatch "the type would be circular"
         else
-          andThen (require (st, k, t), fn st =>
+          andThen (requireKind (st, k, t), fn st =>
             Unified (set (adjust (st, level, t), v, Bound t)))
 
   (* --------------------------------------------------------------------------------------- *)
@@ -288,13 +291,13 @@ structure Unify = struct
         let
           val rec go = fn
               ([], _) => NONE
-            | (y :: rest, i) => if same (x, y) then SOME i else go (rest, i + 1.0)
+            | (y :: rest, i) => if same (x, y) then SOME i else go (rest, i + 1)
         in
-          go (xs, 0.0)
+          go (xs, 0)
         end
       val rec go = fn t =>
         case t of
-          TVar v => (case indexIn (Real.==, v, vars) of SOME i => TGen i | NONE => t)
+          TVar v => (case indexIn ((fn (left : int, right : int) => left = right), v, vars) of SOME i => TGen i | NONE => t)
         | TRigid name => (case indexIn (fn (a, b) => a = b, name, rigid) of SOME i => TGen (count + i) | NONE => t)
         | TCon (n, ts) => TCon (n, SmlList.map go ts)
         | TArrow (a, b) => TArrow (go a, go b)

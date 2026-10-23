@@ -6,7 +6,7 @@ from "./subset_string.sml" import * as SubsetString;
 
 (* Portable SML literal contents for byte characters; quotation marks are supplied by callers. *)
 structure SubsetSmlEscape = struct
-  datatype error = NonByte of real
+  datatype error = NonByte of int
   val spellings = [
     (#"\000", "\\^@"), (#"\001", "\\^A"), (#"\002", "\\^B"), (#"\003", "\\^C"),
     (#"\004", "\\^D"), (#"\005", "\\^E"), (#"\006", "\\^F"), (#"\007", "\\a"),
@@ -75,7 +75,7 @@ structure SubsetSmlEscape = struct
 
   val escapeByte = fn c =>
     case SubsetList.find (spellings, fn (byte, spelling) => byte = c) of
-      NONE => SubsetResult.Err (NonByte 0.0)
+      NONE => SubsetResult.Err (NonByte 0)
     | SOME entry => let val (byte, spelling) = entry in SubsetResult.Ok spelling end
 
   val escapeBytes = fn bytes =>
@@ -85,8 +85,8 @@ structure SubsetSmlEscape = struct
         | (c :: rest, offset, parts) =>
             case escapeByte c of
               SubsetResult.Err error => SubsetResult.Err (NonByte offset)
-            | SubsetResult.Ok spelling => go (rest, offset + 1.0, spelling :: parts)
-    in go (bytes, 0.0, []) end
+            | SubsetResult.Ok spelling => go (rest, offset + 1, spelling :: parts)
+    in go (bytes, 0, []) end
 
   val escapeString = fn value =>
     case SubsetString.fromNative value of

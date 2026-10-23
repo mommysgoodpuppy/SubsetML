@@ -7,6 +7,7 @@ from "./sml_list.sml" import * as SmlList;
 from "./subset_string.sml" import * as SubsetString;
 from "./subset_list.sml" import * as SubsetList;
 from "./compiler_text.sml" import * as CompilerText;
+from "./subset_char.sml" import * as SubsetChar;
 from "./sml_list_pair.sml" import * as SmlListPair;
 from "./subset_result.sml" import * as SubsetResult;
 *)
@@ -25,7 +26,7 @@ structure Elab = struct
   open Env
 
   (* The context: environment, level, and the explicit type variables in scope. *)
-  type context = env * real * string list
+  type context = env * int * string list
 
   val envOf = fn (env, _, _) => env
   val scopedOf = fn (_, _, scoped) => scoped
@@ -37,7 +38,7 @@ structure Elab = struct
 
   val member = fn (x, xs) => SmlList.exists (fn y => y = x) xs
 
-  val memberReal = fn (x, xs) => SmlList.exists (fn y => Real.== (y, x)) xs
+  val memberInt = fn (x, xs) => SmlList.exists (fn y => (y = x)) xs
 
   val longName = fn (qs, x) => SubsetString.concatWith ((qs @ [x]), ".")
 
@@ -56,6 +57,7 @@ structure Elab = struct
     case p of
       PScon (q, _) => SOME q
     | PId (q, _) => SOME q
+    | PPinned (q, _) => SOME q
     | PRecord (q, _) => SOME q
     | PApp (q, _, _) => SOME q
     | PTuple ps => SmlList.foldl (fn (x, acc) => case acc of SOME _ => acc | NONE => patPos x) NONE ps
@@ -70,6 +72,7 @@ structure Elab = struct
       | EId (q, _) => SOME q
       | ERecord (q, _) => SOME q
       | ESelect (q, _) => SOME q
+      | ECopy (q, _, _, _) => SOME q
       | ETuple es => first es
       | EList es => first es
       | ESeq es => first es
@@ -111,7 +114,7 @@ structure Elab = struct
         (case Env.tycon (env, id) of
            NONE => Err ("unbound type constructor " ^ longName id, pos)
          | SOME (TyStr (arity, body, _)) =>
-             if Real.!= (arity, SubsetList.length args) then
+             if (arity <> SubsetList.length args) then
                Err ("type constructor " ^ longName id ^ " takes " ^ CompilerText.natural arity ^ " argument(s), given "
                     ^ CompilerText.natural (SubsetList.length args), pos)
              else
@@ -167,6 +170,7 @@ structure Elab = struct
     | EIf (c, a, b) => expTyVars c @ expTyVars a @ expTyVars b
     | ECase (x, rules) => expTyVars x @ concatMap (fn (p, y) => patTyVars p @ expTyVars y, rules)
     | EFn rules => concatMap (fn (p, y) => patTyVars p @ expTyVars y, rules)
+    | ECopy (_, source, _, _) => expTyVars source
     | _ => []
 
   val distinct = fn xs => SmlList.foldl (fn (x, acc) => if member (x, acc) then acc else acc @ [x]) [] xs
@@ -201,11 +205,36 @@ structure Elab = struct
     | SString _ => stringTy
     | SChar _ => charTy
 
-  (* SubsetML omits int (spec §9.3), so integer constants are rejected. *)
+  (* Compare normalized digit spellings instead of accumulating a magnitude:
+     the absolute value of minInt cannot itself fit in a signed integer. *)
+  val int32Literal = fn text =>
+    let
+      val (negative, digits) = case CompilerText.characters text of
+        #"~" :: rest => (true, rest) | rest => (false, rest)
+      val (hex, digits) = case digits of
+        #"0" :: #"x" :: rest => (true, rest) | rest => (false, rest)
+      val bound = CompilerText.characters
+        (if hex then (if negative then "80000000" else "7fffffff")
+         else (if negative then "2147483648" else "2147483647"))
+      val alphabet = CompilerText.characters "0123456789abcdef"
+      val rec digit = fn (c, cs, n) => case cs of
+        [] => 16 | d :: rest => if SubsetChar.toLower c = d then n else digit (c, rest, n + 1)
+      val normalized = SubsetList.dropWhile (digits, fn c => c = #"0")
+      val rec within = fn (cs, bs) => case (cs, bs) of
+        ([], []) => true
+      | (c :: rest, b :: limit) =>
+          let val x = digit (c, alphabet, 0)
+              val y = digit (b, alphabet, 0)
+          in x < y orelse (x = y andalso within (rest, limit)) end
+      | _ => false
+      val size = SubsetList.length normalized
+      val limitSize = SubsetList.length bound
+    in size < limitSize orelse (size = limitSize andalso within (normalized, bound)) end
+
   val checkConst = fn (pos, c, st) =>
     case c of
-      SInt text =>
-        Err ("integer constants are not part of SubsetML, which omits int for now; write " ^ text ^ ".0", pos)
+      SInt text => if int32Literal text then Ok (intTy, st)
+        else Err ("integer constant outside signed 32-bit range: " ^ text, pos)
     | _ => Ok (constTy c, st)
 
   val mergeVars = fn (pos, a, b, st) =>
@@ -224,6 +253,7 @@ structure Elab = struct
       case p of
         PWild => let val (t, st') = fresh (st, KPlain, level) in Ok ((t, []), st') end
       | PScon (q, c) => bind (checkConst (q, c, st)) (fn t => fn st => Ok ((t, []), st))
+      | PPinned (q, _) => Err ("internal pinned pattern was not lowered", q)
       | PId (q, id) =>
           (case (constructorScheme (Env.value (env, id)), id) of
              (SOME scheme, _) =>
@@ -246,12 +276,12 @@ structure Elab = struct
                            ([], []), fields, st)) (fn (fs, vars) => fn st =>
               Ok ((TRecord (sortFields fs), vars), st)))
       | PTuple ps =>
-          bind (pats (ctx, at (0.0, patPos p), ps, st)) (fn (ts, vars) => fn st =>
+          bind (pats (ctx, at (0, patPos p), ps, st)) (fn (ts, vars) => fn st =>
             Ok ((if SmlList.null ts then unitTy else tupleTy ts, vars), st))
       | PList ps =>
           let val (elem, st0) = fresh (st, KPlain, level) in
-            bind (pats (ctx, at (0.0, patPos p), ps, st0)) (fn (ts, vars) => fn st =>
-              bind (foldRes (fn (_, (t, x), st) => unifyAt (st, at (0.0, patPos x), "list pattern element", elem, t),
+            bind (pats (ctx, at (0, patPos p), ps, st0)) (fn (ts, vars) => fn st =>
+              bind (foldRes (fn (_, (t, x), st) => unifyAt (st, at (0, patPos x), "list pattern element", elem, t),
                              (), SmlListPair.zip (ts, ps), st)) (fn _ => fn st =>
                 Ok ((listTy elem, vars), st)))
           end
@@ -269,8 +299,8 @@ structure Elab = struct
            | _ => Err ("`" ^ longName id ^ "` is not a constructor", q))
       | PTyped (inner, t) =>
           bind (pat (ctx, inner, st)) (fn (ti, vars) => fn st =>
-            bind (scopedTy (ctx, at (0.0, patPos inner), t, st)) (fn t' => fn st =>
-              bind (unifyAt (st, at (0.0, patPos inner), "type annotation", t', ti)) (fn _ => fn st =>
+            bind (scopedTy (ctx, at (0, patPos inner), t, st)) (fn t' => fn st =>
+              bind (unifyAt (st, at (0, patPos inner), "type annotation", t', ti)) (fn _ => fn st =>
                 Ok ((t', vars), st))))
     end
 
@@ -309,8 +339,23 @@ structure Elab = struct
         EScon (q, c) => checkConst (q, c, st)
       | EId (q, id) =>
           (case Env.value (env, id) of
-             SOME entry => let val (scheme, _) = entry val (t, st') = instantiate (st, level, scheme) in Ok (t, st') end
+             SOME entry =>
+               let
+                 val (scheme, _) = entry
+                 val (kinds, _) = scheme
+                 val (t, st') = instantiate (st, level, scheme)
+                 val numeric = SmlList.exists (fn k => case k of KClass _ => true | _ => false) kinds
+                 val primitive = numeric orelse id = ([], "div") orelse id = ([], "mod")
+                 val integerLibrary = case id of (["Int"], _) =>
+                   (case Env.structureAt (env, ["Int"]) of SOME (_, isBasis) => isBasis | NONE => false)
+                   | _ => false
+                 val State (vs, nx, sels, recs, sites) = st'
+                 val st'' = if primitive orelse integerLibrary then
+                   (case sites of SOME xs => State (vs, nx, sels, recs, SOME ((q, t) :: xs)) | NONE => st')
+                   else st'
+               in Ok (t, st'') end
            | NONE => Err ("unbound identifier " ^ longName id, q))
+      | ECopy (_, source, _, _) => exp (ctx, source, st)
       | ERecord (q, fields) =>
           bind (checkRecordLabels (env, q, SmlList.map (fn (l, _) => l) fields, st)) (fn _ => fn st =>
             bind (mapRes (fn ((l, x), st) => bind (exp (ctx, x, st)) (fn t => fn st => Ok ((l, t), st)), fields, st))
@@ -329,7 +374,7 @@ structure Elab = struct
           let val (elem, st0) = fresh (st, KPlain, level) in
             bind (foldRes (fn (_, x, st) =>
                              bind (exp (ctx, x, st)) (fn t => fn st =>
-                               unifyAt (st, at (0.0, expPos x), "list element", elem, t)), (), es, st0))
+                               unifyAt (st, at (0, expPos x), "list element", elem, t)), (), es, st0))
               (fn _ => fn st => Ok (listTy elem, st))
           end
       | ESeq es =>
@@ -340,7 +385,7 @@ structure Elab = struct
               bind (foldRes (fn (_, x, st) => exp ((plus (env, delta), level, scopedOf ctx), x, st), unitTy, es, st))
                 (fn t => fn st =>
                   if SmlList.exists (fn s => s >= start) (tynames (resolve (st, t))) then
-                    Err ("the type of this `let` mentions a type declared inside it", at (0.0, expPos e))
+                    Err ("the type of this `let` mentions a type declared inside it", at (0, expPos e))
                   else Ok (t, st)))
           end
       | EApp (EId (q, ([], opr)), a) =>
@@ -358,21 +403,21 @@ structure Elab = struct
       | EApp (f, a) => application (ctx, f, a, st)
       | ETyped (x, t) =>
           bind (exp (ctx, x, st)) (fn tx => fn st =>
-            bind (scopedTy (ctx, at (0.0, expPos x), t, st)) (fn t' => fn st =>
-              bind (unifyAt (st, at (0.0, expPos x), "type annotation", t', tx)) (fn _ => fn st => Ok (t', st))))
+            bind (scopedTy (ctx, at (0, expPos x), t, st)) (fn t' => fn st =>
+              bind (unifyAt (st, at (0, expPos x), "type annotation", t', tx)) (fn _ => fn st => Ok (t', st))))
       | EAndalso (a, b) => boolOp (ctx, "andalso", a, b, st)
       | EOrelse (a, b) => boolOp (ctx, "orelse", a, b, st)
       | EIf (c, a, b) =>
           bind (exp (ctx, c, st)) (fn tc => fn st =>
-            bind (unifyAt (st, at (0.0, expPos c), "condition of `if`", boolTy, tc)) (fn _ => fn st =>
+            bind (unifyAt (st, at (0, expPos c), "condition of `if`", boolTy, tc)) (fn _ => fn st =>
               bind (exp (ctx, a, st)) (fn ta => fn st =>
                 bind (exp (ctx, b, st)) (fn tb => fn st =>
-                  bind (unifyAt (st, at (0.0, expPos b), "branches of `if` differ", ta, tb)) (fn _ => fn st =>
+                  bind (unifyAt (st, at (0, expPos b), "branches of `if` differ", ta, tb)) (fn _ => fn st =>
                     Ok (ta, st))))))
       | ECase (x, rules) =>
           bind (exp (ctx, x, st)) (fn tx => fn st =>
             bind (matchRules (ctx, rules, st)) (fn (tp, tr) => fn st =>
-              bind (unifyAt (st, at (0.0, expPos x), "`case` patterns do not fit the value", tp, tx)) (fn _ => fn st =>
+              bind (unifyAt (st, at (0, expPos x), "`case` patterns do not fit the value", tp, tx)) (fn _ => fn st =>
                 Ok (tr, st))))
       | EFn rules => bind (matchRules (ctx, rules, st)) (fn (tp, tr) => fn st => Ok (TArrow (tp, tr), st))
     end
@@ -386,7 +431,7 @@ structure Elab = struct
               case f of
                 EId (_, id) => "argument of " ^ longName id
               | _ => "function argument"
-            val pos = at (0.0, case expPos a of SOME q => SOME q | NONE => expPos f)
+            val pos = at (0, case expPos a of SOME q => SOME q | NONE => expPos f)
           in
             case prune (st, tf) of
               TArrow (dom, cod) => bind (unifyAt (st, pos, what, dom, ta)) (fn _ => fn st => Ok (cod, st))
@@ -400,9 +445,9 @@ structure Elab = struct
 
   and boolOp = fn (ctx, name, a, b, st) =>
     bind (exp (ctx, a, st)) (fn ta => fn st =>
-      bind (unifyAt (st, at (0.0, expPos a), "operand of " ^ name, boolTy, ta)) (fn _ => fn st =>
+      bind (unifyAt (st, at (0, expPos a), "operand of " ^ name, boolTy, ta)) (fn _ => fn st =>
         bind (exp (ctx, b, st)) (fn tb => fn st =>
-          bind (unifyAt (st, at (0.0, expPos b), "operand of " ^ name, boolTy, tb)) (fn _ => fn st =>
+          bind (unifyAt (st, at (0, expPos b), "operand of " ^ name, boolTy, tb)) (fn _ => fn st =>
             Ok (boolTy, st)))))
 
   (* A match: the type of its patterns and of its results. *)
@@ -414,10 +459,10 @@ structure Elab = struct
     in
       bind (foldRes (fn (_, (p, x), st) =>
                        bind (pat (ctx, p, st)) (fn (t, vars) => fn st =>
-                         bind (unifyAt (st, at (0.0, patPos p), "patterns of a match differ", tp, t)) (fn _ => fn st =>
+                         bind (unifyAt (st, at (0, patPos p), "patterns of a match differ", tp, t)) (fn _ => fn st =>
                            bind (exp ((plus (env, withValues (SmlList.map (fn (v, vt) => (v, (([], vt), SValue))) vars)),
                                        level, scoped), x, st)) (fn tx => fn st =>
-                             unifyAt (st, at (0.0, expPos x), "results of a match differ", tr, tx)))),
+                             unifyAt (st, at (0, expPos x), "results of a match differ", tr, tx)))),
                      (), rules, st2))
         (fn _ => fn st => Ok ((tp, tr), st))
     end
@@ -457,7 +502,7 @@ structure Elab = struct
         SmlList.filter (fn v => not (member (v, scoped)))
           (distinct (concatMap (fn (p, e) => patTyVars p @ expTyVars e, bindings)))
       val explicit = distinct (tyvars @ implicit)
-      val inner = (env, level + 1.0, scoped @ explicit)
+      val inner = (env, level + 1, scoped @ explicit)
       (* A binding's pattern, its type and variables, checked against its expression's type. *)
       val plainBinding = fn ((p, e), st) =>
         bind (exp (inner, e, st)) (fn te => fn st =>
@@ -484,7 +529,7 @@ structure Elab = struct
           bind (mapRes (recPattern, recs, st)) (fn recVars => fn st =>
             let
               val recEnv = withValues (SmlList.map (fn (v, t) => (v, (([], t), SValue))) (SmlList.concat recVars))
-              val recInner = (plus (env, recEnv), level + 1.0, scoped @ explicit)
+              val recInner = (plus (env, recEnv), level + 1, scoped @ explicit)
             in
               bind (foldRes (fn (_, ((_, e), vars), st) =>
                                case vars of
@@ -505,7 +550,7 @@ structure Elab = struct
      generalized. *)
   and closeValBindings = fn (level, explicit, pos, results, st) =>
     let val names = concatMap (fn (vars, _) => SmlList.map (fn (x, _) => x) vars, results) in
-      case (SmlList.find (fn x => SubsetList.length (SmlList.filter (fn y => y = x) names) > 1.0) names,
+      case (SmlList.find (fn x => SubsetList.length (SmlList.filter (fn y => y = x) names) > 1) names,
             SmlList.find (fn x => member (x, unbindable)) names) of
         (SOME x, _) => Err ("`" ^ x ^ "` is bound twice in this declaration", pos)
       | (_, SOME x) => Err ("`" ^ x ^ "` cannot be rebound", pos)
@@ -536,7 +581,13 @@ structure Elab = struct
               (case SmlList.find (fn (l', _) => l' = lab) fields of
                  SOME entry => let val (_, ft) = entry in bind (unifyAt (st, q, "field " ^ lab, ft, f)) (fn _ => fn st => Ok ((pending, true), st)) end
                | NONE => Err ("the record has no field " ^ lab ^ ": " ^ show (st, r), q))
-          | TVar _ => Ok ((pending @ [sel], progress), st)
+          | TVar v =>
+              (* A field belongs to its receiver's type, even while the flexible row is
+                 pending. Preserve that context dependency before closing inner vals. *)
+              let val receiverLevel = case lookup (st, v) of Free (_, level) => level | Bound _ => l
+                  val escaped = SmlList.exists (fn w => case lookup (st, w) of
+                    Free (_, fieldLevel) => fieldLevel > receiverLevel | Bound _ => false) (freeVars (st, f))
+              in Ok ((pending @ [sel], progress orelse escaped), adjust (st, receiverLevel, f)) end
           | _ => Err ("`#" ^ lab ^ "` is applied to a non-record: " ^ show (st, r), q)
         end
       val rec loop = fn st =>
@@ -559,21 +610,22 @@ structure Elab = struct
   (* The scheme of one bound variable. *)
   and closeBinding = fn (level, explicit, generalizable, pos, x, t, st) =>
     let
-      (* An overloaded variable its context has not resolved would default to int in SML
-         (Appendix E), which SubsetML omits (spec §9.3). *)
-      val unresolved =
-        SmlList.exists (fn v => case lookup (st, v) of Free (KClass _, l) => l > level | _ => false)
-          (freeVars (st, t))
-      val rigid = SmlList.filter (fn v => member (v, explicit)) (rigidNames (resolve (st, t)))
+      (* Appendix E: default unresolved numeric classes at declaration closure. *)
+      val defaults = SmlList.filter (fn v => case lookup (st, v) of
+        Free (KClass _, l) => l > level | _ => false) (freeVars (st, t))
+      val rec settle = fn (vars, st) => case vars of
+        [] => Ok ((), st)
+      | v :: rest => bind (unifyAt (st, pos, "integer default", TVar v, intTy))
+          (fn _ => fn st => settle (rest, st))
     in
-      case (unresolved, generalizable, rigid) of
-        (true, _, _) =>
-          Err ("the type of an overloaded operation in `" ^ x ^ "` is not determined: SML would make it int, "
-               ^ "which SubsetML omits; add a type annotation such as (x : real)", pos)
-      | (false, true, _) => Ok ((x, generalize (st, level, explicit, t)), st)
-      | (false, false, v :: _) =>
-          Err ("type variable " ^ v ^ " cannot be generalized: the value is expansive (Definition, section 4.8)", pos)
-      | (false, false, []) => Ok ((x, ([], resolve (st, t))), adjust (st, level, t))
+      bind (settle (defaults, st)) (fn _ => fn st =>
+        let val rigid = SmlList.filter (fn v => member (v, explicit)) (rigidNames (resolve (st, t))) in
+          case (generalizable, rigid) of
+            (true, _) => Ok ((x, generalize (st, level, explicit, t)), st)
+          | (false, v :: _) =>
+              Err ("type variable " ^ v ^ " cannot be generalized: the value is expansive (Definition, section 4.8)", pos)
+          | (false, []) => Ok ((x, ([], resolve (st, t))), adjust (st, level, t))
+        end)
     end
 
   and rigidNames = fn t =>
@@ -588,7 +640,7 @@ structure Elab = struct
   and typeDec = fn ((env, _, _), pos, binds, st) =>
     let
       val names = SmlList.map (fn (_, name, _) => name) binds
-      val dup = SmlList.find (fn n => SubsetList.length (SmlList.filter (fn m => m = n) names) > 1.0) names
+      val dup = SmlList.find (fn n => SubsetList.length (SmlList.filter (fn m => m = n) names) > 1) names
     in
       case dup of
         SOME n => Err ("type " ^ n ^ " is bound twice", pos)
@@ -606,15 +658,15 @@ structure Elab = struct
 
   (* Maps a declaration's type parameters to TGen. *)
   and paramScope = fn (pos, params, st) =>
-    case SmlList.find (fn v => SubsetList.length (SmlList.filter (fn w => w = v) params) > 1.0) params of
+    case SmlList.find (fn v => SubsetList.length (SmlList.filter (fn w => w = v) params) > 1) params of
       SOME v => Err ("type parameter " ^ v ^ " appears twice", pos)
     | NONE =>
         let
           val rec index = fn
               (_, [], _) => NONE
-            | (v, w :: rest, i) => if v = w then SOME (TGen i) else index (v, rest, i + 1.0)
+            | (v, w :: rest, i) => if v = w then SOME (TGen i) else index (v, rest, i + 1)
         in
-          Ok (fn v => index (v, params, 0.0), st)
+          Ok (fn v => index (v, params, 0), st)
         end
 
   and recordDeclared = fn (pos, body, st) =>
@@ -635,11 +687,11 @@ structure Elab = struct
     let
       val names = SmlList.map (fn (_, name, _) => name) binds
       val cons = concatMap (fn (_, _, cs) => SmlList.map (fn (_, c, _) => c) cs, binds)
-      val dupIn = fn xs => SmlList.find (fn n => SubsetList.length (SmlList.filter (fn m => m = n) xs) > 1.0) xs
+      val dupIn = fn xs => SmlList.find (fn n => SubsetList.length (SmlList.filter (fn m => m = n) xs) > 1) xs
       (* Fresh type names, first assuming every one admits equality. *)
       val (stamps, st1) =
         SmlList.foldl (fn (_, (acc, st)) => let val (s, st') = freshStamp st in (acc @ [s], st') end) ([], st) binds
-      val nameFor = fn (eqs, (params, name, _), s) => (s, name, SubsetList.length params, memberReal (s, eqs))
+      val nameFor = fn (eqs, (params, name, _), s) => (s, name, SubsetList.length params, memberInt (s, eqs))
       val tyFor = fn tn => let val SubsetResult.Ok args = SubsetList.tabulate (arityOf tn, TGen) in TCon (tn, args) end
       (* The constructors' argument types, with the group's names given the equality flags. *)
       val elabCons = fn (eqs, st) =>
@@ -661,7 +713,7 @@ structure Elab = struct
       val rec admits = fn (eqs, t) =>
         case t of
           TCon ((s, _, _, eq), args) =>
-            (if memberReal (s, stamps) then memberReal (s, eqs) else eq) andalso SmlList.all (fn a => admits (eqs, a)) args
+            (if memberInt (s, stamps) then memberInt (s, eqs) else eq) andalso SmlList.all (fn a => admits (eqs, a)) args
         | TArrow (_, _) => false
         | TRecord fields => SmlList.all (fn (_, a) => admits (eqs, a)) fields
         | TGen _ => true
@@ -672,11 +724,11 @@ structure Elab = struct
             val eqs' =
               SmlList.filter (fn s =>
                              SmlList.all (fn ((s', _, _, _), cs) =>
-                                         Real.!= (s', s) orelse SmlList.all (fn (_, arg) => case arg of NONE => true
+                                         (s' <> s) orelse SmlList.all (fn (_, arg) => case arg of NONE => true
                                                                                           | SOME t => admits (eqs, t)) cs)
                                group) eqs
           in
-            if Real.== (SubsetList.length eqs', SubsetList.length eqs) then Ok (group, st) else fixpoint (eqs', st)
+            if (SubsetList.length eqs' = SubsetList.length eqs) then Ok (group, st) else fixpoint (eqs', st)
           end)
     in
       case (dupIn names, dupIn cons, SmlList.find (fn c => member (c, unbindable) orelse c = "it") cons) of
@@ -709,10 +761,10 @@ structure Elab = struct
 
   val strdec = fn (env, sd, st) =>
     case sd of
-      SDec d => dec ((env, 0.0, []), d, st)
+      SDec d => dec ((env, 0, []), d, st)
     | SStructure (_, binds) =>
         foldRes (fn (delta, (name, ds), st) =>
-                   bind (decs ((env, 0.0, []), ds, st)) (fn body => fn st =>
+                   bind (decs ((env, 0, []), ds, st)) (fn body => fn st =>
                      Ok (plus (delta, withStructure (name, body, false)), st)),
                  empty, binds, st)
 
@@ -722,7 +774,7 @@ structure Elab = struct
         foldRes (fn (delta, sd, st) =>
                    bind (strdec (plus (env, delta), sd, st)) (fn more => fn st => Ok (plus (delta, more), st)),
                  empty, sds, st)
-    | TopExp (pos, e) => dec ((env, 0.0, []), DVal (pos, [], [(PId (pos, ([], "it")), e)], []), st)
+    | TopExp (pos, e) => dec ((env, 0, []), DVal (pos, [], [(PId (pos, ([], "it")), e)], []), st)
 
   (* Return only declarations owned by this file, without its incoming environment. *)
   val programExports = fn (env, phrases, st) =>

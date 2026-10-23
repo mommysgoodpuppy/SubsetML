@@ -3,7 +3,10 @@
 Status: entry-file checking is implemented in both the native and generated Workman compiler.
 `check ENTRY.sml` loads explicit comment imports, resolves canonical file identities, and checks
 modules in private dependency environments. The compiler and source Basis have these directives.
-Graph-driven Workman translation and generated MLton build artifacts remain planned. Other
+WM-to-SML source-list translation now reuses this resolver, preserves namespace aliases and
+canonical module identity, checks private import environments, and emits SML metadata. Entry-driven
+translation discovery and private MLton build artifacts are now implemented for the initial
+header namespace WM profile, including explicit canonical native adapter selection. Other
 commands, and `check` with multiple files, still use the supplied source list. This work does not
 change the SubsetML expression/declaration grammar or imply SML Basis Library support.
 
@@ -169,7 +172,7 @@ There is no assumption that one build-file syntax is portable between implementa
 
 The Workman backend emits real import declarations and an output-path mapping from the same
 graph. Ordinary directives must not survive as duplicate comments as well as emitted imports.
-Reverse translation must reconstruct metadata so dependency information is not lost. Extending
+Reverse source-list translation now reconstructs metadata so dependency information is not lost. Extending
 the current syntax round-trip checks to cover import metadata is part of this work.
 
 ## Implementation sequence and validation
