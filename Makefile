@@ -43,6 +43,7 @@ test: bin/subsetml selfcheck
 	sh tests/char-basis.sh
 	sh tests/custom-basis.sh
 	sh tests/text-basis.sh
+	sh tests/won-basis.sh
 	sh tests/utf16-source.sh
 	sh tests/lexer-bytes.sh
 	sh tests/doc-portable.sh

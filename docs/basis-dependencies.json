@@ -162,6 +162,47 @@
         "SubsetHost.arguments",
         "SubsetHost.exit"
       ]
+    },
+    "SubsetWonValue": {
+      "source": "src/subset_won_value.sml",
+      "sourceDependencies": [],
+      "primitives": []
+    },
+    "SubsetWonSyntax": {
+      "source": "src/subset_won_syntax.sml",
+      "sourceDependencies": [
+        "SubsetChar",
+        "SubsetList",
+        "SubsetResult",
+        "SubsetString",
+        "SubsetUtf8"
+      ],
+      "primitives": []
+    },
+    "SubsetWonParser": {
+      "source": "src/subset_won_parser.sml",
+      "sourceDependencies": [
+        "SubsetChar",
+        "SubsetList",
+        "SubsetResult",
+        "SubsetString",
+        "SubsetWonSyntax",
+        "SubsetWonValue"
+      ],
+      "primitives": []
+    },
+    "SubsetWon": {
+      "source": "src/subset_won.sml",
+      "sourceDependencies": [
+        "SubsetList",
+        "SubsetNatural",
+        "SubsetResult",
+        "SubsetString",
+        "SubsetWonParser",
+        "SubsetWonSyntax",
+        "SubsetWonValue"
+      ],
+      "primitives": []
     }
   },
   "languageRequirements": [
