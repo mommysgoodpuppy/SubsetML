@@ -17,6 +17,7 @@ output = args.output.resolve()
 output.mkdir(parents=True, exist_ok=True)
 subprocess.run([
     repo / 'bin/subsetml', 'sml-entry', output,
+    '--basis', repo / 'src',
     '--native-adapter', repo / 'lib/mlworks/checker/subset_host.wm',
     repo / 'lib/mlworks/subset_host.sml', 'SubsetHost',
     repo / 'examples/mlworks-host/probe.wm',

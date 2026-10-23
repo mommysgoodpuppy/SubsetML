@@ -1,4 +1,4 @@
-from "../../../src/subset_result.wm" import * as SubsetResult;
+from "basis/result.wm" import * as SubsetResult;
 
 /* Type declarations expressed as checked stubs. Select the native adapter;
    these bodies deliberately cannot perform host operations. */

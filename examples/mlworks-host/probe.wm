@@ -1,6 +1,6 @@
 // This application remains WM source. No JS imports or embedded SML.
 from "../../lib/mlworks/checker/subset_host.wm" import * as Host;
-from "../../src/subset_result.wm" import * as R;
+from "basis/result.wm" import * as R;
 
 let ensure = (condition, message) => {
   if (condition) { R.Ok(void) } else { R.Err(message) }

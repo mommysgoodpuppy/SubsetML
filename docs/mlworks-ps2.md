@@ -56,7 +56,8 @@ host permissions retain normal OS behavior.
 `lib/mlworks/checker/subset_host.wm` supplies typed stubs for the translator.
 Select the native implementation with `--native-adapter`; those stub bodies
 are not an executable filesystem implementation. Their Result type is the
-same imported module used by the application. The unrelated JS adapter is
+Basis's `"basis/result.wm"`, the same module the application imports, so
+`sml-entry` needs `--basis DIR` (`src/` here). The unrelated JS adapter is
 unchanged.
 
 ## Stage and check on the desktop
