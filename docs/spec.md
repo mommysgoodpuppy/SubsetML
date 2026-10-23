@@ -335,8 +335,8 @@ examples, backend requirements and current scope.
 * The `native` command explicitly targets `Int32.int` and resolved Int32
   operations; relying on a host's default `int` is insufficient (MLWorks uses
   30 bits). The checker alone does not change a host compiler's representation.
-* WM/JS integer support is deferred. Existing WM numbers still translate to
-  `real`; the native SML path does not depend on the WM compiler.
+* `int` translates to Workman's `I32` (`docs/translation.md`); a bare WM number
+  still translates to `real`. The native SML path does not depend on the WM compiler.
 
 ## 10. Implementation-defined choices
 

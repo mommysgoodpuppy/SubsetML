@@ -26,9 +26,10 @@ end
         scanned = run(command, ['parse', long_source])
         assert scanned.returncode == 0, scanned.stderr.decode(errors='replace')
     # An invalid phrase still scans every token before reporting its parse error.
-    # This isolates the Workman lexer from deeply nested AST elaboration.
+    # This isolates the Workman lexer from deeply nested AST elaboration. Juxtaposed names parse,
+    # so the stray `)` is what fails.
     long_wm = root / 'long.wm'
-    long_wm.write_text('let value = ' + 'token ' * 6000 + ';\n')
+    long_wm.write_text('let value = ' + 'token ' * 6000 + ')\n')
     for command in [native] + ([workman] if workman else []):
         sml_dir = root / ('long-sml-' + ('native' if command == native else 'workman'))
         sml_dir.mkdir()

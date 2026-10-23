@@ -215,7 +215,7 @@ so nullary constructor patterns keep their identity without becoming comparisons
 | SubsetML | Workman |
 |---|---|
 | type constructors `token`, `Syntax.pos` | `Token`, `Syntax.Pos` |
-| `unit`, `real` | `Void`, `Number` |
+| `unit`, `real`, `int` | `Void`, `Number`, `I32` |
 | `string`, `char`, `bool`, `'a list`, `'a option` | `String`, `Char`, `Bool`, `List<a>`, `Option<a>` |
 | type variable `'a` | `a` (Workman type variables are lowercase names) |
 | `t1 * t2`, `t1 -> t2` | `(T1, T2)`, `T1 -> T2` |
@@ -394,7 +394,25 @@ are rejected. All files are validated before any output is written. See
 
 This is distinct from `fmt`, which preserves source spelling, and from
 `sml`/`sml-entry`, which translate WM syntax to checked SubsetML source. The
-native pass does not require the WM compiler, Deno or JavaScript. The existing
-WM execution profile has no integer type: explicit integer syntax is rejected
-by SML-to-WM translation rather than changing it into a Number. Existing
-WM numeric syntax continues to mean real-valued Number.
+native pass does not require the WM compiler, Deno or JavaScript. WM integer
+code translates as described in [Integers](#integers).
+
+## Integers
+
+SML `int` and Workman `I32` have the same range, checked arithmetic and `div`/`mod`
+rounding. Workman integer literals are overloaded and default to `Number`, while SML
+defaults unresolved numeric operations to `int`, so the translation never relies on
+either default:
+
+| SML | Workman |
+|---|---|
+| `int` | `I32` |
+| `42`, `~5`, `0x7f` (expression or pattern) | `(42: I32)`, `(-5: I32)`, `(0x7f: I32)` |
+| `a div b`, `a mod b`, `div` | `I32.div(a, b)`, `I32.mod(a, b)`, `I32.div` |
+| `42.0` | `42` |
+
+Every int constant is ascribed; the reader turns `(n: I32)` back into the constant, so
+`SML → Workman → SML` is unchanged. A bare Workman number is always `real`. A numeric
+operation whose type only the default decides, such as `fn (a, b) => a + b`, is
+rejected in both directions; annotate an operand as `int` or `real`. `Int.*` and
+`abs` have no Workman mapping yet.

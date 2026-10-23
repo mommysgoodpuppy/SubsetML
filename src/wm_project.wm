@@ -36,9 +36,9 @@ from "./subset_string.wm" import * as SubsetString;
 from "./lexer.wm" import * as Lexer;
 
 type Input = | Input<ModuleProject.Resolved, String, String>;
-type Unit = | Unit<Input, String, String>;
+type ProjectUnit = | Unit<Input, String, String>;
 type Edge = | Edge<String, Syntax.Pos, String, ModuleProject.ModuleId>;
-type Source = | Source<Void, List<Edge>, WmLexer.Result>;
+type Source = | Source<ProjectUnit, List<Edge>, WmLexer.Result>;
 type Error = | Error<String, String, String, Syntax.Pos>;
 
 let failure = (path, src, message, pos) => { SubsetResult.Err(Error(path, src, message, pos)) };
@@ -66,7 +66,7 @@ let edgesOf = match {
 
 let validSpecifier = (specifier) => {
   if (CompilerText.isSuffix(specifier, ".wm")) {
-    ModuleImports.validPath(CompilerText.slice(specifier, 0, CompilerText.size(specifier) - 3) ++ ".sml")
+    ModuleImports.validPath(CompilerText.slice(specifier, (0: I32), CompilerText.size(specifier) - (3: I32)) ++ ".sml")
   } else { false }
 };
 
@@ -126,7 +126,7 @@ let discover = (roots) => {
       SubsetResult.andThen(
         SubsetResult.mapError(
           SubsetIo.readFile(path),
-          (error) => { Error(path, "", SubsetIo.errorText(error), 0) }
+          (error) => { Error(path, "", SubsetIo.errorText(error), (0: I32)) }
         ),
         (bytes) => {
           let src = CompilerText.stringOf(bytes);
@@ -182,7 +182,7 @@ let discover = (roots) => {
       },
       [path, ..rest] => {
         match(ModuleProject.identify(path)) {
-          SubsetResult.Err(error) => { failure(path, "", SubsetIo.errorText(error), 0) },
+          SubsetResult.Err(error) => { failure(path, "", SubsetIo.errorText(error), (0: I32)) },
           SubsetResult.Ok(resolved) => {
             SubsetResult.andThen(visit(resolved, [], seen), (seen) => { loadRoots(rest, seen) })
           }
@@ -199,7 +199,7 @@ let plan = (sources) => {
       [] => { SubsetResult.Ok(SubsetList.reverse(inputs)) },
       [(Var(path), Var(src)), ..rest] => {
         match(ModuleProject.identify(path)) {
-          SubsetResult.Err(error) => { failure(path, src, SubsetIo.errorText(error), 0) },
+          SubsetResult.Err(error) => { failure(path, src, SubsetIo.errorText(error), (0: I32)) },
           SubsetResult.Ok(resolved) => {
             let ModuleProject.Resolved(id, _) = resolved;
             if (SubsetList.exists(
@@ -219,7 +219,11 @@ let plan = (sources) => {
       [input, ..rest] => {
         let Input(_, path, _) = input;
         let stem = if (CompilerText.isSuffix(path, ".wm")) {
-          CompilerText.slice(translateBase(path), 0, CompilerText.size(translateBase(path)) - 3)
+          CompilerText.slice(
+            translateBase(path),
+            (0: I32),
+            CompilerText.size(translateBase(path)) - (3: I32)
+          )
         } else { translateBase(path) };
         let rec choose = (suffix) => {
           let candidate = stem ++ suffix;
@@ -513,7 +517,7 @@ let structureIdentifier = (value) => {
   match(Lexer.lex(value)) {
     Lexer.Tokens([(Lexer.TId(identifier), _), (Lexer.TEOF, _)], _) => {
       if (identifier == value) {
-        SubsetChar.isAlpha(CompilerText.sub(CompilerText.source(identifier), 0))
+        SubsetChar.isAlpha(CompilerText.sub(CompilerText.source(identifier), (0: I32)))
       } else { false }
     },
     _ => { false }
@@ -526,14 +530,19 @@ let adapters = (units, specifications) => {
       [] => { SubsetResult.Ok(SubsetList.reverse(seen)) },
       [(Var(checker), Var(native), Var(exported)), ..rest] => {
         if (!structureIdentifier(exported)) {
-          failure(checker, "", "native adapter export must be an SML structure identifier", 0)
+          failure(
+            checker,
+            "",
+            "native adapter export must be an SML structure identifier",
+            (0: I32)
+          )
         } else {
           SubsetResult.andThen(
             match(ModuleProject.identify(checker)) {
-              SubsetResult.Err(error) => { failure(checker, "", SubsetIo.errorText(error), 0) },
+              SubsetResult.Err(error) => { failure(checker, "", SubsetIo.errorText(error), (0: I32)) },
               SubsetResult.Ok(ModuleProject.Resolved(id, _)) => {
                 if (!SubsetList.exists(units, (unit) => { ModuleProject.same(identity(unit), id) })) {
-                  failure(checker, "", "native adapter checker is not in the entry graph", 0)
+                  failure(checker, "", "native adapter checker is not in the entry graph", (0: I32))
                 } else {
                   if (SubsetList.exists(
                     seen,
@@ -541,13 +550,13 @@ let adapters = (units, specifications) => {
                       Adapter(key, _, _) => { ModuleProject.same(id, key) }
                     }
                   )) {
-                    failure(checker, "", "duplicate native adapter selection", 0)
+                    failure(checker, "", "duplicate native adapter selection", (0: I32))
                   } else {
                     match(ModuleProject.identify(native)) {
-                      SubsetResult.Err(error) => { failure(native, "", SubsetIo.errorText(error), 0) },
+                      SubsetResult.Err(error) => { failure(native, "", SubsetIo.errorText(error), (0: I32)) },
                       SubsetResult.Ok(ModuleProject.Resolved(_, path)) => {
                         match(SubsetIo.readFile(path)) {
-                          SubsetResult.Err(error) => { failure(native, "", SubsetIo.errorText(error), 0) },
+                          SubsetResult.Err(error) => { failure(native, "", SubsetIo.errorText(error), (0: I32)) },
                           SubsetResult.Ok(_) => { SubsetResult.Ok(Adapter(id, path, exported)) }
                         }
                       }
@@ -576,7 +585,7 @@ let mlb = (units, sources, modules, entry, adapters) => {
       [(Var(name), Var(dependencies), _), ..rest] => {
         match(SubsetList.find(units, (unit) => { nameOf(unit) == name })) {
           None => {
-            failure("translation", "", "missing build module " ++ name, 0)
+            failure("translation", "", "missing build module " ++ name, (0: I32))
           },
           Some(unit) => {
             let selected = SubsetList.find(
@@ -597,7 +606,7 @@ let mlb = (units, sources, modules, entry, adapters) => {
                   }
                 )) {
                   None => {
-                    failure(pathOf(unit), "", "missing native adapter imports", 0)
+                    failure(pathOf(unit), "", "missing native adapter imports", (0: I32))
                   },
                   Some(source) => {
                     let rec aliases = (edges) => {
@@ -614,7 +623,7 @@ let mlb = (units, sources, modules, entry, adapters) => {
                           } else {
                             match(SubsetList.find(units, (child) => { ModuleProject.same(identity(child), target) })) {
                               None => {
-                                failure(pathOf(unit), "", "missing native adapter dependency", 0)
+                                failure(pathOf(unit), "", "missing native adapter dependency", (0: I32))
                               },
                               Some(child) => {
                                 SubsetResult.map(

@@ -34,36 +34,39 @@ let scon = match {
 // ---------------------------------------------------------------------------------------
 // Types: arrow 0, tuple 1, application 2, atom 3
 
-let parenAt = (need: Number, (level, d)) => {
+let parenAt = (need: I32, (level, d)) => {
   if (level >= need) { d } else { cats([text("("), d, text(")")]) }
 };
 
 let rec tyL = match {
-  TyVar(v) => { (3, text(v)) },
-  TyCon([], id) => { (3, text(longid(id))) },
+  TyVar(v) => { ((3: I32), text(v)) },
+  TyCon([], id) => { ((3: I32), text(longid(id))) },
   TyCon([arg], id) => {
-    (2, cats([parenAt(2, tyL(arg)), text(" "), text(longid(id))]))
+    ((2: I32), cats([parenAt((2: I32), tyL(arg)), text(" "), text(longid(id))]))
   },
   TyCon(args, id) => {
     (
-      2,
+      (2: I32),
       cats([
         text("("),
-        join(", ", SmlList.map((t) => { parenAt(0, tyL(t)) })(args)),
+        join(", ", SmlList.map((t) => { parenAt((0: I32), tyL(t)) })(args)),
         text(") "),
         text(longid(id))
       ])
     )
   },
   TyTuple(ts) => {
-    (1, join(" * ", SmlList.map((t) => { parenAt(2, tyL(t)) })(ts)))
+    ((1: I32), join(" * ", SmlList.map((t) => { parenAt((2: I32), tyL(t)) })(ts)))
   },
   TyArrow(a, b) => {
-    (0, cats([parenAt(1, tyL(a)), text(" -> "), parenAt(0, tyL(b))]))
+    (
+      (0: I32),
+      cats([parenAt((1: I32), tyL(a)), text(" -> "), parenAt((0: I32), tyL(b))])
+    )
   },
   TyRecord(fields) => {
     (
-      3,
+      (3: I32),
       group(
         "{",
         ",",
@@ -83,13 +86,13 @@ and ty = (t) => {
 // Patterns: typed 0, infix 1, constructor application 2, atom 3
 
 let rec patL = match {
-  PWild => { (3, text("_")) },
-  PScon(p, c) => { (3, atom(p, scon(c))) },
-  PId(p, id) => { (3, atom(p, longid(id))) },
-  PPinned(p, id) => { (3, atom(p, "UNLOWERED_PIN_" ++ longid(id))) },
+  PWild => { ((3: I32), text("_")) },
+  PScon(p, c) => { ((3: I32), atom(p, scon(c))) },
+  PId(p, id) => { ((3: I32), atom(p, longid(id))) },
+  PPinned(p, id) => { ((3: I32), atom(p, "UNLOWERED_PIN_" ++ longid(id))) },
   PRecord(p, fields) => {
     (
-      3,
+      (3: I32),
       cats([
         atom(p, ""),
         group(
@@ -101,15 +104,20 @@ let rec patL = match {
       ])
     )
   },
-  PTuple(ps) => { (3, group("(", ",", ")", SmlList.map(pat)(ps))) },
-  PList(ps) => { (3, group("[", ",", "]", SmlList.map(pat)(ps))) },
+  PTuple(ps) => { ((3: I32), group("(", ",", ")", SmlList.map(pat)(ps))) },
+  PList(ps) => { ((3: I32), group("[", ",", "]", SmlList.map(pat)(ps))) },
   PApp(p, ([], "::"), PTuple([h, t])) => {
-    (1, cats([parenAt(2, patL(h)), atom(p, " :: "), parenAt(1, patL(t))]))
+    (
+      (1: I32),
+      cats([parenAt((2: I32), patL(h)), atom(p, " :: "), parenAt((1: I32), patL(t))])
+    )
   },
   PApp(p, id, arg) => {
-    (2, cats([atom(p, longid(id)), text(" "), parenAt(3, patL(arg))]))
+    ((2: I32), cats([atom(p, longid(id)), text(" "), parenAt((3: I32), patL(arg))]))
   },
-  PTyped(q, t) => { (0, cats([parenAt(1, patL(q)), text(" : "), ty(t)])) }
+  PTyped(q, t) => {
+    ((0: I32), cats([parenAt((1: I32), patL(q)), text(" : "), ty(t)]))
+  }
 }
 
 and pat = (p) => {
@@ -122,7 +130,7 @@ and pat = (p) => {
 
 /* Levels: fn/case/if 0, orelse 1, andalso 2, typed 3, infix 10 + precedence, application 20,
    atom 30. */
-let infixLevel = (s) => { 10 + Parser.precedence(s) };
+let infixLevel = (s) => { (10: I32) + Parser.precedence(s) };
 
 // An expression whose last part is a match, which would capture a following `|`.
 let rec endsInMatch = match {
@@ -139,11 +147,11 @@ let tyvarseq = match {
 };
 
 let rec expL = match {
-  EScon(p, c) => { (30, atom(p, scon(c))) },
-  EId(p, id) => { (30, atom(p, longid(id))) },
+  EScon(p, c) => { ((30: I32), atom(p, scon(c))) },
+  EId(p, id) => { ((30: I32), atom(p, longid(id))) },
   ERecord(p, fields) => {
     (
-      30,
+      (30: I32),
       cats([
         atom(p, ""),
         group(
@@ -155,19 +163,19 @@ let rec expL = match {
       ])
     )
   },
-  ESelect(p, l) => { (30, atom(p, "#" ++ l)) },
+  ESelect(p, l) => { ((30: I32), atom(p, "#" ++ l)) },
   ECopy(_, source, _, _) => { expL(source) },
-  ETuple(es) => { (30, group("(", ",", ")", SmlList.map(exp)(es))) },
-  EList(es) => { (30, group("[", ",", "]", SmlList.map(exp)(es))) },
-  ESeq(es) => { (30, group("(", ";", ")", SmlList.map(exp)(es))) },
+  ETuple(es) => { ((30: I32), group("(", ",", ")", SmlList.map(exp)(es))) },
+  EList(es) => { ((30: I32), group("[", ",", "]", SmlList.map(exp)(es))) },
+  ESeq(es) => { ((30: I32), group("(", ";", ")", SmlList.map(exp)(es))) },
   ELet(ds, es) => {
     (
-      30,
+      (30: I32),
       stack([
         text("let"),
-        indent(2, stack(SmlList.map(dec)(ds))),
+        indent((2: I32), stack(SmlList.map(dec)(ds))),
         text("in"),
-        indent(2, join("; ", SmlList.map(exp)(es))),
+        indent((2: I32), join("; ", SmlList.map(exp)(es))),
         text("end")
       ])
     )
@@ -175,7 +183,7 @@ let rec expL = match {
   EApp(EId(p, ([], Var(opr))), ETuple([l, r])) => {
     if (Parser.isInfix(opr)) {
       let level = infixLevel(opr);
-      let (leftNeed, rightNeed) = if (Parser.rightAssoc(opr)) { (level + 1, level) } else { (level, level + 1) };
+      let (leftNeed, rightNeed) = if (Parser.rightAssoc(opr)) { (level + (1: I32), level) } else { (level, level + (1: I32)) };
       (
         level,
         cats([
@@ -187,36 +195,47 @@ let rec expL = match {
     } else { application(EId(p, ([], opr)), ETuple([l, r])) }
   },
   EApp(f, a) => { application(f, a) },
-  ETyped(e, t) => { (3, cats([parenAt(3, expL(e)), text(" : "), ty(t)])) },
+  ETyped(e, t) => {
+    ((3: I32), cats([parenAt((3: I32), expL(e)), text(" : "), ty(t)]))
+  },
   EAndalso(a, b) => {
-    (2, cats([parenAt(2, expL(a)), text(" andalso "), parenAt(3, expL(b))]))
+    (
+      (2: I32),
+      cats([parenAt((2: I32), expL(a)), text(" andalso "), parenAt((3: I32), expL(b))])
+    )
   },
   EOrelse(a, b) => {
-    (1, cats([parenAt(1, expL(a)), text(" orelse "), parenAt(2, expL(b))]))
+    (
+      (1: I32),
+      cats([parenAt((1: I32), expL(a)), text(" orelse "), parenAt((2: I32), expL(b))])
+    )
   },
   EIf(c, a, b) => {
     // A nested `if` in the else branch keeps its parentheses (spec C1).
     let elseDoc = match(b) {
-      EIf(_, _, _) => { parenAt(1, expL(b)) },
+      EIf(_, _, _) => { parenAt((1: I32), expL(b)) },
       _ => { exp(b) }
     };
     let oneLine = cats([text("if "), exp(c), text(" then "), exp(a), text(" else "), elseDoc]);
-    if (fits(oneLine)) { (0, oneLine) } else {
+    if (fits(oneLine)) { ((0: I32), oneLine) } else {
       (
-        0,
+        (0: I32),
         stack([
           cats([text("if "), exp(c), text(" then")]),
-          indent(2, exp(a)),
+          indent((2: I32), exp(a)),
           text("else"),
-          indent(2, elseDoc)
+          indent((2: I32), elseDoc)
         ])
       )
     }
   },
   ECase(e, rules) => {
     (
-      0,
-      stack([cats([text("case "), exp(e), text(" of")]), indent(2, matchRules(true, rules))])
+      (0: I32),
+      stack([
+        cats([text("case "), exp(e), text(" of")]),
+        indent((2: I32), matchRules(true, rules))
+      ])
     )
   },
   EFn([(Var(p), Var(body))]) => {
@@ -225,21 +244,26 @@ let rec expL = match {
     let bodyDoc = match(body) {
       EFn([_]) => { exp(body) },
       _ => {
-        if (endsInMatch(body)) { parenAt(1, expL(body)) } else { exp(body) }
+        if (endsInMatch(body)) { parenAt((1: I32), expL(body)) } else { exp(body) }
       }
     };
     let oneLine = cats([head, text(" "), bodyDoc]);
     match(fits(oneLine), body) {
-      (true, _) => { (0, oneLine) },
-      (false, EFn([_])) => { (0, cats([head, text(" "), bodyDoc])) },
-      (false, _) => { (0, stack([head, indent(2, bodyDoc)])) }
+      (true, _) => { ((0: I32), oneLine) },
+      (false, EFn([_])) => { ((0: I32), cats([head, text(" "), bodyDoc])) },
+      (false, _) => { ((0: I32), stack([head, indent((2: I32), bodyDoc)])) }
     }
   },
-  EFn(rules) => { (0, stack([text("fn"), indent(2, matchRules(true, rules))])) }
+  EFn(rules) => {
+    ((0: I32), stack([text("fn"), indent((2: I32), matchRules(true, rules))]))
+  }
 }
 
 and application = (f, a) => {
-  (20, cats([parenAt(20, expL(f)), text(" "), parenAt(30, expL(a))]))
+  (
+    (20: I32),
+    cats([parenAt((20: I32), expL(f)), text(" "), parenAt((30: I32), expL(a))])
+  )
 }
 
 and exp = (e) => {
@@ -252,22 +276,22 @@ and exp = (e) => {
 and matchRules = (aligned, rules) => {
   let count = SubsetList.length(rules);
   let rule = (i, (p, e)) => {
-    let body = if (if (i < count - 1) { endsInMatch(e) } else { false }) { parenAt(1, expL(e)) } else { exp(e) };
+    let body = if (if (i < count - (1: I32)) { endsInMatch(e) } else { false }) { parenAt((1: I32), expL(e)) } else { exp(e) };
     let head = cats([
-      text(if (i > 0) { "| " } else { if (aligned) { "  " } else { "" } }),
+      text(if (i > (0: I32)) { "| " } else { if (aligned) { "  " } else { "" } }),
       pat(p),
       text(" =>")
     ]);
     let oneLine = cats([head, text(" "), body]);
-    if (fits(oneLine)) { oneLine } else { stack([head, indent(4, body)]) }
+    if (fits(oneLine)) { oneLine } else { stack([head, indent((4: I32), body)]) }
   };
   let rec number = (i, rs) => {
     match(rs) {
       [] => { [] },
-      [r, ..rest] => { [rule(i, r), ..number(i + 1, rest)] }
+      [r, ..rest] => { [rule(i, r), ..number(i + (1: I32), rest)] }
     }
   };
-  stack(number(0, rules))
+  stack(number((0: I32), rules))
 }
 
 and binding = (p, e) => { cats([pat(p), text(" = "), exp(e)]) }
@@ -302,7 +326,7 @@ and dec = match {
         stack([
           cats([tyvarseq(vs), text(tycon ++ " =")]),
           indent(
-            4,
+            (4: I32),
             stack(match(SmlList.map(con)(cons)) {
               [] => { [] },
               [first, ..rest] => { [first, ..SmlList.map((c) => { cat(text("| "), c) })(rest)] }
@@ -337,20 +361,20 @@ let strdec = match {
     let bind = (i, (name, ds)) => {
       stack([
         cats([
-          if ((i: Number) == 0) { atom(p, "structure ") } else { text("and ") },
+          if (i == (0: I32)) { atom(p, "structure ") } else { text("and ") },
           text(name ++ " = struct")
         ]),
-        indent(2, stack(SmlList.map(dec)(ds))),
+        indent((2: I32), stack(SmlList.map(dec)(ds))),
         text("end")
       ])
     };
     let rec number = (i, bs) => {
       match(bs) {
         [] => { [] },
-        [b, ..rest] => { [bind(i, b), ..number(i + 1, rest)] }
+        [b, ..rest] => { [bind(i, b), ..number(i + (1: I32), rest)] }
       }
     };
-    stack(number(0, binds))
+    stack(number((0: I32), binds))
   }
 };
 

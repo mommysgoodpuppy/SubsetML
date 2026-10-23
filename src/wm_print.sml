@@ -40,6 +40,7 @@ structure WmPrint = struct
   val tyConName = fn
       ([], "unit") => "Void"
     | ([], "real") => "Number"
+    | ([], "int") => "I32"
     | (qs, s) => dotted (qs, capitalize s)
 
   (* Numeric adapters retain SML argument order. Keep this table shared with the reader. *)
@@ -51,6 +52,7 @@ structure WmPrint = struct
        ("Char", ["ord", "chr"]), ("CharVector", ["tabulate"])])
     @ SmlList.map (fn x => ((["Num"], x), (["Number"], x)))
         ["div", "mod", "toString", "fromString"]
+    @ SmlList.map (fn x => (([], x), (["I32"], x))) ["div", "mod"]
 
   (* Basis constructors spelled differently in Workman. *)
   val valueName = fn
@@ -104,16 +106,17 @@ structure WmPrint = struct
       #"0" :: #"." :: rest => CompilerText.stringOf (SubsetList.reverse rest)
     | bytes => CompilerText.stringOf (SubsetList.reverse bytes)
 
+  (* Workman integer literals are overloaded and default to Number, so an SML int constant is
+     ascribed. The reader turns `(n: I32)` back into the constant. *)
   val scon = fn
-      SInt s => minus s
+      SInt s => "(" ^ minus s ^ ": I32)"
     | SReal s => minus (withoutRealSuffix s)
     | SString s => "\"" ^ SubsetString.concat (SubsetList.map (CompilerText.characters s,
         fn c => escapeChar (#"\"", c))) ^ "\""
     | SChar c => "'" ^ escapeChar (#"'", c) ^ "'"
 
   val isNegative = fn
-      SInt s => (case CompilerText.characters s of #"~" :: rest => true | bytes => false)
-    | SReal s => (case CompilerText.characters s of #"~" :: rest => true | bytes => false)
+      SReal s => (case CompilerText.characters s of #"~" :: rest => true | bytes => false)
     | _ => false
 
   (* --------------------------------------------------------------------------------------- *)
@@ -296,9 +299,10 @@ structure WmPrint = struct
     | EApp (EId (p, ([], opr)), ETuple [l, r]) =>
         (case (binop opr, Parser.isInfix opr) of
            (NONE, true) =>
-             if opr = "@" then call (EId (p, (["List"], "append")), ETuple [l, r])
+             if opr = "@" orelse opr = "div" orelse opr = "mod"
+             then call (EId (p, if opr = "@" then (["List"], "append") else ([], opr)), ETuple [l, r])
              else
-               (* div, mod, o and before: no Workman operator, so the SML operator stays. *)
+               (* o and before: no Workman operator, so the SML operator stays. *)
                (0, cats [parenAt (9, expL l), atom (p, " " ^ opr ^ " "), parenAt (9, expL r)])
          | (SOME entry, _) =>
              let val (spelling, level) = entry in (level, cats [parenAt (level, expL l), atom (p, " " ^ spelling ^ " "),
@@ -310,7 +314,8 @@ structure WmPrint = struct
           (* `-3` would read back as a negative literal, so a literal operand keeps parentheses. *)
           (7, cat (atom (p, "-"),
                    case (e, level >= 9) of
-                     (EScon (_, _), _) => cats [text "(", d, text ")"]
+                     (EScon (_, SInt _), _) => d
+                   | (EScon (_, _), _) => cats [text "(", d, text ")"]
                    | (_, true) => d
                    | (_, false) => cats [text "(", d, text ")"]))
         end

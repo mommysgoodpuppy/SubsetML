@@ -16,11 +16,11 @@ from "./subset_result.wm" import * as SubsetResult;
 
 /* A type name (Definition §4.1): its stamp, its printed name, its arity, and whether it
    admits equality, given type arguments that do. */
-type Tyname = (Number, String, Number, Bool);
+type Tyname = (I32, String, I32, Bool);
 
 type Ty =
-  | TVar<Number> // unification variable; see Unify
-  | TGen<Number> // the i-th bound variable of a type scheme
+  | TVar<I32> // unification variable; see Unify
+  | TGen<I32> // the i-th bound variable of a type scheme
   | TRigid<String> // an explicit type variable 'a in scope
   | TCon<Tyname, List<Ty>>
   | TArrow<Ty, Ty>
@@ -41,15 +41,15 @@ let arityOf = (_, _, a, _) => { a };
 // ---------------------------------------------------------------------------------------
 // The type names of the initial basis. Program type names get stamps from `firstStamp`.
 
-let boolName = (1, "bool", 0, true);
-let intName = (2, "int", 0, true);
-let realName = (3, "real", 0, false);
-let stringName = (4, "string", 0, true);
-let charName = (5, "char", 0, true);
-let listName = (6, "list", 1, true);
-let optionName = (7, "option", 1, true);
-let orderName = (8, "order", 0, true);
-let firstStamp = 100;
+let boolName = ((1: I32), "bool", (0: I32), true);
+let intName = ((2: I32), "int", (0: I32), true);
+let realName = ((3: I32), "real", (0: I32), false);
+let stringName = ((4: I32), "string", (0: I32), true);
+let charName = ((5: I32), "char", (0: I32), true);
+let listName = ((6: I32), "list", (1: I32), true);
+let optionName = ((7: I32), "option", (1: I32), true);
+let orderName = ((8: I32), "order", (0: I32), true);
+let firstStamp = (100: I32);
 
 let boolTy = TCon(boolName, []);
 let intTy = TCon(intName, []);
@@ -70,7 +70,7 @@ let labelLess = (a, b) => {
   match(isNumeric(a), isNumeric(b)) {
     (true, true) => {
       if (CompilerText.size(a) < CompilerText.size(b)) { true } else {
-        if ((CompilerText.size(a): Number) == CompilerText.size(b)) { CompilerText.less(a, b) } else { false }
+        if (CompilerText.size(a) == CompilerText.size(b)) { CompilerText.less(a, b) } else { false }
       }
     },
     (true, false) => { true },
@@ -126,7 +126,7 @@ let tupleComponents = (fields) => {
       if (l == tupleLabel(digits)) { check(nextTupleLabel(digits), rest) } else { false }
     }
   };
-  if (if (SubsetList.length(fields) >= 2) { check(['1'], fields) } else { false }) { Some(SmlList.map((_, t) => { t })(fields)) } else { None }
+  if (if (SubsetList.length(fields) >= (2: I32)) { check(['1'], fields) } else { false }) { Some(SmlList.map((_, t) => { t })(fields)) } else { None }
 };
 
 // Replaces TGen i by the i-th argument.

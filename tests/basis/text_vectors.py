@@ -5,7 +5,7 @@ import sys
 rng = random.Random(82516)
 
 def number(value):
-    return str(value) + '.0'
+    return str(value)
 
 def bytes_literal(data):
     return '[' + ', '.join('#"\\%03d"' % b for b in data) + ']'
@@ -56,7 +56,7 @@ print('''  val sameOrder = fn
 print('  val same = fn (actual, expected) =>')
 print('    case SubsetListPair.zip (actual, expected) of')
 print('      SubsetResult.Err error => false')
-print('    | SubsetResult.Ok pairs => SubsetList.all (pairs, fn (a, b) => Real.== (a, b))')
+print('    | SubsetResult.Ok pairs => SubsetList.all (pairs, fn (a, b) => a = b)')
 print('  val cases = [')
 rows = []
 for values in cases:
@@ -100,11 +100,11 @@ print('''  val bridge = fn bytes =>
         andalso (case SubsetSource.fromNative value of
           SubsetResult.Err error => false
         | SubsetResult.Ok source =>
-            Real.== (SubsetSource.length source, SubsetBytes.length bytes)
-            andalso (case SubsetSource.slice (source, 0.0, SubsetBytes.length bytes) of
+            SubsetSource.length source = SubsetBytes.length bytes
+            andalso (case SubsetSource.slice (source, 0, SubsetBytes.length bytes) of
               SubsetResult.Ok actual => actual = bytes | SubsetResult.Err error => false)
-            andalso (let val (checked, count) = SubsetList.foldLeft (bytes, (true, 0.0), fn (c, (checked, index)) =>
-              (checked andalso (case SubsetSource.at (source, index) of SubsetResult.Ok actual => actual = c | SubsetResult.Err error => false), index + 1.0))
+            andalso (let val (checked, count) = SubsetList.foldLeft (bytes, (true, 0), fn (c, (checked, index)) =>
+              (checked andalso (case SubsetSource.at (source, index) of SubsetResult.Ok actual => actual = c | SubsetResult.Err error => false), index + 1))
             in checked end))
   val matches = fn (result, expected) => case (result, expected) of
       (SubsetResult.Ok values, SOME scalars) => same (values, scalars)

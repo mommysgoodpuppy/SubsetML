@@ -10,7 +10,7 @@ from "./subset_list.wm" import * as SubsetList;
 from "./subset_result.wm" import * as SubsetResult;
 from "./subset_string.wm" import * as SubsetString;
 
-type Error = | NonByte<Number>;
+type Error = | NonByte<I32>;
 let spellings = [
   ('\u0000', "\\^@"),
   ('\u0001', "\\^A"),
@@ -272,7 +272,7 @@ let spellings = [
 
 let escapeByte = (c) => {
   match(SubsetList.find(spellings, (byte, spelling) => { byte == c })) {
-    None => { SubsetResult.Err(NonByte(0)) },
+    None => { SubsetResult.Err(NonByte((0: I32))) },
     Some(entry) => {
       let (byte, spelling) = entry;
       SubsetResult.Ok(spelling)
@@ -288,11 +288,11 @@ let escapeBytes = (bytes) => {
     ([c, ..rest], Var(offset), Var(parts)) => {
       match(escapeByte(c)) {
         SubsetResult.Err(error) => { SubsetResult.Err(NonByte(offset)) },
-        SubsetResult.Ok(spelling) => { go(rest, offset + 1, [spelling, ..parts]) }
+        SubsetResult.Ok(spelling) => { go(rest, offset + (1: I32), [spelling, ..parts]) }
       }
     }
   };
-  go(bytes, 0, [])
+  go(bytes, (0: I32), [])
 };
 
 let escapeString = (value) => {

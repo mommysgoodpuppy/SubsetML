@@ -15,7 +15,7 @@ from "./sml_option.sml" import * as SmlOption;
 
    It accepts the Workman fragment that corresponds to SubsetML, plus the expression compatibility forms that
    WmPrint emits (`div`, `mod`, `@`, `o`, `before`, `#lab`, `~`). Workman features outside
-   the reverse profile (`%`, pipes, JSON, FFI imports, ...) are reported as errors.
+   the reverse profile (`%`, receiver pipes, JSON, FFI imports, ...) are reported as errors.
    Numeric and pinned match patterns survive internally until binding resolution lowers them. */
 
 from "./syntax.wm" import * as Syntax;
@@ -45,7 +45,7 @@ let bind = (r) => (k) => {
 
 let peek = match {
   [t, .._] => { t },
-  [] => { (WEOF, 0) }
+  [] => { (WEOF, (0: I32)) }
 };
 
 let advance = match {
@@ -134,6 +134,7 @@ let valueName = match {
 let tyConName = match {
   ([], "Void") => { ([], "unit") },
   ([], "Number") => { ([], "real") },
+  ([], "I32") => { ([], "int") },
   (Var(qs), Var(s)) => { (qs, decapitalize(s)) }
 };
 
@@ -160,7 +161,9 @@ let structureName = (file) => {
     [last, .._] => { last },
     [] => { file }
   };
-  let stem = if (CompilerText.isSuffix(base, ".wm")) { CompilerText.slice(base, 0, CompilerText.size(base) - 3) } else { base };
+  let stem = if (CompilerText.isSuffix(base, ".wm")) {
+    CompilerText.slice(base, (0: I32), CompilerText.size(base) - (3: I32))
+  } else { base };
   BackendNames.moduleHint(stem)
 };
 
@@ -219,12 +222,34 @@ let number = (c) => {
 let negativeLiteral = (minusPos, ts) => {
   match(peek(ts)) {
     (WScon(SInt(s)), Var(p)) => {
-      if ((p: Number) == minusPos + 1) { Some(SReal("~" ++ s ++ ".0")) } else { None }
+      if (p == minusPos + (1: I32)) { Some(SReal("~" ++ s ++ ".0")) } else { None }
     },
     (WScon(SReal(s)), Var(p)) => {
-      if ((p: Number) == minusPos + 1) { Some(SReal("~" ++ s)) } else { None }
+      if (p == minusPos + (1: I32)) { Some(SReal("~" ++ s)) } else { None }
     },
     _ => { None }
+  }
+};
+
+/* The text of an integer literal at the start of `ts`, `-` included: `(n: I32)` is an SML int
+   constant, while every other Workman number is real. */
+let integerText = (ts) => {
+  match(peek(ts)) {
+    (WScon(SInt(s)), _) => { Some(s) },
+    (WKey("-"), Var(p)) => {
+      match(peek(advance(ts))) {
+        (WScon(SInt(s)), Var(q)) => { if (q == p + (1: I32)) { Some("~" ++ s) } else { None } },
+        _ => { None }
+      }
+    },
+    _ => { None }
+  }
+};
+
+let isIntType = (t) => {
+  match(t) {
+    TyCon([], ([], "int")) => { true },
+    _ => { false }
   }
 };
 
@@ -344,10 +369,18 @@ let rec parsePat = (inMatch, binds, ts) => {
 
 // A pattern that may carry a type annotation, as inside parentheses.
 and parseAnnotated = (inMatch, binds, ts) => {
-  bind(parsePat(inMatch, binds, ts))((p) => (ts) => {
-    if (isKey(":", ts)) {
-      bind(parseType(advance(ts)))((t) => (ts) => { Done(PTyped(p, t), ts) })
-    } else { Done(p, ts) }
+  bind(parsePat(inMatch, binds, ts))((p) => (rest) => {
+    if (isKey(":", rest)) {
+      bind(parseType(advance(rest)))((t) => (after) => {
+        Done(
+          match(p, isIntType(t), integerText(ts)) {
+            (PScon(q, _), true, Some(s)) => { PScon(q, SInt(s)) },
+            _ => { PTyped(p, t) }
+          },
+          after
+        )
+      })
+    } else { Done(p, rest) }
   })
 };
 
@@ -360,33 +393,33 @@ let lambdaAhead = (ts) => {
     match(peek(ts)) {
       (WEOF, _) => { false },
       (WKey(k), _) => {
-        if (if (if (if (k == "(") { true } else { k == "[" }) { true } else { k == "{" }) { true } else { k == ".{" }) { scan(depth + 1, advance(ts)) } else {
+        if (if (if (if (k == "(") { true } else { k == "[" }) { true } else { k == "{" }) { true } else { k == ".{" }) { scan(depth + (1: I32), advance(ts)) } else {
           if (if (if (k == ")") { true } else { k == "]" }) { true } else { k == "}" }) {
-            if ((depth: Number) == 1) { isKey("=>", advance(ts)) } else { scan(depth - 1, advance(ts)) }
+            if (depth == (1: I32)) { isKey("=>", advance(ts)) } else { scan(depth - (1: I32), advance(ts)) }
           } else { scan(depth, advance(ts)) }
         }
       },
       _ => { scan(depth, advance(ts)) }
     }
   };
-  if (isKey("(", ts)) { scan(0, ts) } else { false }
+  if (isKey("(", ts)) { scan((0: I32), ts) } else { false }
 };
 
 let binLevel = match {
-  "||" => { Some(1) },
-  "&&" => { Some(2) },
-  "==" => { Some(3) },
-  "!=" => { Some(3) },
-  "<" => { Some(4) },
-  ">" => { Some(4) },
-  "<=" => { Some(4) },
-  ">=" => { Some(4) },
-  "++" => { Some(5) },
-  "+" => { Some(5) },
-  "-" => { Some(5) },
-  "*" => { Some(6) },
-  "/" => { Some(6) },
-  "%" => { Some(6) },
+  "||" => { Some((1: I32)) },
+  "&&" => { Some((2: I32)) },
+  "==" => { Some((3: I32)) },
+  "!=" => { Some((3: I32)) },
+  "<" => { Some((4: I32)) },
+  ">" => { Some((4: I32)) },
+  "<=" => { Some((4: I32)) },
+  ">=" => { Some((4: I32)) },
+  "++" => { Some((5: I32)) },
+  "+" => { Some((5: I32)) },
+  "-" => { Some((5: I32)) },
+  "*" => { Some((6: I32)) },
+  "/" => { Some((6: I32)) },
+  "%" => { Some((6: I32)) },
   _ => { None }
 };
 
@@ -409,6 +442,15 @@ let fallbackOperator = (ts) => {
 };
 
 let infixApp = (opr, p, l, r) => { EApp(EId(p, ([], opr)), ETuple([l, r])) };
+
+// Calls and syntax-only pipe insertion share the same argument convention.
+let apply = (callee, args) => {
+  match(callee, args) {
+    (EId(p, (["List"], "append")), [left, right]) => { infixApp("@", p, left, right) },
+    (_, [single]) => { EApp(callee, single) },
+    _ => { EApp(callee, ETuple(args)) }
+  }
+};
 
 let consExp = (p, items, tail) => {
   SmlList.foldr((h, t) => { infixApp("::", p, h, t) })(tail)(items)
@@ -457,7 +499,7 @@ type RecordPart = Spread<Exp> | Field<String, Exp>;
 let rec parameterType = (variables, t) => {
   match(t) {
     TyCon([], ([], Var(name))) => {
-      match(SmlList.find((v) => { decapitalize(CompilerText.drop(v, 1)) == name })(variables)) {
+      match(SmlList.find((v) => { decapitalize(CompilerText.drop(v, (1: I32))) == name })(variables)) {
         Some(v) => { TyVar(v) },
         None => { t }
       }
@@ -500,6 +542,30 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
     LexError(_, _) => { [] }
   };
   let fresh = (name) => { BackendNames.avoid(names, name) };
+  let source = CompilerText.source(src);
+  let spaceBefore = (ts) => {
+    let p = posOf(ts);
+    if (p > (0: I32)) {
+      if (WmLexer.isSpace(CompilerText.sub(source, p - (1: I32)))) { true } else { CompilerText.sub(source, p - (1: I32)) == '/' }
+    } else { false }
+  };
+  let startsSpaceArgument = (ts) => {
+    if (spaceBefore(ts)) {
+      match(peek(ts)) {
+        (WName(_), _) => {
+          match(fallbackOperator(ts)) {
+            None => { true },
+            Some(_) => { false }
+          }
+        },
+        (WScon(_), _) => { true },
+        (WKey(k), _) => {
+          member(k, ["(", "[", "{", ".{", "true", "false", "void", "match"])
+        },
+        _ => { false }
+      }
+    } else { false }
+  };
 
   /* Conservative source purity: constructor applications and other computed forms use
      ordered lowering until their value status can be resolved by the checker. */
@@ -541,7 +607,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
   let literalLayout = (variables, fields) => {
     let occurrences = SmlList.concat(SmlList.map((_, t) => { variablesIn(t) })(fields));
     if (SmlList.all((v) => {
-      (SubsetList.length(SmlList.filter((n) => { n == v })(occurrences)): Number) == 1
+      SubsetList.length(SmlList.filter((n) => { n == v })(occurrences)) == (1: I32)
     })(variables)) {
       SmlList.all((_, t) => {
         if (SubsetList.isEmpty(variablesIn(t))) { true } else {
@@ -572,7 +638,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
   let aliases = SmlList.map(match {
     Layout(moduleName, name, parameters, _) => {
       DType(
-        0,
+        (0: I32),
         [
           (
             parameters,
@@ -720,12 +786,12 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
     let rec more = (l, ts) => {
       match(fallbackOperator(ts)) {
         Some(opr) => {
-          bind(parseBinary(1, advance(ts)))((r) => (ts') => { more(infixApp(opr, posOf(ts), l, r), ts') })
+          bind(parseBinary((1: I32), advance(ts)))((r) => (ts') => { more(infixApp(opr, posOf(ts), l, r), ts') })
         },
         None => { Done(l, ts) }
       }
     };
-    bind(parseBinary(1, ts))((l) => (ts) => { more(l, ts) })
+    bind(parseBinary((1: I32), ts))((l) => (ts) => { more(l, ts) })
   }
 
   and parseBinary = (minLevel, ts) => {
@@ -738,7 +804,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
                 if (opr == "%") {
                   Fail("`%` has no SubsetML counterpart (SML `mod` differs)", p)
                 } else {
-                  bind(parseBinary(level + 1, advance(ts)))((r) => (ts) => {
+                  bind(parseBinary(level + (1: I32), advance(ts)))((r) => (ts) => {
                     more(
                       match(opr) {
                         "&&" => {
@@ -789,31 +855,73 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
       },
       (WKey("-"), Var(p)) => {
         match(negativeLiteral(p, advance(ts))) {
-          Some(c) => { Done(EScon(p, c), advance(advance(ts))) },
+          Some(c) => {
+            if (isKey(":>", advance(advance(ts)))) {
+              bind(parseUnary(advance(ts)))((e) => (ts) => { Done(EApp(EId(p, ([], "~")), e), ts) })
+            } else { Done(EScon(p, c), advance(advance(ts))) }
+          },
           None => {
             bind(parseUnary(advance(ts)))((e) => (ts) => { Done(EApp(EId(p, ([], "~")), e), ts) })
           }
         }
       },
-      _ => { parsePostfix(ts) }
+      _ => { parsePipe(ts) }
     }
   }
 
-  // A primary expression followed by calls.
-  and parsePostfix = (ts) => {
-    let rec calls = (f, ts) => {
-      if (if (isKey("(", ts)) { !lambdaAhead(ts) } else { false }) {
-        bind(delimited("(", parseExp, ",", ")", ts))((args) => (ts) => {
-          match(f, args) {
-            // WmPrint's spelling of SML `@`; the SML Basis has no List.append.
-            (EId(p, (["List"], "append")), [l, r]) => { calls(infixApp("@", p, l, r), ts) },
-            (_, [single]) => { calls(EApp(f, single), ts) },
-            _ => { calls(EApp(f, ETuple(args)), ts) }
-          }
-        })
-      } else { Done(f, ts) }
+  /* Pipes bind above unary/binary operators, chain left-to-right, and lower
+     only to ordinary applications. No type-directed receiver/carrier lookup. */
+  and parsePipe = (ts) => {
+    let rec more = (left, ts) => {
+      if (isKey(":>", ts)) {
+        let stage = advance(ts);
+        if (isKey(".", stage)) {
+          Fail(
+            "receiver pipes are outside the SubsetML translation profile; use a named function",
+            posOf(stage)
+          )
+        } else {
+          bind(parsePostfixForm(stage))((right, insertion) => (rest) => {
+            more(
+              match(insertion) {
+                Some(callee, args) => { apply(callee, [left, ..args]) },
+                None => { EApp(right, left) }
+              },
+              rest
+            )
+          })
+        }
+      } else { Done(left, ts) }
     };
-    bind(parsePrimary(ts))((e) => (ts) => { calls(e, ts) })
+    bind(parsePostfix(ts))((left) => (ts) => { more(left, ts) })
+  }
+
+  and parsePostfix = (ts) => {
+    bind(parsePostfixForm(ts))((value, _) => (rest) => { Done(value, rest) })
+  }
+
+  /* Retain just the outer call's source form until pipe insertion is decided.
+     Grouping returns a primary with no insertion slot. A space application is
+     a fully constructed stage; a final explicit call supplies an insertion slot. */
+  and parsePostfixForm = (ts) => {
+    /* Direct self tail calls, not `bind` continuations, so a long application chain
+       runs in constant stack on the Workman backend too. */
+    let rec calls = (callee, insertion, ts) => {
+      if (if (isKey("(", ts)) { !lambdaAhead(ts) } else { false }) {
+        match(delimited("(", parseExp, ",", ")", ts)) {
+          Done(args, rest) => { calls(apply(callee, args), Some(callee, args), rest) },
+          Fail(message, offset) => { Fail(message, offset) }
+        }
+      } else {
+        if (startsSpaceArgument(ts)) {
+          match(if (lambdaAhead(ts)) { parseLambda(ts) } else { parsePrimary(ts) }) {
+            Done(arg, rest) => { calls(EApp(callee, arg), None, rest) },
+            Fail(message, offset) => { Fail(message, offset) }
+          }
+        } else { Done((callee, insertion), ts) }
+      }
+    };
+    bind(parsePrimary(ts))((value) => (rest) => { calls(value, None, rest) })
   }
 
   and parsePrimary = (ts) => {
@@ -862,24 +970,32 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
       },
       (WKey("{"), _) => { parseBlock(ts) },
       (WKey("("), _) => {
-        bind(parseExp(advance(ts)))((first) => (ts) => {
-          match(peek(ts)) {
+        bind(parseExp(advance(ts)))((first) => (rest) => {
+          match(peek(rest)) {
             (WKey(":"), _) => {
-              bind(parseType(advance(ts)))((t) => (ts) => {
-                bind(expect(")", ts))((_) => (ts) => { Done(ETyped(first, t), ts) })
+              bind(parseType(advance(rest)))((t) => (after) => {
+                bind(expect(")", after))((_) => (after) => {
+                  Done(
+                    match(first, isIntType(t), integerText(advance(ts))) {
+                      (EScon(q, _), true, Some(s)) => { EScon(q, SInt(s)) },
+                      _ => { ETyped(first, t) }
+                    },
+                    after
+                  )
+                })
               })
             },
             (WKey(","), _) => {
-              bind(separated(parseExp, ",", ")", advance(ts)))((rest) => (ts) => {
-                bind(expect(")", ts))((_) => (ts) => { Done(ETuple([first, ..rest]), ts) })
+              bind(separated(parseExp, ",", ")", advance(rest)))((more) => (ts) => {
+                bind(expect(")", ts))((_) => (ts) => { Done(ETuple([first, ..more]), ts) })
               })
             },
             (WKey(";"), _) => {
-              bind(separated(parseExp, ";", ")", advance(ts)))((rest) => (ts) => {
-                bind(expect(")", ts))((_) => (ts) => { Done(ESeq([first, ..rest]), ts) })
+              bind(separated(parseExp, ";", ")", advance(rest)))((more) => (ts) => {
+                bind(expect(")", ts))((_) => (ts) => { Done(ESeq([first, ..more]), ts) })
               })
             },
-            _ => { bind(expect(")", ts))((_) => (ts) => { Done(first, ts) }) }
+            _ => { bind(expect(")", rest))((_) => (ts) => { Done(first, ts) }) }
           }
         })
       },
@@ -923,7 +1039,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
           bind(separated(part, ",", "}", ts))((parts) => (ts) => {
             bind(expect("}", ts))((_) => (ts) => {
               let prefix = "subsetmlRecord" ++ CompilerText.natural(p) ++ "_";
-              let parameters = SmlList.map((v) => { (v, "'" ++ fresh(prefix ++ CompilerText.drop(v, 1))) })(variables);
+              let parameters = SmlList.map((v) => { (v, "'" ++ fresh(prefix ++ CompilerText.drop(v, (1: I32)))) })(variables);
               let rec fieldType = (t) => {
                 match(t) {
                   TyVar(v) => {
@@ -982,12 +1098,12 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
                                       [_, ..rest] => {
                                         [
                                           fresh(prefix ++ label ++ "Argument" ++ CompilerText.natural(index)),
-                                          ..argumentNames(index + 1, rest)
+                                          ..argumentNames(index + (1: I32), rest)
                                         ]
                                       }
                                     }
                                   };
-                                  let bound = argumentNames(0, arguments);
+                                  let bound = argumentNames((0: I32), arguments);
                                   let patterns = SmlList.map((name) => { PId(p, ([], name)) })(bound);
                                   let values = SmlList.map((name) => { EId(p, ([], name)) })(bound);
                                   let pattern = match(domain) {
@@ -1117,7 +1233,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
                       Spread(e) => {
                         finish(
                           rest,
-                          index + 1,
+                          index + (1: I32),
                           [(PTyped(PId(p, ([], temporary)), targetType), e), ..bindings],
                           SmlList.map((label, _) => { (label, EApp(ESelect(p, label), value)) })(fields),
                           explicit
@@ -1131,7 +1247,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
                               let (_, t) = pair;
                               finish(
                                 rest,
-                                index + 1,
+                                index + (1: I32),
                                 [(PTyped(PId(p, ([], temporary)), fieldFor(label, t)), e), ..bindings],
                                 [(label, value), ..SmlList.filter((l, _) => { l != label })(values)],
                                 [label, ..explicit]
@@ -1144,7 +1260,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
                   }
                 }
               };
-              finish(parts, 0, [], [], [])
+              finish(parts, (0: I32), [], [], [])
             })
           })
         }
@@ -1423,7 +1539,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
             } else {
               bind(parseExp(ts))((e) => (ts) => {
                 bind(expect(";", ts))((_) => (ts) => {
-                  items([DVal(0, [], [(PId(0, ([], "it")), e)], []), ..decs], exps, ts)
+                  items([DVal((0: I32), [], [(PId((0: I32), ([], "it")), e)], []), ..decs], exps, ts)
                 })
               })
             }
@@ -1452,7 +1568,7 @@ let recordLayoutsTokens = (owner, src, lexed) => {
   let rec scan = (tokens, layouts, depth) => {
     match(tokens) {
       [(WKey("record"), Var(start)), ..rest] => {
-        if (depth > 0) {
+        if (depth > (0: I32)) {
           Fail(
             "record layout declarations must be top-level in the initial translation profile",
             start
@@ -1466,7 +1582,7 @@ let recordLayoutsTokens = (owner, src, lexed) => {
                   owner,
                   src,
                   Tokens(
-                    List.append(SubsetList.filter(tokens, (_, p) => { p <= stop }), [(WEOF, stop + 1)]),
+                    List.append(SubsetList.filter(tokens, (_, p) => { p <= stop }), [(WEOF, stop + (1: I32))]),
                     []
                   )
                 )) {
@@ -1485,16 +1601,16 @@ let recordLayoutsTokens = (owner, src, lexed) => {
           header(rest)
         }
       },
-      [(WKey("{"), _), ..rest] => { scan(rest, layouts, depth + 1) },
-      [(WKey(".{"), _), ..rest] => { scan(rest, layouts, depth + 1) },
-      [(WKey("}"), _), ..rest] => { scan(rest, layouts, depth - 1) },
+      [(WKey("{"), _), ..rest] => { scan(rest, layouts, depth + (1: I32)) },
+      [(WKey(".{"), _), ..rest] => { scan(rest, layouts, depth + (1: I32)) },
+      [(WKey("}"), _), ..rest] => { scan(rest, layouts, depth - (1: I32)) },
       [_, ..rest] => { scan(rest, layouts, depth) },
       [] => { Done(SmlList.rev(layouts), []) }
     }
   };
   match(lexed) {
     LexError(message, offset) => { Fail(message, offset) },
-    Tokens(tokens, _) => { scan(tokens, [], 0) }
+    Tokens(tokens, _) => { scan(tokens, [], (0: I32)) }
   }
 };
 

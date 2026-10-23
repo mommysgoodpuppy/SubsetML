@@ -31,10 +31,10 @@ structure SmlPrinter = struct
       Parser.ParseError (message, offset) => NONE
     | Parser.Program (program, comments) => SOME (Doc.render (input, comments, SmlPrint.commentStyle,
         Doc.stack (SubsetList.map (program, SmlPrint.topdec))))
-  val formatting = format "val x = 1.0 + 2.0 * 3.0" = SOME "val x = 1.0 + 2.0 * 3.0\n"
+  val formatting = format "val x = 1 + 2 * 3" = SOME "val x = 1 + 2 * 3\n"
     andalso format "val x = if c then a else (if d then b else e)"
       = SOME "val x = if c then a else (if d then b else e)\n"
-    andalso render (SmlPrint.dec (Syntax.DOpen (0.0, [["A", "B"], ["C"]]))) = "open A.B C\n"
+    andalso render (SmlPrint.dec (Syntax.DOpen (0, [["A", "B"], ["C"]]))) = "open A.B C\n"
     andalso render (SmlPrint.ty (Syntax.TyArrow (Syntax.TyTuple [Syntax.TyCon ([], ([], "real")),
       Syntax.TyCon ([], ([], "real"))], Syntax.TyCon ([], ([], "bool"))))) = "real * real -> bool\n"
     andalso SmlPrint.commentStyle [] = ["(**)"]

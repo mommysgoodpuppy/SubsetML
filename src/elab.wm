@@ -37,7 +37,7 @@ from "./unify.wm" import *;
 from "./env.wm" import *;
 
 // The context: environment, level, and the explicit type variables in scope.
-type Context = (Env, Number, List<String>);
+type Context = (Env, I32, List<String>);
 
 let envOf = (env, _, _) => { env };
 let scopedOf = (_, _, scoped) => { scoped };
@@ -49,7 +49,7 @@ let concatMap = (f, xs) => { SmlList.concat(SmlList.map(f)(xs)) };
 
 let member = (x, xs) => { SmlList.exists((y) => { y == x })(xs) };
 
-let memberReal = (x, xs) => { SmlList.exists((y) => { (y: Number) == x })(xs) };
+let memberInt = (x, xs) => { SmlList.exists((y) => { y == x })(xs) };
 
 let longName = (qs, x) => { SubsetString.concatWith(List.append(qs, [x]), ".") };
 
@@ -182,7 +182,7 @@ let rec elabTy = (env, tyvar, pos, t, st) => {
       match(Env.tycon(env, id)) {
         None => { Err("unbound type constructor " ++ longName(id), pos) },
         Some(TyStr(arity, body, _)) => {
-          if ((arity: Number) != SubsetList.length(args)) {
+          if (arity != SubsetList.length(args)) {
             Err(
               "type constructor " ++ longName(id) ++ " takes " ++ CompilerText.natural(arity) ++ " argument(s), given " ++ CompilerText.natural(SubsetList.length(args)),
               pos
@@ -327,37 +327,44 @@ let constTy = match {
   SChar(_) => { charTy }
 };
 
-/* Validate without converting through the host's narrower int. Accumulation
-   stays exact and stops as soon as a signed 32-bit magnitude is exceeded. */
+/* Compare normalized digit spellings instead of accumulating a magnitude:
+   the absolute value of minInt cannot itself fit in a signed integer. */
 let int32Literal = (text) => {
   let (negative, digits) = match(CompilerText.characters(text)) {
     ['~', ..rest] => { (true, rest) },
     Var(rest) => { (false, rest) }
   };
-  let (base, digits) = match(digits) {
-    ['0', 'x', ..rest] => { (16, rest) },
-    Var(rest) => { (10, rest) }
+  let (hex, digits) = match(digits) {
+    ['0', 'x', ..rest] => { (true, rest) },
+    Var(rest) => { (false, rest) }
   };
-  let limit = if (negative) { 2147483648 } else { 2147483647 };
+  let bound = CompilerText.characters(if (hex) { if (negative) { "80000000" } else { "7fffffff" } } else { if (negative) { "2147483648" } else { "2147483647" } });
   let alphabet = CompilerText.characters("0123456789abcdef");
   let rec digit = (c, cs, n) => {
     match(cs) {
-      [] => { 16 },
+      [] => { (16: I32) },
       [d, ..rest] => {
-        if (SubsetChar.toLower(c) == d) { n } else { digit(c, rest, n + 1) }
+        if (SubsetChar.toLower(c) == d) { n } else { digit(c, rest, n + (1: I32)) }
       }
     }
   };
-  let rec scan = (cs, value) => {
-    match(cs) {
-      [] => { true },
-      [c, ..rest] => {
-        let n = value * base + digit(c, alphabet, 0);
-        if (n <= limit) { scan(rest, n) } else { false }
-      }
+  let normalized = SubsetList.dropWhile(digits, (c) => { c == '0' });
+  let rec within = (cs, bs) => {
+    match(cs, bs) {
+      ([], []) => { true },
+      ([c, ..rest], [b, ..limit]) => {
+        let x = digit(c, alphabet, (0: I32));
+        let y = digit(b, alphabet, (0: I32));
+        if (x < y) { true } else { if (x == y) { within(rest, limit) } else { false } }
+      },
+      _ => { false }
     }
   };
-  scan(digits, 0)
+  let size = SubsetList.length(normalized);
+  let limitSize = SubsetList.length(bound);
+  if (size < limitSize) { true } else {
+    if (size == limitSize) { within(normalized, bound) } else { false }
+  }
 };
 
 let checkConst = (pos, c, st) => {
@@ -445,16 +452,16 @@ let rec pat = (ctx, p, st) => {
       })
     },
     PTuple(ps) => {
-      bind(pats(ctx, at(0, patPos(p)), ps, st))((ts, vars) => (st) => {
+      bind(pats(ctx, at((0: I32), patPos(p)), ps, st))((ts, vars) => (st) => {
         Ok((if (SmlList.null(ts)) { unitTy } else { tupleTy(ts) }, vars), st)
       })
     },
     PList(ps) => {
       let (elem, st0) = fresh(st, KPlain, level);
-      bind(pats(ctx, at(0, patPos(p)), ps, st0))((ts, vars) => (st) => {
+      bind(pats(ctx, at((0: I32), patPos(p)), ps, st0))((ts, vars) => (st) => {
         bind(foldRes(
           (_, (t, x), st) => {
-            unifyAt(st, at(0, patPos(x)), "list pattern element", elem, t)
+            unifyAt(st, at((0: I32), patPos(x)), "list pattern element", elem, t)
           },
           void,
           SmlListPair.zip(ts, ps),
@@ -482,8 +489,8 @@ let rec pat = (ctx, p, st) => {
     },
     PTyped(inner, t) => {
       bind(pat(ctx, inner, st))((ti, vars) => (st) => {
-        bind(scopedTy(ctx, at(0, patPos(inner)), t, st))((t') => (st) => {
-          bind(unifyAt(st, at(0, patPos(inner)), "type annotation", t', ti))((_) => (st) => { Ok((t', vars), st) })
+        bind(scopedTy(ctx, at((0: I32), patPos(inner)), t, st))((t') => (st) => {
+          bind(unifyAt(st, at((0: I32), patPos(inner)), "type annotation", t', ti))((_) => (st) => { Ok((t', vars), st) })
         })
       })
     }
@@ -558,7 +565,7 @@ let rec exp = (ctx, e, st) => {
           let State(vs, nx, sels, recs, sites) = st';
           let st'' = if (if (primitive) { true } else { integerLibrary }) {
             match(sites) {
-              Some(xs) => { State(vs, nx, sels, recs, Some([(q, t), ..xs])) },
+              Some(xs) => { State(vs, nx, sels, recs, Some([Operand(q, t), ..xs])) },
               None => { st' }
             }
           } else { st' };
@@ -591,7 +598,9 @@ let rec exp = (ctx, e, st) => {
       let (elem, st0) = fresh(st, KPlain, level);
       bind(foldRes(
         (_, x, st) => {
-          bind(exp(ctx, x, st))((t) => (st) => { unifyAt(st, at(0, expPos(x)), "list element", elem, t) })
+          bind(exp(ctx, x, st))((t) => (st) => {
+            unifyAt(st, at((0: I32), expPos(x)), "list element", elem, t)
+          })
         },
         void,
         es,
@@ -611,7 +620,10 @@ let rec exp = (ctx, e, st) => {
           st
         ))((t) => (st) => {
           if (SmlList.exists((s) => { s >= start })(tynames(resolve(st, t)))) {
-            Err("the type of this `let` mentions a type declared inside it", at(0, expPos(e)))
+            Err(
+              "the type of this `let` mentions a type declared inside it",
+              at((0: I32), expPos(e))
+            )
           } else { Ok(t, st) }
         })
       })
@@ -631,7 +643,7 @@ let rec exp = (ctx, e, st) => {
                   sels,
                   recs,
                   Some([
-                    (q, operand),
+                    Operand(q, operand),
                     ..match(sites) {
                       Some(l) => { l },
                       None => { [] }
@@ -648,8 +660,8 @@ let rec exp = (ctx, e, st) => {
     EApp(f, a) => { application(ctx, f, a, st) },
     ETyped(x, t) => {
       bind(exp(ctx, x, st))((tx) => (st) => {
-        bind(scopedTy(ctx, at(0, expPos(x)), t, st))((t') => (st) => {
-          bind(unifyAt(st, at(0, expPos(x)), "type annotation", t', tx))((_) => (st) => { Ok(t', st) })
+        bind(scopedTy(ctx, at((0: I32), expPos(x)), t, st))((t') => (st) => {
+          bind(unifyAt(st, at((0: I32), expPos(x)), "type annotation", t', tx))((_) => (st) => { Ok(t', st) })
         })
       })
     },
@@ -657,10 +669,10 @@ let rec exp = (ctx, e, st) => {
     EOrelse(a, b) => { boolOp(ctx, "orelse", a, b, st) },
     EIf(c, a, b) => {
       bind(exp(ctx, c, st))((tc) => (st) => {
-        bind(unifyAt(st, at(0, expPos(c)), "condition of `if`", boolTy, tc))((_) => (st) => {
+        bind(unifyAt(st, at((0: I32), expPos(c)), "condition of `if`", boolTy, tc))((_) => (st) => {
           bind(exp(ctx, a, st))((ta) => (st) => {
             bind(exp(ctx, b, st))((tb) => (st) => {
-              bind(unifyAt(st, at(0, expPos(b)), "branches of `if` differ", ta, tb))((_) => (st) => { Ok(ta, st) })
+              bind(unifyAt(st, at((0: I32), expPos(b)), "branches of `if` differ", ta, tb))((_) => (st) => { Ok(ta, st) })
             })
           })
         })
@@ -669,7 +681,7 @@ let rec exp = (ctx, e, st) => {
     ECase(x, rules) => {
       bind(exp(ctx, x, st))((tx) => (st) => {
         bind(matchRules(ctx, rules, st))((tp, tr) => (st) => {
-          bind(unifyAt(st, at(0, expPos(x)), "`case` patterns do not fit the value", tp, tx))((_) => (st) => { Ok(tr, st) })
+          bind(unifyAt(st, at((0: I32), expPos(x)), "`case` patterns do not fit the value", tp, tx))((_) => (st) => { Ok(tr, st) })
         })
       })
     },
@@ -688,7 +700,7 @@ and application = (ctx, f, a, st) => {
         _ => { "function argument" }
       };
       let pos = at(
-        0,
+        (0: I32),
         match(expPos(a)) {
           Some(q) => { Some(q) },
           None => { expPos(f) }
@@ -709,9 +721,9 @@ and application = (ctx, f, a, st) => {
 
 and boolOp = (ctx, name, a, b, st) => {
   bind(exp(ctx, a, st))((ta) => (st) => {
-    bind(unifyAt(st, at(0, expPos(a)), "operand of " ++ name, boolTy, ta))((_) => (st) => {
+    bind(unifyAt(st, at((0: I32), expPos(a)), "operand of " ++ name, boolTy, ta))((_) => (st) => {
       bind(exp(ctx, b, st))((tb) => (st) => {
-        bind(unifyAt(st, at(0, expPos(b)), "operand of " ++ name, boolTy, tb))((_) => (st) => { Ok(boolTy, st) })
+        bind(unifyAt(st, at((0: I32), expPos(b)), "operand of " ++ name, boolTy, tb))((_) => (st) => { Ok(boolTy, st) })
       })
     })
   })
@@ -725,7 +737,7 @@ and matchRules = (ctx, rules, st) => {
   bind(foldRes(
     (_, (p, x), st) => {
       bind(pat(ctx, p, st))((t, vars) => (st) => {
-        bind(unifyAt(st, at(0, patPos(p)), "patterns of a match differ", tp, t))((_) => (st) => {
+        bind(unifyAt(st, at((0: I32), patPos(p)), "patterns of a match differ", tp, t))((_) => (st) => {
           bind(exp(
             (
               plus(env, withValues(SmlList.map((v, vt) => { (v, (([], vt), SValue)) })(vars))),
@@ -735,7 +747,7 @@ and matchRules = (ctx, rules, st) => {
             x,
             st
           ))((tx) => (st) => {
-            unifyAt(st, at(0, expPos(x)), "results of a match differ", tr, tx)
+            unifyAt(st, at((0: I32), expPos(x)), "results of a match differ", tr, tx)
           })
         })
       })
@@ -797,7 +809,7 @@ and valDec = ((env, level, scoped), pos, tyvars, plain, recs, st) => {
   let bindings = List.append(plain, recs);
   let implicit = SmlList.filter((v) => { !member(v, scoped) })(distinct(concatMap((p, e) => { List.append(patTyVars(p), expTyVars(e)) }, bindings)));
   let explicit = distinct(List.append(tyvars, implicit));
-  let inner = (env, level + 1, List.append(scoped, explicit));
+  let inner = (env, level + (1: I32), List.append(scoped, explicit));
   // A binding's pattern, its type and variables, checked against its expression's type.
   let plainBinding = ((p, e), st) => {
     bind(exp(inner, e, st))((te) => (st) => {
@@ -833,7 +845,7 @@ and valDec = ((env, level, scoped), pos, tyvars, plain, recs, st) => {
     bind(mapRes(plainBinding, plain, st))((plainResults) => (st) => {
       bind(mapRes(recPattern, recs, st))((recVars) => (st) => {
         let recEnv = withValues(SmlList.map((v, t) => { (v, (([], t), SValue)) })(SmlList.concat(recVars)));
-        let recInner = (plus(env, recEnv), level + 1, List.append(scoped, explicit));
+        let recInner = (plus(env, recEnv), level + (1: I32), List.append(scoped, explicit));
         bind(foldRes(
           (_, ((_, e), vars), st) => {
             match(vars) {
@@ -860,7 +872,7 @@ and valDec = ((env, level, scoped), pos, tyvars, plain, recs, st) => {
 and closeValBindings = (level, explicit, pos, results, st) => {
   let names = concatMap((vars, _) => { SmlList.map((x, _) => { x })(vars) }, results);
   match(SmlList.find((x) => {
-    SubsetList.length(SmlList.filter((y) => { y == x })(names)) > 1
+    SubsetList.length(SmlList.filter((y) => { y == x })(names)) > (1: I32)
   })(names), SmlList.find((x) => { member(x, unbindable) })(names)) {
     (Some(x), _) => { Err("`" ++ x ++ "` is bound twice in this declaration", pos) },
     (_, Some(x)) => { Err("`" ++ x ++ "` cannot be rebound", pos) },
@@ -982,7 +994,14 @@ and closeBinding = (level, explicit, generalizable, pos, x, t, st) => {
       }
     }
   };
-  bind(settle(defaults, st))((_) => (st) => {
+  let noteDefault = (st) => {
+    match(defaults, st) {
+      ([], _) => { st },
+      (_, State(vs, nx, sels, recs, Some(xs))) => { State(vs, nx, sels, recs, Some([Defaulted(pos), ..xs])) },
+      (_, _) => { st }
+    }
+  };
+  bind(settle(defaults, noteDefault(st)))((_) => (st) => {
     let rigid = SmlList.filter((v) => { member(v, explicit) })(rigidNames(resolve(st, t)));
     match(generalizable, rigid) {
       (true, _) => { Ok((x, generalize(st, level, explicit, t)), st) },
@@ -1011,7 +1030,7 @@ and rigidNames = (t) => {
 and typeDec = ((env, _, _), pos, binds, st) => {
   let names = SmlList.map((_, name, _) => { name })(binds);
   let dup = SmlList.find((n) => {
-    SubsetList.length(SmlList.filter((m) => { m == n })(names)) > 1
+    SubsetList.length(SmlList.filter((m) => { m == n })(names)) > (1: I32)
   })(names);
   match(dup) {
     Some(n) => { Err("type " ++ n ++ " is bound twice", pos) },
@@ -1040,15 +1059,17 @@ and typeDec = ((env, _, _), pos, binds, st) => {
 // Maps a declaration's type parameters to TGen.
 and paramScope = (pos, params, st) => {
   match(SmlList.find((v) => {
-    SubsetList.length(SmlList.filter((w) => { w == v })(params)) > 1
+    SubsetList.length(SmlList.filter((w) => { w == v })(params)) > (1: I32)
   })(params)) {
     Some(v) => { Err("type parameter " ++ v ++ " appears twice", pos) },
     None => {
       let rec index = match {
         (_, [], _) => { None },
-        (Var(v), [w, ..rest], Var(i)) => { if (v == w) { Some(TGen(i)) } else { index(v, rest, i + 1) } }
+        (Var(v), [w, ..rest], Var(i)) => {
+          if (v == w) { Some(TGen(i)) } else { index(v, rest, i + (1: I32)) }
+        }
       };
-      Ok((v) => { index(v, params, 0) }, st)
+      Ok((v) => { index(v, params, (0: I32)) }, st)
     }
   }
 }
@@ -1074,14 +1095,16 @@ and datatypeDec = ((env, _, _), pos, binds, st) => {
   let names = SmlList.map((_, name, _) => { name })(binds);
   let cons = concatMap((_, _, cs) => { SmlList.map((_, c, _) => { c })(cs) }, binds);
   let dupIn = (xs) => {
-    SmlList.find((n) => { SubsetList.length(SmlList.filter((m) => { m == n })(xs)) > 1 })(xs)
+    SmlList.find((n) => {
+      SubsetList.length(SmlList.filter((m) => { m == n })(xs)) > (1: I32)
+    })(xs)
   };
   // Fresh type names, first assuming every one admits equality.
   let (stamps, st1) = SmlList.foldl((_, (acc, st)) => {
     let (s, st') = freshStamp(st);
     (List.append(acc, [s]), st')
   })([], st)(binds);
-  let nameFor = (eqs, (params, name, _), s) => { (s, name, SubsetList.length(params), memberReal(s, eqs)) };
+  let nameFor = (eqs, (params, name, _), s) => { (s, name, SubsetList.length(params), memberInt(s, eqs)) };
   let tyFor = (tn) => {
     let SubsetResult.Ok(args) = SubsetList.tabulate(arityOf(tn), TGen);
     TCon(tn, args)
@@ -1118,7 +1141,7 @@ and datatypeDec = ((env, _, _), pos, binds, st) => {
   let rec admits = (eqs, t) => {
     match(t) {
       TCon((Var(s), _, _, Var(eq)), args) => {
-        if (if (memberReal(s, stamps)) { memberReal(s, eqs) } else { eq }) { SmlList.all((a) => { admits(eqs, a) })(args) } else { false }
+        if (if (memberInt(s, stamps)) { memberInt(s, eqs) } else { eq }) { SmlList.all((a) => { admits(eqs, a) })(args) } else { false }
       },
       TArrow(_, _) => { false },
       TRecord(fields) => { SmlList.all((_, a) => { admits(eqs, a) })(fields) },
@@ -1130,7 +1153,7 @@ and datatypeDec = ((env, _, _), pos, binds, st) => {
     bind(elabCons(eqs, st))((group) => (st) => {
       let eqs' = SmlList.filter((s) => {
         SmlList.all(((s', _, _, _), cs) => {
-          if ((s': Number) != s) { true } else {
+          if (s' != s) { true } else {
             SmlList.all((_, arg) => {
               match(arg) {
                 None => { true },
@@ -1140,7 +1163,7 @@ and datatypeDec = ((env, _, _), pos, binds, st) => {
           }
         })(group)
       })(eqs);
-      if ((SubsetList.length(eqs'): Number) == SubsetList.length(eqs)) { Ok(group, st) } else { fixpoint(eqs', st) }
+      if (SubsetList.length(eqs') == SubsetList.length(eqs)) { Ok(group, st) } else { fixpoint(eqs', st) }
     })
   };
   match(dupIn(names), dupIn(cons), SmlList.find((c) => { if (member(c, unbindable)) { true } else { c == "it" } })(cons)) {
@@ -1191,11 +1214,11 @@ and datatypeDec = ((env, _, _), pos, binds, st) => {
 
 let strdec = (env, sd, st) => {
   match(sd) {
-    SDec(d) => { dec((env, 0, []), d, st) },
+    SDec(d) => { dec((env, (0: I32), []), d, st) },
     SStructure(_, binds) => {
       foldRes(
         (delta, (name, ds), st) => {
-          bind(decs((env, 0, []), ds, st))((body) => (st) => { Ok(plus(delta, withStructure(name, body, false)), st) })
+          bind(decs((env, (0: I32), []), ds, st))((body) => (st) => { Ok(plus(delta, withStructure(name, body, false)), st) })
         },
         empty,
         binds,
@@ -1218,7 +1241,7 @@ let topdec = (env, td, st) => {
       )
     },
     TopExp(pos, e) => {
-      dec((env, 0, []), DVal(pos, [], [(PId(pos, ([], "it")), e)], []), st)
+      dec((env, (0: I32), []), DVal(pos, [], [(PId(pos, ([], "it")), e)], []), st)
     }
   }
 };

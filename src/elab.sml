@@ -351,7 +351,7 @@ structure Elab = struct
                    | _ => false
                  val State (vs, nx, sels, recs, sites) = st'
                  val st'' = if primitive orelse integerLibrary then
-                   (case sites of SOME xs => State (vs, nx, sels, recs, SOME ((q, t) :: xs)) | NONE => st')
+                   (case sites of SOME xs => State (vs, nx, sels, recs, SOME (Operand (q, t) :: xs)) | NONE => st')
                    else st'
                in Ok (t, st'') end
            | NONE => Err ("unbound identifier " ^ longName id, q))
@@ -396,7 +396,7 @@ structure Elab = struct
                    bind (unifyAt (st1, q, "operands of " ^ opr, tupleTy [operand, operand], ta)) (fn _ => fn st =>
                      let val State (vars, next, sels, recs, sites) = st in
                        Ok (boolTy, State (vars, next, sels, recs,
-                                          SOME ((q, operand) :: (case sites of SOME l => l | NONE => []))))
+                                          SOME (Operand (q, operand) :: (case sites of SOME l => l | NONE => []))))
                      end)
                  end)
            | _ => application (ctx, EId (q, ([], opr)), a, st))
@@ -617,8 +617,12 @@ structure Elab = struct
         [] => Ok ((), st)
       | v :: rest => bind (unifyAt (st, pos, "integer default", TVar v, intTy))
           (fn _ => fn st => settle (rest, st))
+      val noteDefault = fn st => case (defaults, st) of
+          ([], _) => st
+        | (_, State (vs, nx, sels, recs, SOME xs)) => State (vs, nx, sels, recs, SOME (Defaulted pos :: xs))
+        | (_, _) => st
     in
-      bind (settle (defaults, st)) (fn _ => fn st =>
+      bind (settle (defaults, noteDefault st)) (fn _ => fn st =>
         let val rigid = SmlList.filter (fn v => member (v, explicit)) (rigidNames (resolve (st, t))) in
           case (generalizable, rigid) of
             (true, _) => Ok ((x, generalize (st, level, explicit, t)), st)

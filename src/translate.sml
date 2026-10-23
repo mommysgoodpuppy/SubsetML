@@ -284,26 +284,17 @@ structure Translate = struct
       val rec expressions = fn es => concatMap (expression, es)
       and rules = fn rs => expressions (SmlList.map (fn (_, e) => e) rs) @ concatMap (fn (p, _) => patterns p, rs)
       and expression = fn e => case e of
-          EScon (_, SInt _) => ["signed 32-bit int (WM support deferred)"]
-        | EScon _ => [] | EId _ => [] | ESelect _ => []
+          EScon _ => [] | EId _ => [] | ESelect _ => []
         | ERecord (_, fields) => expressions (SmlList.map (fn (_, e) => e) fields)
         | ETuple es => expressions es | EList es => expressions es | ESeq es => expressions es
         | ELet (ds, es) => concatMap (declaration, ds) @ expressions es
-        | EApp (a, b) => expressions [a, b] | ETyped (e, t) => expression e @ integerType t
+        | EApp (a, b) => expressions [a, b] | ETyped (e, _) => expression e
         | EAndalso (a, b) => expressions [a, b] | EOrelse (a, b) => expressions [a, b]
         | EIf (a, b, c) => expressions [a, b, c]
         | ECase (e, rs) => expression e @ rules rs | EFn rs => rules rs
         | ECopy (_, a, b, _) => expressions [a, b]
-      and integerType = fn t => case t of
-          TyCon (_, ([], "int")) => ["signed 32-bit int (WM support deferred)"]
-        | TyCon (ts, _) => concatMap (integerType, ts)
-        | TyTuple ts => concatMap (integerType, ts)
-        | TyArrow (a, b) => integerType a @ integerType b
-        | TyRecord fs => concatMap (fn (_, t) => integerType t, fs)
-        | _ => []
       and patterns = fn p => case p of
-          PScon (_, SInt _) => ["signed 32-bit int (WM support deferred)"]
-        | PTyped (p, t) => patterns p @ integerType t
+          PTyped (p, _) => patterns p
         | PRecord (_, fs) => concatMap (fn (_, p) => patterns p, fs)
         | PTuple ps => concatMap (patterns, ps) | PList ps => concatMap (patterns, ps)
         | PApp (_, _, p) => patterns p | _ => []
@@ -312,12 +303,11 @@ structure Translate = struct
             (if not (SmlList.null variables) then ["explicit val type variables"]
              else (if not (SmlList.null plain) andalso not (SmlList.null recs)
              then ["mixed plain/recursive val bindings"] else [])) @ rules (plain @ recs)
-        | DType (_, binds) => concatMap (fn (_, _, t) => integerType t, binds) @
+        | DType (_, binds) =>
             (if (case binds of [] => false | [_] => false | _ => true) andalso
               SmlList.exists (fn (_, _, t) => case t of TyRecord _ => true | _ => false) binds
             then ["type groups containing records"] else [])
-        | DDatatype (_, binds) => concatMap (fn (_, _, cs) =>
-            concatMap (fn (_, _, t) => case t of NONE => [] | SOME t => integerType t, cs), binds)
+        | DDatatype _ => []
         | DOpen (_, ids) => if SmlList.all (fn id => SmlList.exists (fn s => [s] = id) structures) ids
             then [] else ["open of a non-project structure"]
       val top = fn td => case td of
@@ -326,24 +316,33 @@ structure Translate = struct
             | SStructure (_, binds) => concatMap (fn (_, ds) => concatMap (declaration, ds), binds), ds)
     in concatMap (top, prog) end
 
-  (* The deferred WM execution profile must not silently reinterpret newly
-     defaulted SML integers as real-valued Number operations. *)
-  val integerSite = fn st =>
+  (* SML closes an unresolved numeric class to int; Workman closes it to Number. A program that
+     relies on either default would change meaning in translation, so it must annotate. An int
+     constant is never such a site: it is int in SML and printed as an I32 ascription. *)
+  val defaultedSite = fn st =>
     let
-      val rec contains = fn t => case Unify.prune (st, t) of
-          Types.TCon (n, ts) => Unify.sameName (n, Types.intName) orelse SmlList.exists contains ts
+      val rec unresolved = fn t => case Unify.prune (st, t) of
+          Types.TCon (_, ts) => SmlList.exists unresolved ts
         | Types.TVar v => (case Unify.lookup (st, v) of
-            Unify.Free (Types.KClass ns, _) => SmlList.exists (fn n => Unify.sameName (n, Types.intName)) ns
+            Unify.Free (Types.KClass _, _) => true
           | _ => false)
-        | Types.TArrow (a, b) => contains a orelse contains b
-        | Types.TRecord fs => SmlList.exists (fn (_, t) => contains t) fs
+        | Types.TArrow (a, b) => unresolved a orelse unresolved b
+        | Types.TRecord fs => SmlList.exists (fn (_, t) => unresolved t) fs
         | _ => false
       val Unify.State (_, _, _, _, sites) = st
-    in case sites of NONE => NONE | SOME xs => SmlList.find (fn (_, t) => contains t) xs end
+    in
+      case sites of NONE => NONE | SOME xs =>
+        (case SmlList.mapPartial (fn Unify.Defaulted pos => SOME pos
+                                   | Unify.Operand (pos, t) => if unresolved t then SOME pos else NONE) xs of
+           [] => NONE
+         | pos :: _ => SOME pos)
+    end
 
-  val wmNumbers = fn st => case integerSite st of
+  val defaultedMessage = "a numeric operation whose type only a default decides (SML int, Workman Number); annotate it as int or real"
+
+  val wmNumbers = fn st => case defaultedSite st of
     NONE => Unify.Ok ((), st)
-  | SOME (pos, _) => Unify.Err ("signed 32-bit int: WM support is deferred; annotate numeric operands as Number", pos)
+  | SOME pos => Unify.Err (defaultedMessage, pos)
 
   (* Translates one parsed file. `structures` names every structure of the program. *)
   val toWm = fn (structures, path, src, prog, comments) =>
@@ -358,14 +357,12 @@ structure Translate = struct
       val imports =
         SmlList.map (fn q => Doc.atom (start, "from \"./" ^ WmPrint.fileName q ^ "\" import * as " ^ q ^ ";"))
           (SmlList.filter (fn q => q <> self andalso SmlList.exists (fn s => s = q) structures) used)
-      (* A newly valid defaulted integer function need not contain an integer
-         literal or annotation. Reject it too when its standalone environment
-         can be resolved, instead of silently assigning WM Number semantics. *)
-      val inferredInteger = case Basis.initial of Unify.Err _ => false | Unify.Ok (basis, _) =>
+      (* Reject a numeric default when the file's standalone environment can be resolved. *)
+      val defaulted = case Basis.initial of Unify.Err _ => false | Unify.Ok (basis, _) =>
         (case Elab.program (basis, prog, Unify.lenient) of Unify.Err _ => false
-         | Unify.Ok (_, st) => case integerSite st of SOME _ => true | NONE => false)
+         | Unify.Ok (_, st) => case defaultedSite st of SOME _ => true | NONE => false)
       val gaps = declarationGaps (structures, phrases) @
-        (if inferredInteger then ["signed 32-bit int (WM support deferred)"] else [])
+        (if defaulted then [defaultedMessage] else [])
       val doc = if SmlList.null gaps then Doc.stack (SmlList.map (fn td => WmPrint.topdec (structures, td)) phrases) else Doc.text ""
       val body =
         case imports of
@@ -437,11 +434,11 @@ structure Translate = struct
   val realEquality = fn (st, prog) =>
     let
       val Unify.State (_, _, _, _, sites) = st
-      val positions = SmlList.map (fn (p, _) => p)
-        (SmlList.filter (fn (_, t) =>
-           case Unify.prune (st, t) of
-             Types.TCon (n, []) => Unify.sameName (n, Types.realName)
-           | _ => false) (case sites of SOME xs => xs | NONE => []))
+      val positions = SmlList.mapPartial (fn
+          Unify.Operand (p, t) => (case Unify.prune (st, t) of
+             Types.TCon (n, []) => if Unify.sameName (n, Types.realName) then SOME p else NONE
+           | _ => NONE)
+        | Unify.Defaulted _ => NONE) (case sites of SOME xs => xs | NONE => [])
       val rewrite = fn e =>
         case e of
           EApp (EId (p, ([], opr)), a) =>

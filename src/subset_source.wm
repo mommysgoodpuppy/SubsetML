@@ -12,10 +12,10 @@ from "./subset_result.wm" import * as SubsetResult;
 from "./subset_bytes.wm" import * as SubsetBytes;
 from "./subset_string.wm" import * as SubsetString;
 
-type Source = Empty | Byte<Char> | Branch<Number, Source, Source>;
+type Source = Empty | Byte<Char> | Branch<I32, Source, Source>;
 let length = match {
-  Empty => { 0 },
-  Byte(c) => { 1 },
+  Empty => { (0: I32) },
+  Byte(c) => { (1: I32) },
   Branch(size, left, right) => { size }
 };
 let join = (left, right) => { Branch(length(left) + length(right), left, right) };
@@ -34,12 +34,12 @@ let build = (bytes) => {
 let fromBytes = (bytes) => { SubsetResult.map(SubsetBytes.validate(bytes), build) };
 let fromNative = (value) => { SubsetResult.map(SubsetString.fromNative(value), build) };
 
-let at = (tree, index: Number) => {
-  if (if (index >= 0) { index < length(tree) } else { false }) {
+let at = (tree, index: I32) => {
+  if (if (index >= (0: I32)) { index < length(tree) } else { false }) {
     let rec go = match {
       (Empty, Var(offset)) => { SubsetResult.Err(SubsetBytes.OutOfBounds) },
       (Byte(c), Var(offset)) => {
-        if (if (offset <= 0) { offset >= 0 } else { false }) { SubsetResult.Ok(c) } else { SubsetResult.Err(SubsetBytes.InvalidIndex) }
+        if (if (offset <= (0: I32)) { offset >= (0: I32) } else { false }) { SubsetResult.Ok(c) } else { SubsetResult.Err(SubsetBytes.InvalidIndex) }
       },
       (Branch(size, left, right), Var(offset)) => {
         if (offset < length(left)) { go(left, offset) } else { go(right, offset - length(left)) }
@@ -50,12 +50,12 @@ let at = (tree, index: Number) => {
 };
 
 let boundary = (tree, index) => {
-  if (if (index >= 0) { index <= length(tree) } else { false }) {
+  if (if (index >= (0: I32)) { index <= length(tree) } else { false }) {
     if (index >= length(tree)) { true } else { SubsetResult.isOk(at(tree, index)) }
   } else { false }
 };
 let slice = (tree, start, count) => {
-  if (if (if (count >= 0) { boundary(tree, start) } else { false }) { boundary(tree, start + count) } else { false }) {
+  if (if (if (count >= (0: I32)) { boundary(tree, start) } else { false }) { count <= length(tree) - start } else { false }) {
     let finish = start + count;
     let rec collect = (node, base, acc) => {
       if (if (base >= finish) { true } else { base + length(node) <= start }) { acc } else {
@@ -68,6 +68,6 @@ let slice = (tree, start, count) => {
         }
       }
     };
-    SubsetResult.Ok(collect(tree, 0, []))
+    SubsetResult.Ok(collect(tree, (0: I32), []))
   } else { SubsetResult.Err(SubsetBytes.InvalidIndex) }
 };

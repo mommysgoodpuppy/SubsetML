@@ -25,17 +25,17 @@ structure WmPrinter = struct
     andalso WmPrint.fileName "XML" = "x_m_l.wm"
     andalso WmPrint.valueName (["Num", "String"], "size") = "String.size"
     andalso WmPrint.isConName ([], "Thing") andalso not (WmPrint.isConName ([], "value"))
-  val formatting = WmPrint.scon (Syntax.SReal "~1.0") = "-1"
+  val formatting = WmPrint.scon (Syntax.SReal "~1") = "-1"
     andalso WmPrint.scon (Syntax.SReal "~1.5E~2") = "-1.5E-2"
     andalso WmPrint.scon (Syntax.SReal "1.0E2") = "1.0E2"
     andalso WmPrint.commentStyle [" a "] = ["// a"]
     andalso WmPrint.commentStyle [] = []
     andalso WmPrint.commentStyle ["a", "b", "c"] = ["/*a", "b", "c*/"]
-    andalso render (WmPrint.topdec (["A"], Syntax.TopDecs [Syntax.SDec (Syntax.DOpen (0.0, [["A"]]))]))
+    andalso render (WmPrint.topdec (["A"], Syntax.TopDecs [Syntax.SDec (Syntax.DOpen (0, [["A"]]))]))
       = "from \"./a.wm\" import *;\n"
-    andalso render (WmPrint.topdec ([], Syntax.TopExp (0.0,
-      Syntax.EApp (Syntax.EId (0.0, ([], "+")), Syntax.ETuple [Syntax.EScon (0.0, Syntax.SReal "1.0"),
-        Syntax.EScon (0.0, Syntax.SReal "2.0")])))) = "1 + 2;\n"
+    andalso render (WmPrint.topdec ([], Syntax.TopExp (0,
+      Syntax.EApp (Syntax.EId (0, ([], "+")), Syntax.ETuple [Syntax.EScon (0, Syntax.SReal "1"),
+        Syntax.EScon (0, Syntax.SReal "2")])))) = "1 + 2;\n"
   val _ = if characters andalso strings andalso names andalso formatting
     then print "portable Workman printer: ok\n" else print "FAILED\n"
 end

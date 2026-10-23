@@ -4,7 +4,7 @@
 cd "$(dirname "$0")/.." || exit 1
 last=""
 while :; do
-  now=$(stat -c '%y %n' src/*.sml src/subsetml.mlb lib/num.sml lib/subset_text_host.sml lib/subset_text_host.wm lib/subset_host.sml lib/subset_host.wm lib/subset_host.js Makefile 2>/dev/null | md5sum)
+  now=$(stat -c '%y %n' src/*.sml src/subsetml.mlb lib/num.sml lib/subset_text_host.sml lib/subset_text_host.wm lib/subset_host.sml lib/subset_host.wm lib/subset_host.js lib/subset_host.d.ts Makefile 2>/dev/null | md5sum)
   if [ "$now" != "$last" ]; then
     last=$now
     if out=$(make -s bin/subsetml 2>&1) && out=$(make -s wm 2>&1); then

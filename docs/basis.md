@@ -710,7 +710,6 @@ implementations and normalizes precision metadata to the SubsetML integer type.
 
 Compiler internals, `SubsetNatural`, byte/list/string sizes and indices, scalar
 codes and the text-host contract now use `int`. This is a breaking API migration;
-legacy real-valued fixtures and generated WM mirrors require migration. WM/JS
-integer execution remains deferred. The unrelated legacy `Num` adapter retains
+generated WM mirrors use Workman's `I32`. The unrelated legacy `Num` adapter retains
 its real-valued compatibility interface. Integer arithmetic can dynamically raise
 `Overflow`/`Div`; authored SubsetML still has no exception handlers.

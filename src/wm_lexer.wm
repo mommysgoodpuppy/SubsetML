@@ -32,7 +32,7 @@ type Token =
   | WOpen<List<List<String>>> // internal resolved header open; never lexed from source
   | WEOF;
 
-type Step<a> = Ok<a, Number> | Err<String, Pos>;
+type Step<a> = Ok<a, I32> | Err<String, Pos>;
 
 type Result = Tokens<List<(Token, Pos)>, List<Comment>> | LexError<String, Pos>;
 
@@ -57,6 +57,7 @@ let keywords = [
 let symbols = [
   "..",
   ".{",
+  ":>",
   "=>",
   "->",
   "==",
@@ -111,7 +112,7 @@ let lex = (src) => {
       let digitAt = (i) => { if (i < n) { SubsetChar.isDigit(at(i)) } else { false } };
 
       let rec skipWhile = (p, i) => {
-        if (if (i < n) { p(at(i)) } else { false }) { skipWhile(p, i + 1) } else { i }
+        if (if (i < n) { p(at(i)) } else { false }) { skipWhile(p, i + (1: I32)) } else { i }
       };
 
       let startsWith = (i, s) => {
@@ -121,33 +122,33 @@ let lex = (src) => {
       // Whether code precedes offset i on its line.
       let trailing = (i) => {
         let rec back = (k) => {
-          if (k < 0) { false } else {
+          if (k < (0: I32)) { false } else {
             match(at(k)) {
               '\n' => { false },
-              Var(c) => { if (isSpace(c)) { back(k - 1) } else { true } }
+              Var(c) => { if (isSpace(c)) { back(k - (1: I32)) } else { true } }
             }
           }
         };
-        back(i - 1)
+        back(i - (1: I32))
       };
 
       // A nested block comment; i is after the opening `/*`.
       let rec blockComment = (start, i, depth) => {
-        match((depth: Number) == 0, i + 1 >= n) {
+        match(depth == (0: I32), i + (1: I32) >= n) {
           (true, _) => { Ok(void, i) },
           (false, true) => { Err("unterminated comment", start) },
           (false, false) => {
-            match(at(i), at(i + 1)) {
-              ('/', '*') => { blockComment(start, i + 2, depth + 1) },
-              ('*', '/') => { blockComment(start, i + 2, depth - 1) },
-              _ => { blockComment(start, i + 1, depth) }
+            match(at(i), at(i + (1: I32))) {
+              ('/', '*') => { blockComment(start, i + (2: I32), depth + (1: I32)) },
+              ('*', '/') => { blockComment(start, i + (2: I32), depth - (1: I32)) },
+              _ => { blockComment(start, i + (1: I32), depth) }
             }
           }
         }
       };
 
       let hexValue = (i, j) => {
-        SmlList.foldl((c, acc) => { acc * 16 + Lexer.digitValue(c) })(0)(CompilerText.explode(CompilerText.substring(source, i, j - i)))
+        SmlList.foldl((c, acc) => { acc * (16: I32) + Lexer.digitValue(c) })((0: I32))(CompilerText.explode(CompilerText.substring(source, i, j - i)))
       };
 
       let charFromCode = (code, pos, next) => {
@@ -161,48 +162,56 @@ let lex = (src) => {
 
       // An escape; i is just after the backslash. NONE is a gap.
       let escape = (i) => {
-        if (i >= n) { Err("unterminated escape sequence", i - 1) } else {
+        if (i >= n) { Err("unterminated escape sequence", i - (1: I32)) } else {
           match(at(i)) {
-            'a' => { Ok(Some('\u0007'), i + 1) },
-            'b' => { Ok(Some('\u0008'), i + 1) },
-            't' => { Ok(Some('\t'), i + 1) },
-            'n' => { Ok(Some('\n'), i + 1) },
-            'v' => { Ok(Some('\u000b'), i + 1) },
-            'f' => { Ok(Some('\u000c'), i + 1) },
-            'r' => { Ok(Some('\r'), i + 1) },
-            '"' => { Ok(Some('"'), i + 1) },
-            '\'' => { Ok(Some('\''), i + 1) },
-            '\\' => { Ok(Some('\\'), i + 1) },
+            'a' => { Ok(Some('\u0007'), i + (1: I32)) },
+            'b' => { Ok(Some('\u0008'), i + (1: I32)) },
+            't' => { Ok(Some('\t'), i + (1: I32)) },
+            'n' => { Ok(Some('\n'), i + (1: I32)) },
+            'v' => { Ok(Some('\u000b'), i + (1: I32)) },
+            'f' => { Ok(Some('\u000c'), i + (1: I32)) },
+            'r' => { Ok(Some('\r'), i + (1: I32)) },
+            '"' => { Ok(Some('"'), i + (1: I32)) },
+            '\'' => { Ok(Some('\''), i + (1: I32)) },
+            '\\' => { Ok(Some('\\'), i + (1: I32)) },
             '^' => {
-              if (if (if (i + 1 < n) { Lexer.byteCode(at(i + 1)) >= 64 } else { false }) { Lexer.byteCode(at(i + 1)) <= 95 } else { false }) { charFromCode(Lexer.byteCode(at(i + 1)) - 64, i - 1, i + 2) } else { Err("illegal control escape sequence", i - 1) }
+              if (if (if (i + (1: I32) < n) { Lexer.byteCode(at(i + (1: I32))) >= (64: I32) } else { false }) { Lexer.byteCode(at(i + (1: I32))) <= (95: I32) } else { false }) {
+                charFromCode(Lexer.byteCode(at(i + (1: I32))) - (64: I32), i - (1: I32), i + (2: I32))
+              } else { Err("illegal control escape sequence", i - (1: I32)) }
             },
             'u' => {
-              if (has(i + 1, '{')) {
-                let j = skipWhile(SubsetChar.isHexDigit, i + 2);
-                if (if (if (has(j, '}')) { j > i + 2 } else { false }) { j <= i + 8 } else { false }) { charFromCode(hexValue(i + 2, j), i - 1, j + 1) } else { Err("malformed \\u{...} escape", i - 1) }
+              if (has(i + (1: I32), '{')) {
+                let j = skipWhile(SubsetChar.isHexDigit, i + (2: I32));
+                if (if (if (has(j, '}')) { j > i + (2: I32) } else { false }) { j <= i + (8: I32) } else { false }) {
+                  charFromCode(hexValue(i + (2: I32), j), i - (1: I32), j + (1: I32))
+                } else { Err("malformed \\u{...} escape", i - (1: I32)) }
               } else {
-                let j = skipWhile(SubsetChar.isHexDigit, i + 1);
-                if (j - (i + 1) >= 4) { charFromCode(hexValue(i + 1, i + 5), i - 1, i + 5) } else {
-                  Err("\\u must be followed by four hexadecimal digits", i - 1)
+                let j = skipWhile(SubsetChar.isHexDigit, i + (1: I32));
+                if (j - (i + (1: I32)) >= (4: I32)) {
+                  charFromCode(hexValue(i + (1: I32), i + (5: I32)), i - (1: I32), i + (5: I32))
+                } else {
+                  Err("\\u must be followed by four hexadecimal digits", i - (1: I32))
                 }
               }
             },
             Var(c) => {
               match(SubsetChar.isDigit(c), isSpace(c)) {
                 (true, _) => {
-                  if (if (digitAt(i + 1)) { digitAt(i + 2) } else { false }) {
+                  if (if (digitAt(i + (1: I32))) { digitAt(i + (2: I32)) } else { false }) {
                     charFromCode(
-                      Lexer.digitValue(c) * 100 + Lexer.digitValue(at(i + 1)) * 10 + Lexer.digitValue(at(i + 2)),
-                      i - 1,
-                      i + 3
+                      Lexer.digitValue(c) * (100: I32) + Lexer.digitValue(at(i + (1: I32))) * (10: I32) + Lexer.digitValue(at(i + (2: I32))),
+                      i - (1: I32),
+                      i + (3: I32)
                     )
-                  } else { Err("decimal escape needs exactly three digits", i - 1) }
+                  } else {
+                    Err("decimal escape needs exactly three digits", i - (1: I32))
+                  }
                 },
                 (false, true) => {
                   let j = skipWhile(isSpace, i);
-                  if (has(j, '\\')) { Ok(None, j + 1) } else { Err("unterminated string gap", i - 1) }
+                  if (has(j, '\\')) { Ok(None, j + (1: I32)) } else { Err("unterminated string gap", i - (1: I32)) }
                 },
-                (false, false) => { Err("illegal escape sequence", i - 1) }
+                (false, false) => { Err("illegal escape sequence", i - (1: I32)) }
               }
             }
           }
@@ -214,7 +223,7 @@ let lex = (src) => {
         if (i >= n) { Err("unterminated literal", start) } else {
           match(at(i)) {
             '\\' => {
-              match(escape(i + 1)) {
+              match(escape(i + (1: I32))) {
                 Ok(None, j) => { quoted(quote, start, j, acc) },
                 Ok(Some(c), j) => { quoted(quote, start, j, [c, ..acc]) },
                 Err(message, offset) => { Err(message, offset) }
@@ -222,8 +231,8 @@ let lex = (src) => {
             },
             '\n' => { Err("unterminated literal", start) },
             Var(c) => {
-              if (c == quote) { Ok(CompilerText.implode(SmlList.rev(acc)), i + 1) } else {
-                if (Lexer.byteCode(c) < 32) { Err("control character in a literal", i) } else { quoted(quote, start, i + 1, [c, ..acc]) }
+              if (c == quote) { Ok(CompilerText.implode(SmlList.rev(acc)), i + (1: I32)) } else {
+                if (Lexer.byteCode(c) < (32: I32)) { Err("control character in a literal", i) } else { quoted(quote, start, i + (1: I32), [c, ..acc]) }
               }
             }
           }
@@ -240,18 +249,18 @@ let lex = (src) => {
           })(CompilerText.substring(source, start, j - start))
         };
         let hexAt = (j) => { if (j < n) { SubsetChar.isHexDigit(at(j)) } else { false } };
-        match(if (at(start) == '0') { has(start + 1, 'w') } else { false }, if (if (at(start) == '0') { has(start + 1, 'x') } else { false }) { hexAt(start + 2) } else { false }) {
+        match(if (at(start) == '0') { has(start + (1: I32), 'w') } else { false }, if (if (at(start) == '0') { has(start + (1: I32), 'x') } else { false }) { hexAt(start + (2: I32)) } else { false }) {
           (true, _) => { Err("word constants are not part of SubsetML", start) },
           (false, true) => {
-            let j = skipWhile(SubsetChar.isHexDigit, start + 2);
+            let j = skipWhile(SubsetChar.isHexDigit, start + (2: I32));
             Ok(WScon(SInt(text(j))), j)
           },
           (false, false) => {
             let j = skipWhile(SubsetChar.isDigit, start);
-            let k = if (if (has(j, '.')) { digitAt(j + 1) } else { false }) { skipWhile(SubsetChar.isDigit, j + 1) } else { j };
-            let signed = if (if (has(k + 1, '-')) { true } else { has(k + 1, '+') }) { k + 2 } else { k + 1 };
+            let k = if (if (has(j, '.')) { digitAt(j + (1: I32)) } else { false }) { skipWhile(SubsetChar.isDigit, j + (1: I32)) } else { j };
+            let signed = if (if (has(k + (1: I32), '-')) { true } else { has(k + (1: I32), '+') }) { k + (2: I32) } else { k + (1: I32) };
             let m = if (if (if (has(k, 'e')) { true } else { has(k, 'E') }) { digitAt(signed) } else { false }) { skipWhile(SubsetChar.isDigit, signed) } else { k };
-            if ((m: Number) == j) { Ok(WScon(SInt(text(j))), j) } else { Ok(WScon(SReal(text(m))), m) }
+            if (m == j) { Ok(WScon(SInt(text(j))), j) } else { Ok(WScon(SReal(text(m))), m) }
           }
         }
       };
@@ -261,12 +270,12 @@ let lex = (src) => {
         let rec parts = (i, acc) => {
           let j = skipWhile(isIdentChar, i);
           let acc' = [CompilerText.substring(source, i, j - i), ..acc];
-          if (if (if (has(j, '.')) { j + 1 < n } else { false }) { SubsetChar.isAlpha(at(j + 1)) } else { false }) { parts(j + 1, acc') } else { (SmlList.rev(acc'), j) }
+          if (if (if (has(j, '.')) { j + (1: I32) < n } else { false }) { SubsetChar.isAlpha(at(j + (1: I32))) } else { false }) { parts(j + (1: I32), acc') } else { (SmlList.rev(acc'), j) }
         };
         let (path, j) = parts(start, []);
         match(path, startsWith(j, ".=="), startsWith(j, ".!=")) {
-          (["Real"], true, _) => { Ok(WName(["Real", "=="]), j + 3) },
-          (["Real"], _, true) => { Ok(WName(["Real", "!="]), j + 3) },
+          (["Real"], true, _) => { Ok(WName(["Real", "=="]), j + (3: I32)) },
+          (["Real"], _, true) => { Ok(WName(["Real", "!="]), j + (3: I32)) },
           ([word], _, _) => {
             if (member(word, keywords)) { Ok(WKey(word), j) } else { Ok(WName(path), j) }
           },
@@ -286,38 +295,41 @@ let lex = (src) => {
           match(at(i), if (startsWith(i, "//")) { true } else { startsWith(i, "--") }, startsWith(i, "/*")) {
             (_, true, _) => {
               let j = skipWhile((d) => { d != '\n' }, i);
-              let body = CompilerText.substring(source, i + 2, j - i - 2);
+              let body = CompilerText.substring(source, i + (2: I32), j - i - (2: I32));
               loop(j, acc, [(i, body, trailing(i)), ..cs])
             },
             (_, _, true) => {
-              match(blockComment(i, i + 2, 1)) {
+              match(blockComment(i, i + (2: I32), (1: I32))) {
                 Ok(_, j) => {
                   loop(
                     j,
                     acc,
-                    [(i, CompilerText.substring(source, i + 2, j - i - 4), trailing(i)), ..cs]
+                    [
+                      (i, CompilerText.substring(source, i + (2: I32), j - i - (4: I32)), trailing(i)),
+                      ..cs
+                    ]
                   )
                 },
                 Err(message, offset) => { LexError(message, offset) }
               }
             },
             ('"', _, _) => {
-              match(quoted('"', i, i + 1, [])) {
+              match(quoted('"', i, i + (1: I32), [])) {
                 Ok(s, j) => { loop(j, [(WScon(SString(s)), i), ..acc], cs) },
                 Err(message, offset) => { LexError(message, offset) }
               }
             },
             ('\'', _, _) => {
-              match(quoted('\'', i, i + 1, [])) {
+              match(quoted('\'', i, i + (1: I32), [])) {
                 Ok(s, j) => {
-                  if ((CompilerText.size(s): Number) == 1) {
+                  if (CompilerText.size(s) == (1: I32)) {
                     loop(
                       j,
                       [
                         (
                           WScon(SChar({
                             let SubsetResult.Ok(decoded) = SubsetSource.fromNative(s);
-                            CompilerText.sub(decoded, 0)
+                            CompilerText.sub(decoded, (0: I32))
                           })),
                           i
                         ),
@@ -334,19 +346,26 @@ let lex = (src) => {
             },
             ('`', _, _) => { LexError("backtick strings have no SubsetML counterpart", i) },
             ('#', _, _) => {
-              let j = skipWhile(SubsetChar.isAlphaNum, i + 1);
-              if (j > i + 1) {
-                loop(j, [(WSelect(CompilerText.substring(source, i + 1, j - i - 1)), i), ..acc], cs)
+              let j = skipWhile(SubsetChar.isAlphaNum, i + (1: I32));
+              if (j > i + (1: I32)) {
+                loop(
+                  j,
+                  [
+                    (WSelect(CompilerText.substring(source, i + (1: I32), j - i - (1: I32))), i),
+                    ..acc
+                  ],
+                  cs
+                )
               } else { LexError("expected a label after `#`", i) }
             },
             ('_', _, _) => {
-              if (if (i + 1 < n) { isIdentChar(at(i + 1)) } else { false }) {
+              if (if (i + (1: I32) < n) { isIdentChar(at(i + (1: I32))) } else { false }) {
                 LexError("identifiers starting with `_` are not SubsetML", i)
-              } else { loop(i + 1, [(WKey("_"), i), ..acc], cs) }
+              } else { loop(i + (1: I32), [(WKey("_"), i), ..acc], cs) }
             },
             (Var(c), _, _) => {
               match(isSpace(c), SubsetChar.isDigit(c), SubsetChar.isAlpha(c)) {
-                (true, _, _) => { loop(i + 1, acc, cs) },
+                (true, _, _) => { loop(i + (1: I32), acc, cs) },
                 (_, true, _) => {
                   match(lexNumber(i)) {
                     Ok(tok, j) => { loop(j, [(tok, i), ..acc], cs) },
@@ -370,7 +389,7 @@ let lex = (src) => {
           }
         }
       };
-      loop(0, [], [])
+      loop((0: I32), [], [])
     }
   }
 };

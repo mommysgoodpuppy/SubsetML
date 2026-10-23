@@ -20,9 +20,9 @@ from "./lexer.sml" import * as Lexer;
    Backend names are chosen separately; they are never filesystem identities. *)
 structure WmProject = struct
   datatype input = Input of ModuleProject.resolved * string * string
-  datatype unit = Unit of input * string * string
+  datatype projectUnit = Unit of input * string * string
   datatype edge = Edge of string * Syntax.pos * string * ModuleProject.moduleId
-  datatype source = Source of unit * edge list * WmLexer.result
+  datatype source = Source of projectUnit * edge list * WmLexer.result
   datatype error = Error of string * string * string * Syntax.pos
 
   val failure = fn (path, src, message, pos) => SubsetResult.Err (Error (path, src, message, pos))

@@ -38,12 +38,9 @@ the active compiler graph. Their real-valued interfaces are not changed.
 
 ## WM transition
 
-This is a breaking Basis API migration. WM/JS integer execution is still
-deferred, so `make wm`, compiler WM self-execution and compiler WM fixed-point
-bootstrap cannot regenerate/run the migrated compiler yet. Existing checked-in
-`.wm` mirrors record the preceding real-valued version; they are not current
-compiler artifacts. SML-to-WM rejects the new integer profile explicitly.
-The ordinary supported real-valued WM application profile remains available.
+This is a breaking Basis API migration. Since 2026-10-23 `int` translates to
+Workman's `I32` ([translation rules](translation.md#integers)), so `make wm`
+regenerates the migrated compiler and its `.wm` mirrors run on WM/JS again.
 
 Historical Basis tests that supply real-valued indices or test fractional/NaN
 indices require migration. Do not interpret those type failures as a claim

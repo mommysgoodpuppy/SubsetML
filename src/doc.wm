@@ -30,23 +30,23 @@ from "./subset_string.wm" import * as SubsetString;
 
 from "./syntax.wm" import *;
 
-type Line = (Number, String, Option<Pos>);
+type Line = (I32, String, Option<Pos>);
 
 type Doc = List<Line>;
 
 // Lines up to this width stay on one line where the printers have a choice.
-let width = 80;
+let width = (80: I32);
 
-let text = (s) => { [(0, s, None)] };
+let text = (s) => { [((0: I32), s, None)] };
 
-let atom = (p, s) => { [(0, s, Some(p))] };
+let atom = (p, s) => { [((0: I32), s, Some(p))] };
 
 let empty = text("");
 
 let minTag = match {
   (None, Var(b)) => { b },
   (Var(a), None) => { a },
-  (Some(a), Some(b)) => { Some(if ((a: Number) <= b) { a } else { b }) }
+  (Some(a), Some(b)) => { Some(if ((a: I32) <= b) { a } else { b }) }
 };
 
 /* Horizontal composition: b continues the last line of a, and b's later lines are indented
@@ -68,7 +68,7 @@ let cat = (a: Doc, b: Doc) => {
 
 let cats = (ds) => { SmlList.foldl((d, acc) => { cat(acc, d) })(empty)(ds) };
 
-let indent = (n: Number, d: Doc) => { SmlList.map((i, t, p) => { (i + n, t, p) })(d) };
+let indent = (n: I32, d: Doc) => { SmlList.map((i, t, p) => { (i + n, t, p) })(d) };
 
 // Vertical composition.
 let stack = (ds) => { SmlList.concat(ds) };
@@ -107,10 +107,13 @@ let group = (openD, sep, closeD, ds) => {
     let rec items = match {
       (_, []) => { [] },
       (Var(i), [d, ..rest]) => {
-        [if (i < count - 1) { cat(d, text(sep)) } else { d }, ..items(i + 1, rest)]
+        [
+          if (i < count - (1: I32)) { cat(d, text(sep)) } else { d },
+          ..items(i + (1: I32), rest)
+        ]
       }
     };
-    stack([text(openD), indent(2, stack(items(0, ds))), text(closeD)])
+    stack([text(openD), indent((2: I32), stack(items((0: I32), ds))), text(closeD)])
   }
 };
 
@@ -131,8 +134,8 @@ let isBlankText = (s) => { SmlList.all(SubsetChar.isSpace)(CompilerText.characte
 // Offset of the start of the line containing offset i.
 let lineStart = (src, i) => {
   let rec back = (k) => {
-    if (k <= 0) { 0 } else {
-      if (CompilerText.sub(src, k - 1) == '\n') { k } else { back(k - 1) }
+    if (k <= (0: I32)) { (0: I32) } else {
+      if (CompilerText.sub(src, k - (1: I32)) == '\n') { k } else { back(k - (1: I32)) }
     }
   };
   back(if (i <= SubsetSource.length(src)) { i } else { SubsetSource.length(src) })
@@ -141,9 +144,9 @@ let lineStart = (src, i) => {
 // Whether the source line before the one containing offset i is blank.
 let blankLineBefore = (src, i) => {
   let start = lineStart(src, i);
-  if (start > 0) {
-    let prev = lineStart(src, start - 1);
-    let SubsetResult.Ok(bytes) = SubsetSource.slice(src, prev, start - 1 - prev);
+  if (start > (0: I32)) {
+    let prev = lineStart(src, start - (1: I32));
+    let SubsetResult.Ok(bytes) = SubsetSource.slice(src, prev, start - (1: I32) - prev);
     SubsetList.all(bytes, SubsetChar.isSpace)
   } else { false }
 };
@@ -155,7 +158,7 @@ let commentLines = (src, (p, body, _), style) => {
     let rec drop = match {
       ([], Var(remaining)) => { [] },
       ([c, ..rest], Var(remaining)) => {
-        if (if (remaining > 0) { c == ' ' } else { false }) { drop(rest, remaining - 1) } else { [c, ..rest] }
+        if (if (remaining > (0: I32)) { c == ' ' } else { false }) { drop(rest, remaining - (1: I32)) } else { [c, ..rest] }
       }
     };
     CompilerText.stringOf(drop(bytes, column))
@@ -228,7 +231,7 @@ let render = (src, comments, style, lines) => {
   let rec go = (ls, acc, lastTag, cs, seenCode) => {
     match(ls) {
       [] => {
-        let (acc', _, _) = flush(acc, lastTag, 0, SubsetSource.length(src) + 1, cs);
+        let (acc', _, _) = flush(acc, lastTag, (0: I32), SubsetSource.length(src) + (1: I32), cs);
         acc'
       },
       [(Var(ind), Var(t), None), ..rest] => {
@@ -247,5 +250,5 @@ let render = (src, comments, style, lines) => {
       }
     }
   };
-  SubsetString.concat(SmlList.map((t, _) => { t ++ "\n" })(SmlList.rev(go(lines, [], -1, comments, false))))
+  SubsetString.concat(SmlList.map((t, _) => { t ++ "\n" })(SmlList.rev(go(lines, [], (-1: I32), comments, false))))
 };

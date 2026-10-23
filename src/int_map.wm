@@ -2,59 +2,33 @@
 from "./subset_natural.sml" import * as SubsetNatural;
 */
 
-/* Persistent maps from non-negative integers (held in reals to retain the existing exact-index domain), as
-   a binary trie on the key's bits, lowest bit first. SubsetML has no references, so the type
-   checker threads its substitution through one of these. Lookup and insertion take time
-   proportional to the number of key bits, with bounded source arithmetic per step.
-   Keys must be exact natural numbers below 2^53. */
+/* Persistent binary trie over nonnegative signed integers. Each child stores
+   the remaining key bits, so insertion never constructs a 2^31 scale. */
 
-from "./subset_natural.wm" import * as SubsetNatural;
-
-type Map<a> = Empty | Leaf<Number, a> | Branch<Map<a>, Map<a>>;
-
+type Map<a> = Empty | Leaf<I32, a> | Branch<Map<a>, Map<a>>;
 let empty = Empty;
-
-let quotient = (value, base) => {
-  let (whole, residue) = SubsetNatural.split(value, base);
-  whole
-};
-let even = (n) => {
-  let (whole, residue) = SubsetNatural.split(n, 2);
-  residue <= 0
-};
-
-// `rest` is the key shifted right by the current depth.
-let rec lookup = (m, key, rest) => {
-  match(m) {
+let rec find = (tree, key) => {
+  match(tree) {
     Empty => { None },
-    Leaf(k, v) => { if ((k: Number) == key) { Some(v) } else { None } },
-    Branch(l, r) => {
-      lookup(if (even(rest)) { l } else { r }, key, quotient(rest, 2))
+    Leaf(stored, value) => { if (stored == key) { Some(value) } else { None } },
+    Branch(left, right) => {
+      find(
+        if (I32.mod(key, (2: I32)) == (0: I32)) { left } else { right },
+        I32.div(key, (2: I32))
+      )
     }
   }
 };
-
-let find = (m, key) => { lookup(m, key, key) };
-
-// `scale` is 2 to the power of the current depth, to shift a displaced leaf's key.
-let rec insertAt = (m, key, rest, scale, v) => {
-  match(m) {
-    Empty => { Leaf(key, v) },
-    Leaf(k, old) => {
-      if ((k: Number) == key) { Leaf(key, v) } else {
-        insertAt(
-          if (even(quotient(k, scale))) { Branch(Leaf(k, old), Empty) } else { Branch(Empty, Leaf(k, old)) },
-          key,
-          rest,
-          scale,
-          v
-        )
+let rec insert = (tree, key, value) => {
+  match(tree) {
+    Empty => { Leaf(key, value) },
+    Leaf(stored, old) => {
+      if (stored == key) { Leaf(key, value) } else {
+        insert(insert(Branch(Empty, Empty), stored, old), key, value)
       }
     },
-    Branch(l, r) => {
-      if (even(rest)) { Branch(insertAt(l, key, quotient(rest, 2), scale * 2, v), r) } else { Branch(l, insertAt(r, key, quotient(rest, 2), scale * 2, v)) }
+    Branch(left, right) => {
+      if (I32.mod(key, (2: I32)) == (0: I32)) { Branch(insert(left, I32.div(key, (2: I32)), value), right) } else { Branch(left, insert(right, I32.div(key, (2: I32)), value)) }
     }
   }
 };
-
-let insert = (m, key, v) => { insertAt(m, key, key, 1, v) };

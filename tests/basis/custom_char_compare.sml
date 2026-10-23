@@ -8,8 +8,8 @@ val classifiers = [
   (SubsetChar.isSpace, Char.isSpace), (SubsetChar.isPunct, Char.isPunct)]
 val chars = List.tabulate (256, Char.chr)
 val _ = List.app (fn c => (
-  if (case SubsetChar.toCode c of SubsetResult.Ok code => Real.== (code, Real.fromInt (Char.ord c)) | SubsetResult.Err error => false)
-     andalso SubsetChar.fromCode (Real.fromInt (Char.ord c)) = SubsetResult.Ok c
+  if (case SubsetChar.toCode c of SubsetResult.Ok code => code = Char.ord c | SubsetResult.Err error => false)
+     andalso SubsetChar.fromCode (Char.ord c) = SubsetResult.Ok c
   then () else raise Fail "custom character code conversion";
   List.app (fn (actual, oracle) =>
     if actual c = oracle c then () else raise Fail "custom character classification") classifiers;
@@ -28,6 +28,6 @@ val _ = List.app (fn c => (
 val _ = if SubsetOrder.reverse SubsetOrder.Greater = SubsetOrder.Less then ()
         else raise Fail "reverse ordering"
 val _ = print "custom characters: all 256 values and 65536 pairs ok\n"
-val invalidCodes = [~1.0, 256.0, 0.5, 254.5, 0.0 / 0.0, 1.0 / 0.0, ~(1.0 / 0.0)]
+val invalidCodes = [~1, 256, 2147483647]
 val _ = List.app (fn code => if SubsetChar.fromCode code = SubsetResult.Err SubsetChar.InvalidCode
   then () else raise Fail "invalid character code accepted") invalidCodes

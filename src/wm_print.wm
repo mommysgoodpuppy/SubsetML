@@ -61,6 +61,7 @@ let dotted = (qs, s) => { SubsetString.concatWith(SubsetList.append(qs, [s]), ".
 let tyConName = match {
   ([], "unit") => { "Void" },
   ([], "real") => { "Number" },
+  ([], "int") => { "I32" },
   (Var(qs), Var(s)) => { dotted(qs, capitalize(s)) }
 };
 
@@ -72,7 +73,10 @@ let numNames = List.append(
     ("Char", ["ord", "chr"]),
     ("CharVector", ["tabulate"])
   ])),
-  SmlList.map((x) => { ((["Num"], x), (["Number"], x)) })(["div", "mod", "toString", "fromString"])
+  List.append(
+    SmlList.map((x) => { ((["Num"], x), (["Number"], x)) })(["div", "mod", "toString", "fromString"]),
+    SmlList.map((x) => { (([], x), (["I32"], x)) })(["div", "mod"])
+  )
 );
 
 // Basis constructors spelled differently in Workman.
@@ -117,13 +121,15 @@ let hex2 = (n) => {
   let digits = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"];
   let rec digit = (index, values) => {
     match(values) {
-      [first, ..rest] => { if (index <= 0) { first } else { digit(index - 1, rest) } }
+      [first, ..rest] => {
+        if (index <= (0: I32)) { first } else { digit(index - (1: I32), rest) }
+      }
     }
   };
   let rec split = (low, high) => {
-    if (low >= 16) { split(low - 16, high + 1) } else { (high, low) }
+    if (low >= (16: I32)) { split(low - (16: I32), high + (1: I32)) } else { (high, low) }
   };
-  let (high, low) = split(n, 0);
+  let (high, low) = split(n, (0: I32));
   digit(high, digits) ++ digit(low, digits)
 };
 
@@ -153,8 +159,10 @@ let withoutRealSuffix = (s) => {
   }
 };
 
+/* Workman integer literals are overloaded and default to Number, so an SML int constant is
+   ascribed. The reader turns `(n: I32)` back into the constant. */
 let scon = match {
-  SInt(s) => { minus(s) },
+  SInt(s) => { "(" ++ minus(s) ++ ": I32)" },
   SReal(s) => { minus(withoutRealSuffix(s)) },
   SString(s) => {
     "\"" ++ SubsetString.concat(SubsetList.map(CompilerText.characters(s), (c) => { escapeChar('"', c) })) ++ "\""
@@ -163,12 +171,6 @@ let scon = match {
 };
 
 let isNegative = match {
-  SInt(s) => {
-    match(CompilerText.characters(s)) {
-      ['~', ..rest] => { true },
-      Var(bytes) => { false }
-    }
-  },
   SReal(s) => {
     match(CompilerText.characters(s)) {
       ['~', ..rest] => { true },
@@ -261,7 +263,9 @@ let rec pat = (inMatch, binds, p) => {
     PRecord(pos, fields) => {
       let field = match {
         (Var(l), PId(_, ([], Var(x)))) => {
-          if (if (x == l) { !isConName([], x) } else { false }) { text(l) } else { cats([text(l ++ " = "), child(false, PId(0, ([], x)))]) }
+          if (if (x == l) { !isConName([], x) } else { false }) { text(l) } else {
+            cats([text(l ++ " = "), child(false, PId((0: I32), ([], x)))])
+          }
         },
         (Var(l), Var(q)) => { cats([text(l ++ " = "), child(false, q)]) }
       };
@@ -305,21 +309,21 @@ let params = (p) => {
    || 1, && 2, == != 3, comparisons 4, ++ + - 5, * / 6, prefix 7, calls 9, atoms 10. */
 
 let binop = match {
-  "=" => { Some("==", 3) },
-  "<>" => { Some("!=", 3) },
-  "<" => { Some("<", 4) },
-  ">" => { Some(">", 4) },
-  "<=" => { Some("<=", 4) },
-  ">=" => { Some(">=", 4) },
-  "+" => { Some("+", 5) },
-  "-" => { Some("-", 5) },
-  "^" => { Some("++", 5) },
-  "*" => { Some("*", 6) },
-  "/" => { Some("/", 6) },
+  "=" => { Some("==", (3: I32)) },
+  "<>" => { Some("!=", (3: I32)) },
+  "<" => { Some("<", (4: I32)) },
+  ">" => { Some(">", (4: I32)) },
+  "<=" => { Some("<=", (4: I32)) },
+  ">=" => { Some(">=", (4: I32)) },
+  "+" => { Some("+", (5: I32)) },
+  "-" => { Some("-", (5: I32)) },
+  "^" => { Some("++", (5: I32)) },
+  "*" => { Some("*", (6: I32)) },
+  "/" => { Some("/", (6: I32)) },
   _ => { None }
 };
 
-let parenAt = (need: Number, (level, d)) => {
+let parenAt = (need: I32, (level, d)) => {
   if (level >= need) { d } else { cats([text("("), d, text(")")]) }
 };
 
@@ -337,8 +341,10 @@ let blockParts = match {
 };
 
 let rec expL = match {
-  EScon(p, c) => { (if (isNegative(c)) { 7 } else { 10 }, atom(p, scon(c))) },
-  EId(p, ([], "nil")) => { (10, atom(p, "[]")) },
+  EScon(p, c) => {
+    (if (isNegative(c)) { (7: I32) } else { (10: I32) }, atom(p, scon(c)))
+  },
+  EId(p, ([], "nil")) => { ((10: I32), atom(p, "[]")) },
   EId(p, (["Real"], Var(opr))) => {
     if (if (opr == "==") { true } else { opr == "!=" }) {
       let realTy = TyCon([], ([], "real"));
@@ -353,12 +359,12 @@ let rec expL = match {
           )
         )
       ]))
-    } else { (10, atom(p, valueName(["Real"], opr))) }
+    } else { ((10: I32), atom(p, valueName(["Real"], opr))) }
   },
-  EId(p, id) => { (10, atom(p, valueName(id))) },
+  EId(p, id) => { ((10: I32), atom(p, valueName(id))) },
   ERecord(p, fields) => {
     (
-      10,
+      (10: I32),
       cat(
         atom(p, "."),
         group(
@@ -371,12 +377,12 @@ let rec expL = match {
     )
   },
   ECopy(_, source, _, _) => { expL(source) },
-  ESelect(p, l) => { (10, atom(p, "#" ++ l)) },
-  ETuple([]) => { (10, text("void")) },
-  ETuple(es) => { (10, group("(", ",", ")", SmlList.map(exp)(es))) },
-  EList(es) => { (10, group("[", ",", "]", SmlList.map(exp)(es))) },
-  ESeq(es) => { (10, group("(", ";", ")", SmlList.map(exp)(es))) },
-  ELet(ds, es) => { (10, block(ds, es)) },
+  ESelect(p, l) => { ((10: I32), atom(p, "#" ++ l)) },
+  ETuple([]) => { ((10: I32), text("void")) },
+  ETuple(es) => { ((10: I32), group("(", ",", ")", SmlList.map(exp)(es))) },
+  EList(es) => { ((10: I32), group("[", ",", "]", SmlList.map(exp)(es))) },
+  ESeq(es) => { ((10: I32), group("(", ";", ")", SmlList.map(exp)(es))) },
+  ELet(ds, es) => { ((10: I32), block(ds, es)) },
   EApp(EId(p, ([], "::")), ETuple([h, t])) => {
     let rec spine = match {
       (EApp(EId(_, ([], "::")), ETuple([h, t])), Var(acc)) => { spine(t, [h, ..acc]) },
@@ -390,7 +396,7 @@ let rec expL = match {
       Some(e) => { [cat(text(".."), exp(e))] }
     };
     (
-      10,
+      (10: I32),
       cat(
         atom(p, ""),
         group("[", ",", "]", List.append(SmlList.map(exp)(items), tailDocs))
@@ -404,13 +410,13 @@ let rec expL = match {
         _ => { l }
       };
       (
-        3,
+        (3: I32),
         cats([
           text("("),
           exp(left),
           text(": Number)"),
           atom(p, " " ++ opr ++ " "),
-          parenAt(4, expL(r))
+          parenAt((4: I32), expL(r))
         ])
       )
     } else { call(EId(p, (["Real"], opr)), ETuple([l, r])) }
@@ -418,11 +424,20 @@ let rec expL = match {
   EApp(EId(p, ([], Var(opr))), ETuple([l, r])) => {
     match(binop(opr), Parser.isInfix(opr)) {
       (None, true) => {
-        if (opr == "@") { call(EId(p, (["List"], "append")), ETuple([l, r])) } else {
+        if (if (if (opr == "@") { true } else { opr == "div" }) { true } else { opr == "mod" }) {
+          call(
+            EId(p, if (opr == "@") { (["List"], "append") } else { ([], opr) }),
+            ETuple([l, r])
+          )
+        } else {
           (
-            // div, mod, o and before: no Workman operator, so the SML operator stays.
-            0,
-            cats([parenAt(9, expL(l)), atom(p, " " ++ opr ++ " "), parenAt(9, expL(r))])
+            // o and before: no Workman operator, so the SML operator stays.
+            (0: I32),
+            cats([
+              parenAt((9: I32), expL(l)),
+              atom(p, " " ++ opr ++ " "),
+              parenAt((9: I32), expL(r))
+            ])
           )
         }
       },
@@ -433,22 +448,23 @@ let rec expL = match {
           cats([
             parenAt(level, expL(l)),
             atom(p, " " ++ spelling ++ " "),
-            parenAt(level + 1, expL(r))
+            parenAt(level + (1: I32), expL(r))
           ])
         )
       },
       (None, false) => { call(EId(p, ([], opr)), ETuple([l, r])) }
     }
   },
-  EApp(EId(p, ([], "not")), e) => { (7, cat(atom(p, "!"), parenAt(7, expL(e)))) },
+  EApp(EId(p, ([], "not")), e) => { ((7: I32), cat(atom(p, "!"), parenAt((7: I32), expL(e)))) },
   EApp(EId(p, ([], "~")), e) => {
     let (level, d) = expL(e);
     (
       // `-3` would read back as a negative literal, so a literal operand keeps parentheses.
-      7,
+      (7: I32),
       cat(
         atom(p, "-"),
-        match(e, level >= 9) {
+        match(e, level >= (9: I32)) {
+          (EScon(_, SInt(_)), _) => { d },
           (EScon(_, _), _) => { cats([text("("), d, text(")")]) },
           (_, true) => { d },
           (_, false) => { cats([text("("), d, text(")")]) }
@@ -457,17 +473,17 @@ let rec expL = match {
     )
   },
   EApp(ESelect(p, l), e) => {
-    if (if (selectable(e)) { startsAlpha(l) } else { false }) { (10, cats([exp(e), atom(p, "." ++ l)])) } else { call(ESelect(p, l), e) }
+    if (if (selectable(e)) { startsAlpha(l) } else { false }) { ((10: I32), cats([exp(e), atom(p, "." ++ l)])) } else { call(ESelect(p, l), e) }
   },
   EApp(f, a) => { call(f, a) },
   ETyped(e, t) => {
-    (10, cats([text("("), exp(e), text(": "), ty(t), text(")")]))
+    ((10: I32), cats([text("("), exp(e), text(": "), ty(t), text(")")]))
   },
-  EAndalso(a, b) => { expL(EIf(a, b, EId(0, ([], "false")))) },
-  EOrelse(a, b) => { expL(EIf(a, EId(0, ([], "true")), b)) },
+  EAndalso(a, b) => { expL(EIf(a, b, EId((0: I32), ([], "false")))) },
+  EOrelse(a, b) => { expL(EIf(a, EId((0: I32), ([], "true")), b)) },
   EIf(c, a, b) => {
     (
-      0,
+      (0: I32),
       cats([
         text("if ("),
         exp(c),
@@ -483,12 +499,14 @@ let rec expL = match {
       ETuple([first, second, ..more]) => { join(", ", SmlList.map(exp)([first, second, ..more])) },
       _ => { exp(e) }
     };
-    (0, cat(cats([text("match("), scrutinee, text(") ")]), arms(rules)))
+    ((0: I32), cat(cats([text("match("), scrutinee, text(") ")]), arms(rules)))
   },
   EFn([(Var(p), Var(body))]) => {
-    if (paramOk(p)) { (0, cats([params(p), text(" => "), lambdaBody(body)])) } else { (0, cat(text("match "), arms([(p, body)]))) }
+    if (paramOk(p)) {
+      ((0: I32), cats([params(p), text(" => "), lambdaBody(body)]))
+    } else { ((0: I32), cat(text("match "), arms([(p, body)]))) }
   },
-  EFn(rules) => { (0, cat(text("match "), arms(rules))) }
+  EFn(rules) => { ((0: I32), cat(text("match "), arms(rules))) }
 }
 
 and exp = (e) => {
@@ -503,7 +521,7 @@ and call = (f, a) => {
     ETuple(es) => { group("(", ",", ")", SmlList.map(exp)(es)) },
     _ => { cats([text("("), exp(a), text(")")]) }
   };
-  (9, cat(parenAt(9, expL(f)), args))
+  ((9: I32), cat(parenAt((9: I32), expL(f)), args))
 }
 
 // A curried lambda chains without braces: (a) => (b) => { e }.
@@ -523,12 +541,12 @@ and arms = (rules) => {
     (_, []) => { [] },
     (Var(i), [r, ..rest]) => {
       [
-        if (i < count - 1) { cat(arm(r), text(",")) } else { arm(r) },
-        ..go(i + 1, rest)
+        if (i < count - (1: I32)) { cat(arm(r), text(",")) } else { arm(r) },
+        ..go(i + (1: I32), rest)
       ]
     }
   };
-  stack([text("{"), indent(2, stack(go(0, rules))), text("}")])
+  stack([text("{"), indent((2: I32), stack(go((0: I32), rules))), text("}")])
 }
 
 // `{ decs; e1; ...; en }`, on one line when it is a single short expression.
@@ -538,22 +556,24 @@ and block = (ds, es) => {
     (_, []) => { [] },
     (Var(i), [e, ..rest]) => {
       [
-        if (i < count - 1) { cat(exp(e), text(";")) } else { exp(e) },
-        ..exps(i + 1, rest)
+        if (i < count - (1: I32)) { cat(exp(e), text(";")) } else { exp(e) },
+        ..exps(i + (1: I32), rest)
       ]
     }
   };
-  let items = List.append(SmlList.map((d) => { dec([], d) })(ds), exps(0, es));
+  let items = List.append(SmlList.map((d) => { dec([], d) })(ds), exps((0: I32), es));
   match(items) {
     [single] => {
       if (if (SmlList.null(ds)) {
         match(flat(single)) {
-          Some(text) => { CompilerText.size(text) <= 60 },
+          Some(text) => { CompilerText.size(text) <= (60: I32) },
           None => { false }
         }
-      } else { false }) { cats([text("{ "), single, text(" }")]) } else { stack([text("{"), indent(2, single), text("}")]) }
+      } else { false }) { cats([text("{ "), single, text(" }")]) } else { stack([text("{"), indent((2: I32), single), text("}")]) }
     },
-    _ => { stack([text("{"), indent(2, stack(items)), text("}")]) }
+    _ => {
+      stack([text("{"), indent((2: I32), stack(items)), text("}")])
+    }
   }
 }
 
@@ -626,7 +646,10 @@ and dec = (structures, d) => {
           _ => { cats([head, text(" "), join(" | ", docs)]) }
         };
         if (fits(oneLine)) { oneLine } else {
-          stack([head, indent(2, stack(SmlList.map((c) => { cat(text("| "), c) })(docs)))])
+          stack([
+            head,
+            indent((2: I32), stack(SmlList.map((c) => { cat(text("| "), c) })(docs)))
+          ])
         }
       };
       andGroup(atom(p, "type "), SmlList.map(bind)(binds))

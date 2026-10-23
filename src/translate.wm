@@ -315,7 +315,7 @@ let conventionWarnings = (decs, exps) => {
   List.append(
     concatMap(
       keyword,
-      List.append(concatMap(decNames, decs), concatMap((e) => { expNames(0, e) }, exps))
+      List.append(concatMap(decNames, decs), concatMap((e) => { expNames((0: I32), e) }, exps))
     ),
     concatMap(casing, decs)
   )
@@ -336,7 +336,9 @@ let baseName = (path) => {
     [last, .._] => { last },
     [] => { path }
   };
-  if (CompilerText.isSuffix(file, ".sml")) { CompilerText.slice(file, 0, CompilerText.size(file) - 4) } else { file }
+  if (CompilerText.isSuffix(file, ".sml")) {
+    CompilerText.slice(file, (0: I32), CompilerText.size(file) - (4: I32))
+  } else { file }
 };
 
 // The file's structure name, or "" when it has none.
@@ -429,7 +431,6 @@ let declarationGaps = (structures, prog) => {
   }
   and expression = (e) => {
     match(e) {
-      EScon(_, SInt(_)) => { ["signed 32-bit int (WM support deferred)"] },
       EScon(_) => { [] },
       EId(_) => { [] },
       ESelect(_) => { [] },
@@ -439,7 +440,7 @@ let declarationGaps = (structures, prog) => {
       ESeq(es) => { expressions(es) },
       ELet(ds, es) => { List.append(concatMap(declaration, ds), expressions(es)) },
       EApp(a, b) => { expressions([a, b]) },
-      ETyped(e, t) => { List.append(expression(e), integerType(t)) },
+      ETyped(e, _) => { expression(e) },
       EAndalso(a, b) => { expressions([a, b]) },
       EOrelse(a, b) => { expressions([a, b]) },
       EIf(a, b, c) => { expressions([a, b, c]) },
@@ -448,20 +449,9 @@ let declarationGaps = (structures, prog) => {
       ECopy(_, a, b, _) => { expressions([a, b]) }
     }
   }
-  and integerType = (t) => {
-    match(t) {
-      TyCon(_, ([], "int")) => { ["signed 32-bit int (WM support deferred)"] },
-      TyCon(ts, _) => { concatMap(integerType, ts) },
-      TyTuple(ts) => { concatMap(integerType, ts) },
-      TyArrow(a, b) => { List.append(integerType(a), integerType(b)) },
-      TyRecord(fs) => { concatMap((_, t) => { integerType(t) }, fs) },
-      _ => { [] }
-    }
-  }
   and patterns = (p) => {
     match(p) {
-      PScon(_, SInt(_)) => { ["signed 32-bit int (WM support deferred)"] },
-      PTyped(p, t) => { List.append(patterns(p), integerType(t)) },
+      PTyped(p, _) => { patterns(p) },
       PRecord(_, fs) => { concatMap((_, p) => { patterns(p) }, fs) },
       PTuple(ps) => { concatMap(patterns, ps) },
       PList(ps) => { concatMap(patterns, ps) },
@@ -480,38 +470,20 @@ let declarationGaps = (structures, prog) => {
         )
       },
       DType(_, binds) => {
-        List.append(
-          concatMap((_, _, t) => { integerType(t) }, binds),
-          if (if (match(binds) {
-            [] => { false },
-            [_] => { false },
-            _ => { true }
-          }) {
-            SmlList.exists((_, _, t) => {
-              match(t) {
-                TyRecord(_) => { true },
-                _ => { false }
-              }
-            })(binds)
-          } else { false }) { ["type groups containing records"] } else { [] }
-        )
+        if (if (match(binds) {
+          [] => { false },
+          [_] => { false },
+          _ => { true }
+        }) {
+          SmlList.exists((_, _, t) => {
+            match(t) {
+              TyRecord(_) => { true },
+              _ => { false }
+            }
+          })(binds)
+        } else { false }) { ["type groups containing records"] } else { [] }
       },
-      DDatatype(_, binds) => {
-        concatMap(
-          (_, _, cs) => {
-            concatMap(
-              (_, _, t) => {
-                match(t) {
-                  None => { [] },
-                  Some(t) => { integerType(t) }
-                }
-              },
-              cs
-            )
-          },
-          binds
-        )
-      },
+      DDatatype(_) => { [] },
       DOpen(_, ids) => {
         if (SmlList.all((id) => { SmlList.exists((s) => { [s] == id })(structures) })(ids)) { [] } else { ["open of a non-project structure"] }
       }
@@ -534,43 +506,45 @@ let declarationGaps = (structures, prog) => {
   concatMap(top, prog)
 };
 
-/* The deferred WM execution profile must not silently reinterpret newly
-   defaulted SML integers as real-valued Number operations. */
-let integerSite = (st) => {
-  let rec contains = (t) => {
+/* SML closes an unresolved numeric class to int; Workman closes it to Number. A program that
+   relies on either default would change meaning in translation, so it must annotate. An int
+   constant is never such a site: it is int in SML and printed as an I32 ascription. */
+let defaultedSite = (st) => {
+  let rec unresolved = (t) => {
     match(Unify.prune(st, t)) {
-      Types.TCon(n, ts) => {
-        if (Unify.sameName(n, Types.intName)) { true } else { SmlList.exists(contains)(ts) }
-      },
+      Types.TCon(_, ts) => { SmlList.exists(unresolved)(ts) },
       Types.TVar(v) => {
         match(Unify.lookup(st, v)) {
-          Unify.Free(Types.KClass(ns), _) => {
-            SmlList.exists((n) => { Unify.sameName(n, Types.intName) })(ns)
-          },
+          Unify.Free(Types.KClass(_), _) => { true },
           _ => { false }
         }
       },
-      Types.TArrow(a, b) => { if (contains(a)) { true } else { contains(b) } },
-      Types.TRecord(fs) => { SmlList.exists((_, t) => { contains(t) })(fs) },
+      Types.TArrow(a, b) => { if (unresolved(a)) { true } else { unresolved(b) } },
+      Types.TRecord(fs) => { SmlList.exists((_, t) => { unresolved(t) })(fs) },
       _ => { false }
     }
   };
   let Unify.State(_, _, _, _, sites) = st;
   match(sites) {
     None => { None },
-    Some(xs) => { SmlList.find((_, t) => { contains(t) })(xs) }
+    Some(xs) => {
+      match(SmlList.mapPartial(match {
+        Unify.Defaulted(pos) => { Some(pos) },
+        Unify.Operand(pos, t) => { if (unresolved(t)) { Some(pos) } else { None } }
+      })(xs)) {
+        [] => { None },
+        [pos, .._] => { Some(pos) }
+      }
+    }
   }
 };
 
+let defaultedMessage = "a numeric operation whose type only a default decides (SML int, Workman Number); annotate it as int or real";
+
 let wmNumbers = (st) => {
-  match(integerSite(st)) {
+  match(defaultedSite(st)) {
     None => { Unify.Ok(void, st) },
-    Some(pos, _) => {
-      Unify.Err(
-        "signed 32-bit int: WM support is deferred; annotate numeric operands as Number",
-        pos
-      )
-    }
+    Some(pos) => { Unify.Err(defaultedMessage, pos) }
   }
 };
 
@@ -581,23 +555,21 @@ let toWm = (structures, path, src, prog, comments) => {
   let used = distinct(List.append(concatMap(decQuals, decs), concatMap(expQuals, exps)));
   let start = match(prog) {
     [TopDecs([SStructure(p, _), .._]), .._] => { p },
-    _ => { 0 }
+    _ => { (0: I32) }
   };
   let imports = SmlList.map((q) => {
     Doc.atom(start, "from \"./" ++ WmPrint.fileName(q) ++ "\" import * as " ++ q ++ ";")
   })(SmlList.filter((q) => {
     if (q != self) { SmlList.exists((s) => { s == q })(structures) } else { false }
   })(used));
-  /* A newly valid defaulted integer function need not contain an integer
-     literal or annotation. Reject it too when its standalone environment
-     can be resolved, instead of silently assigning WM Number semantics. */
-  let inferredInteger = match(Basis.initial) {
+  // Reject a numeric default when the file's standalone environment can be resolved.
+  let defaulted = match(Basis.initial) {
     Unify.Err(_) => { false },
     Unify.Ok(basis, _) => {
       match(Elab.program(basis, prog, Unify.lenient)) {
         Unify.Err(_) => { false },
         Unify.Ok(_, st) => {
-          match(integerSite(st)) {
+          match(defaultedSite(st)) {
             Some(_) => { true },
             None => { false }
           }
@@ -607,7 +579,7 @@ let toWm = (structures, path, src, prog, comments) => {
   };
   let gaps = List.append(
     declarationGaps(structures, phrases),
-    if (inferredInteger) { ["signed 32-bit int (WM support deferred)"] } else { [] }
+    if (defaulted) { [defaultedMessage] } else { [] }
   );
   let doc = if (SmlList.null(gaps)) {
     Doc.stack(SmlList.map((td) => { WmPrint.topdec(structures, td) })(phrases))
@@ -621,7 +593,7 @@ let toWm = (structures, path, src, prog, comments) => {
     TranslateError(path ++ ": unsupported WM translation: " ++ SubsetString.concatWith(gaps, ", ") ++ "; embedded SML declarations are not supported")
   } else {
     if (if (self != "") { expected != baseName(path) ++ ".wm" } else { false }) {
-      TranslateError(path ++ ": structure " ++ self ++ " must be in a file named " ++ CompilerText.slice(expected, 0, CompilerText.size(expected) - 3) ++ ".sml")
+      TranslateError(path ++ ": structure " ++ self ++ " must be in a file named " ++ CompilerText.slice(expected, (0: I32), CompilerText.size(expected) - (3: I32)) ++ ".sml")
     } else {
       Output(
         baseName(path) ++ ".wm",
@@ -689,7 +661,7 @@ let keywordPrefix = BackendNames.prefix;
 
 // Compatibility entry: the source-list backend uses project-wide binding resolution.
 let keywordProgram = (prefix, prog) => {
-  let (prog, _, _) = BackendNames.module("", [], prog, BackendNames.Supply(prefix, 0, []));
+  let (prog, _, _) = BackendNames.module("", [], prog, BackendNames.Supply(prefix, (0: I32), []));
   prog
 };
 
@@ -697,19 +669,24 @@ let keywordProgram = (prefix, prog) => {
    rewritten; a second, strict elaboration rejects every remaining invalid SML equality. */
 let realEquality = (st, prog) => {
   let Unify.State(_, _, _, _, sites) = st;
-  let positions = SmlList.map((p, _) => { p })(SmlList.filter((_, t) => {
-    match(Unify.prune(st, t)) {
-      Types.TCon(n, []) => { Unify.sameName(n, Types.realName) },
-      _ => { false }
-    }
+  let positions = SmlList.mapPartial(match {
+    Unify.Operand(p, t) => {
+      match(Unify.prune(st, t)) {
+        Types.TCon(n, []) => {
+          if (Unify.sameName(n, Types.realName)) { Some(p) } else { None }
+        },
+        _ => { None }
+      }
+    },
+    Unify.Defaulted(_) => { None }
   })(match(sites) {
     Some(xs) => { xs },
     None => { [] }
-  }));
+  });
   let rewrite = (e) => {
     match(e) {
       EApp(EId(p, ([], Var(opr))), a) => {
-        if (if (if (opr == "=") { true } else { opr == "<>" }) { SmlList.exists((q) => { (p: Number) == q })(positions) } else { false }) {
+        if (if (if (opr == "=") { true } else { opr == "<>" }) { SmlList.exists((q) => { p == q })(positions) } else { false }) {
           EApp(EId(p, (["Real"], if (opr == "=") { "==" } else { "!=" })), a)
         } else { e }
       },
@@ -759,9 +736,7 @@ let portableValues = (env, prog, st) => {
     let rec identity = (i, args) => {
       match(args) {
         [] => { true },
-        [Types.TGen(j), ..rest] => {
-          if ((i: Number) == j) { identity(i + 1, rest) } else { false }
-        },
+        [Types.TGen(j), ..rest] => { if (i == j) { identity(i + (1: I32), rest) } else { false } },
         _ => { false }
       }
     };
@@ -774,7 +749,7 @@ let portableValues = (env, prog, st) => {
               if (SmlList.exists((x) => { x == n })(seen)) { localType(rest, seen) } else {
                 match(body) {
                   Types.TCon(name, args) => {
-                    if (if (if (Unify.sameName(name, nominal)) { (arity: Number) == Types.arityOf(nominal) } else { false }) { identity(0, args) } else { false }) { Some(path, n) } else { localType(rest, [n, ..seen]) }
+                    if (if (if (Unify.sameName(name, nominal)) { arity == Types.arityOf(nominal) } else { false }) { identity((0: I32), args) } else { false }) { Some(path, n) } else { localType(rest, [n, ..seen]) }
                   },
                   _ => { localType(rest, [n, ..seen]) }
                 }
@@ -813,10 +788,10 @@ let portableValues = (env, prog, st) => {
           },
           parameters
         );
-        Unify.bind(Elab.exp((env, 1, []), source, st))((sourceType) => (probe) => {
+        Unify.bind(Elab.exp((env, (1: I32), []), source, st))((sourceType) => (probe) => {
           Unify.bind(Elab.mapRes(
             (v, probe) => {
-              let (t, probe) = Unify.fresh(probe, Types.KPlain, 1);
+              let (t, probe) = Unify.fresh(probe, Types.KPlain, (1: I32));
               Unify.Ok((v, t), probe)
             },
             variables,
@@ -824,13 +799,13 @@ let portableValues = (env, prog, st) => {
           ))((arguments) => (probe) => {
             Unify.bind(Elab.elabTy(env, (v) => { Env.assoc(v, arguments) }, p, layout, probe))((layoutType) => (probe) => {
               Unify.bind(Elab.unifyAt(probe, p, "copied layout", layoutType, sourceType))((_) => (probe) => {
-                Unify.bind(Elab.closeDeclaration(0, probe))((_) => (probe) => {
+                Unify.bind(Elab.closeDeclaration((0: I32), probe))((_) => (probe) => {
                   let rec syntaxType = (t) => {
                     match(Unify.prune(probe, t)) {
                       Types.TVar(v) => {
                         match(Unify.lookup(probe, v)) {
                           Unify.Free(kind, level) => {
-                            if (level <= 0) { None } else {
+                            if (level <= (0: I32)) { None } else {
                               match(kind) {
                                 Types.KClass(_) => { None },
                                 _ => {
@@ -906,8 +881,8 @@ let portableValues = (env, prog, st) => {
     match(e) {
       ECopy(p, source, target, layout) => { copy(env, p, source, target, layout, st) },
       EApp(ESelect(_, _), EId(_, _)) => {
-        Unify.bind(Elab.exp((env, 1, []), e, st))((t) => (probe) => {
-          Unify.bind(Elab.closeDeclaration(0, probe))((_) => (probe) => {
+        Unify.bind(Elab.exp((env, (1: I32), []), e, st))((t) => (probe) => {
+          Unify.bind(Elab.closeDeclaration((0: I32), probe))((_) => (probe) => {
             match(Unify.prune(probe, t)) {
               Types.TArrow(_, _) => {
                 let arg = fresh("subsetmlAlias" ++ CompilerText.natural(p));
@@ -939,7 +914,7 @@ let portableValues = (env, prog, st) => {
       [] => { Unify.Ok((Env.empty, []), st) },
       [d, ..rest] => {
         Unify.bind(declaration(env, d, st))((d) => (st) => {
-          Unify.bind(Elab.dec((env, 0, []), d, st))((delta) => (st) => {
+          Unify.bind(Elab.dec((env, (0: I32), []), d, st))((delta) => (st) => {
             Unify.bind(declarations(Env.plus(env, delta), rest, st))((more, rest) => (st) => { Unify.Ok((Env.plus(delta, more), [d, ..rest]), st) })
           })
         })
@@ -950,7 +925,7 @@ let portableValues = (env, prog, st) => {
     match(sd) {
       SDec(d) => {
         Unify.bind(declaration(env, d, st))((d) => (st) => {
-          Unify.bind(Elab.dec((env, 0, []), d, st))((delta) => (st) => { Unify.Ok((delta, SDec(d)), st) })
+          Unify.bind(Elab.dec((env, (0: I32), []), d, st))((delta) => (st) => { Unify.Ok((delta, SDec(d)), st) })
         })
       },
       SStructure(p, bs) => {
@@ -1038,7 +1013,9 @@ let recover = (modules, target) => {
   let rec order = (item, visiting, done, acc) => {
     let name = nameOfModule(item);
     if (SmlList.exists((n) => { n == name })(done)) { Unify.Ok((done, acc), Unify.initial) } else {
-      if (SmlList.exists((n) => { n == name })(visiting)) { Unify.Err("cyclic module dependency involving " ++ name, 0) } else {
+      if (SmlList.exists((n) => { n == name })(visiting)) {
+        Unify.Err("cyclic module dependency involving " ++ name, (0: I32))
+      } else {
         let needed = SmlList.filter((m) => {
           if (nameOfModule(m) != name) { SmlList.exists((n) => { n == nameOfModule(m) })(deps(item)) } else { false }
         })(modules);
@@ -1093,7 +1070,7 @@ let recover = (modules, target) => {
             Unify.bind(strict(basis, rewritten, Unify.initial))((_) => (st) => {
               match(SmlList.find((m) => { nameOfModule(m) == nameOfModule(target) })(rewritten)) {
                 Some(m) => { Unify.Ok(m, st) },
-                None => { Unify.Err("missing translated module", 0) }
+                None => { Unify.Err("missing translated module", (0: I32)) }
               }
             })
           })
@@ -1110,7 +1087,7 @@ let recoverProjectWithRuntime = (runtime, modules) => {
     SmlList.foldl((name, result) => {
       Unify.bind(result)((env) => (st) => {
         match(SmlList.find((key, _) => { key == name })(cache)) {
-          None => { Unify.Err("missing resolved dependency " ++ name, 0) },
+          None => { Unify.Err("missing resolved dependency " ++ name, (0: I32)) },
           Some(_, body) => {
             Unify.Ok(Env.plus(env, Env.withStructure(name, body, false)), st)
           }
@@ -1120,7 +1097,7 @@ let recoverProjectWithRuntime = (runtime, modules) => {
   };
   let own = (env, name) => {
     match(Env.structureAt(env, [name])) {
-      None => { Unify.Err("missing translated structure " ++ name, 0) },
+      None => { Unify.Err("missing translated structure " ++ name, (0: I32)) },
       Some(body, _) => {
         let selected = match(runtime) {
           Some(key) => { key == name },
@@ -1131,12 +1108,12 @@ let recoverProjectWithRuntime = (runtime, modules) => {
             ([Types.KPlain], Types.TArrow(Types.TCon(tn, []), Types.TGen(index))),
             Env.SValue
           ) => {
-            if ((Types.stampOf(tn): Number) == Types.stampOf(Types.stringName)) { (index: Number) == 0 } else { false }
+            if (Types.stampOf(tn) == Types.stampOf(Types.stringName)) { index == (0: I32) } else { false }
           },
           _ => { false }
         };
         if (if (selected) { !valid } else { false }) {
-          Unify.Err("panic runtime must export panic : string -> 'a", 0)
+          Unify.Err("panic runtime must export panic : string -> 'a", (0: I32))
         } else { Unify.Ok(body, Unify.initial) }
       }
     }
@@ -1207,7 +1184,7 @@ let fromWmNamed = (name, src, decs, exps, comments) => {
   };
   let structureDoc = Doc.stack([
     structureLine,
-    Doc.indent(2, Doc.stack(SmlList.map(SmlPrint.dec)(decs))),
+    Doc.indent((2: I32), Doc.stack(SmlList.map(SmlPrint.dec)(decs))),
     Doc.text("end")
   ]);
   let expDocs = SmlList.map((e) => { Doc.cat(SmlPrint.exp(e), Doc.text(";")) })(exps);

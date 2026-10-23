@@ -29,18 +29,23 @@ from "./subset_list.wm" import * as SubsetList;
 
 from "./types.wm" import *;
 
-type Var = Free<Kind, Number> | Bound<Ty>; // kind, level
+type Var = Free<Kind, I32> | Bound<Ty>; // kind, level
 
 /* A `# lab` selection waiting for its record type to be known (Definition §4.11):
    position, level, record type, label, field type. */
-type Selection = (Syntax.Pos, Number, Ty, String, Ty);
+type Selection = (Syntax.Pos, I32, Ty, String, Ty);
+
+/* A recorded site: an identifier or equality operand with its type, or a binding whose
+   numeric class was closed by SML's integer default. Workman defaults to Number instead,
+   so translation to Workman must not rely on the second kind. */
+type Site = Operand<Syntax.Pos, Ty> | Defaulted<Syntax.Pos>;
 
 /* Variables, the next fresh number (also used for type name stamps), pending selections,
    the label sets of the record type declarations so far (spec R2), and, when translating
    from Workman, equality sites plus resolved numeric/library identifier sites
    used by native integer emission (see `lenient`). */
 type State =
-  | State<IntMap.Map<Var>, Number, List<Selection>, List<List<String>>, Option<List<(Syntax.Pos, Ty)>>>;
+  | State<IntMap.Map<Var>, I32, List<Selection>, List<List<String>>, Option<List<Site>>>;
 
 let initial = State(IntMap.empty, firstStamp, [], [], None);
 
@@ -74,20 +79,20 @@ let fresh = match {
   (State(vars, next, sels, recs, eqs), Var(kind), Var(level)) => {
     (
       TVar(next),
-      State(IntMap.insert(vars, next, Free(kind, level)), next + 1, sels, recs, eqs)
+      State(IntMap.insert(vars, next, Free(kind, level)), next + (1: I32), sels, recs, eqs)
     )
   }
 };
 
 let freshStamp = match {
-  State(vars, next, sels, recs, eqs) => { (next, State(vars, next + 1, sels, recs, eqs)) }
+  State(vars, next, sels, recs, eqs) => { (next, State(vars, next + (1: I32), sels, recs, eqs)) }
 };
 
 let lookup = match {
   (State(vars, _, _, _, _), Var(v)) => {
     match(IntMap.find(vars, v)) {
       Some(info) => { info },
-      None => { Free(KPlain, 0) }
+      None => { Free(KPlain, (0: I32)) }
     }
   }
 };
@@ -126,7 +131,7 @@ let freeVars = (st, t) => {
   let rec go = (t, acc) => {
     match(prune(st, t)) {
       TVar(v) => {
-        if (SmlList.exists((w) => { (w: Number) == v })(acc)) { acc } else { List.append(acc, [v]) }
+        if (SmlList.exists((w) => { w == v })(acc)) { acc } else { List.append(acc, [v]) }
       },
       TCon(_, ts) => { SmlList.foldl(go)(acc)(ts) },
       TArrow(a, b) => { go(b, go(a, acc)) },
@@ -141,8 +146,8 @@ let freeVars = (st, t) => {
 // Printing
 
 let varName = (i) => {
-  "'" ++ (if (i < 26) {
-    match(SubsetChar.fromCode(97 + i)) {
+  "'" ++ (if (i < (26: I32)) {
+    match(SubsetChar.fromCode((97: I32) + i)) {
       SubsetResult.Ok(c) => { CompilerText.str(c) },
       SubsetResult.Err(error) => { "t" ++ CompilerText.natural(i) }
     }
@@ -155,12 +160,12 @@ let showAll = (st, ts) => {
   let vars = SmlList.foldl((t, acc) => {
     List.append(
       acc,
-      SmlList.filter((v) => { !SmlList.exists((w) => { (w: Number) == v })(acc) })(freeVars(st, t))
+      SmlList.filter((v) => { !SmlList.exists((w) => { w == v })(acc) })(freeVars(st, t))
     )
   })([])(ts');
   let rec indexOf = match {
-    (_, [], _) => { 0 },
-    (Var(v), [w, ..rest], Var(i)) => { if ((v: Number) == w) { i } else { indexOf(v, rest, i + 1) } }
+    (_, [], _) => { (0: I32) },
+    (Var(v), [w, ..rest], Var(i)) => { if (v == w) { i } else { indexOf(v, rest, i + (1: I32)) } }
   };
   // Explicit type variables keep their names, so free variables avoid them.
   let rec rigids = match {
@@ -172,12 +177,12 @@ let showAll = (st, ts) => {
   };
   let taken = SmlList.concat(SmlList.map(rigids)(ts'));
   let rec nth = (i, candidate) => {
-    if (SmlList.exists((r) => { r == varName(candidate) })(taken)) { nth(i, candidate + 1) } else {
-      if ((i: Number) == 0) { varName(candidate) } else { nth(i - 1, candidate + 1) }
+    if (SmlList.exists((r) => { r == varName(candidate) })(taken)) { nth(i, candidate + (1: I32)) } else {
+      if (i == (0: I32)) { varName(candidate) } else { nth(i - (1: I32), candidate + (1: I32)) }
     }
   };
   let varText = (v) => {
-    let name = nth(indexOf(v, vars, 0), 0);
+    let name = nth(indexOf(v, vars, (0: I32)), (0: I32));
     match(lookup(st, v)) {
       Free(KEq, _) => { "'" ++ name },
       Free(KClass(names), _) => {
@@ -194,25 +199,30 @@ let showAll = (st, ts) => {
       TGen(i) => { varName(i) },
       TRigid(name) => { name },
       TCon(n, []) => { nameOf(n) },
-      TCon(n, [a]) => { show(2, a) ++ " " ++ nameOf(n) },
+      TCon(n, [a]) => { show((2: I32), a) ++ " " ++ nameOf(n) },
       TCon(n, args) => {
-        "(" ++ SubsetString.concatWith(SmlList.map((a) => { show(0, a) })(args), ", ") ++ ") " ++ nameOf(n)
+        "(" ++ SubsetString.concatWith(SmlList.map((a) => { show((0: I32), a) })(args), ", ") ++ ") " ++ nameOf(n)
       },
-      TArrow(a, b) => { paren(0, show(1, a) ++ " -> " ++ show(0, b)) },
+      TArrow(a, b) => {
+        paren((0: I32), show((1: I32), a) ++ " -> " ++ show((0: I32), b))
+      },
       TRecord([]) => { "unit" },
       TRecord(fields) => {
         match(tupleComponents(fields)) {
           Some(parts) => {
-            paren(1, SubsetString.concatWith(SmlList.map((a) => { show(2, a) })(parts), " * "))
+            paren(
+              (1: I32),
+              SubsetString.concatWith(SmlList.map((a) => { show((2: I32), a) })(parts), " * ")
+            )
           },
           None => {
-            "{" ++ SubsetString.concatWith(SmlList.map((l, a) => { l ++ " : " ++ show(0, a) })(fields), ", ") ++ "}"
+            "{" ++ SubsetString.concatWith(SmlList.map((l, a) => { l ++ " : " ++ show((0: I32), a) })(fields), ", ") ++ "}"
           }
         }
       }
     }
   };
-  SmlList.map((t) => { show(0, t) })(ts')
+  SmlList.map((t) => { show((0: I32), t) })(ts')
 };
 
 let show = (st, t) => {
@@ -225,7 +235,7 @@ let show = (st, t) => {
 // ---------------------------------------------------------------------------------------
 // Unification
 
-let sameName = (a, b) => { (stampOf(a): Number) == stampOf(b) };
+let sameName = (a, b) => { stampOf(a) == stampOf(b) };
 
 // The kind of a variable that must satisfy both kinds.
 let combine = match {
@@ -280,7 +290,7 @@ let rec adjust = (st, level, t) => {
 
 let rec occurs = (st, v, t) => {
   match(prune(st, t)) {
-    TVar(w) => { (v: Number) == w },
+    TVar(w) => { v == w },
     TCon(_, ts) => { SmlList.exists((a) => { occurs(st, v, a) })(ts) },
     TArrow(a, b) => { if (occurs(st, v, a)) { true } else { occurs(st, v, b) } },
     TRecord(fields) => { SmlList.exists((_, a) => { occurs(st, v, a) })(fields) },
@@ -332,9 +342,7 @@ and requireAll = (st, k, ts) => {
 
 let rec unify = (st, a, b) => {
   match(prune(st, a), prune(st, b)) {
-    (TVar(v), TVar(w)) => {
-      if ((v: Number) == w) { Unified(st) } else { bindVar(st, v, TVar(w)) }
-    },
+    (TVar(v), TVar(w)) => { if (v == w) { Unified(st) } else { bindVar(st, v, TVar(w)) } },
     (TVar(v), Var(t)) => { bindVar(st, v, t) },
     (Var(t), TVar(v)) => { bindVar(st, v, t) },
     (TCon(n, args), TCon(m, args')) => {
@@ -403,18 +411,14 @@ let generalize = (st, level, rigid, t) => {
   let indexIn = (same, x, xs) => {
     let rec go = match {
       ([], _) => { None },
-      ([y, ..rest], Var(i)) => { if (same(x, y)) { Some(i) } else { go(rest, i + 1) } }
+      ([y, ..rest], Var(i)) => { if (same(x, y)) { Some(i) } else { go(rest, i + (1: I32)) } }
     };
-    go(xs, 0)
+    go(xs, (0: I32))
   };
   let rec go = (t) => {
     match(t) {
       TVar(v) => {
-        match(indexIn(
-          (realLeft: Number, realRight: Number) => { (realLeft: Number) == realRight },
-          v,
-          vars
-        )) {
+        match(indexIn((left: I32, right: I32) => { left == right }, v, vars)) {
           Some(i) => { TGen(i) },
           None => { t }
         }

@@ -98,7 +98,7 @@ let parse = (first, comments) => {
               if (pos >= first) {
                 Error("import metadata must precede ordinary declarations", pos)
               } else {
-                match(declarations(text, pos + 2 + skip)) {
+                match(declarations(text, pos + (2: I32) + skip)) {
                   Error(message, offset) => { Error(message, offset) },
                   Imports(entries) => { loop(rest, true, entries) }
                 }

@@ -17,18 +17,16 @@ echo "round trips: $pass passed, $fail failed"
 
 # sml -> wm -> sml: each file's declarations survive the translation (up to Normalize)
 set --
-# The compiler now uses integers; preserve explicit rejection by the deferred WM profile.
-if $bin roundtrip src/subset_list.sml > "$tmp/unsupported" 2>&1; then
-  echo "FAIL: integer compiler entered deferred WM profile"; exit 1
-fi
-rg -q "signed 32-bit int" "$tmp/unsupported" || exit 1
+# The compiler's integer code translates as I32.
+$bin roundtrip src/subset_result.sml src/subset_list.sml || { echo "FAIL: integer compiler module round trip"; exit 1; }
 for f in tests/accept/*.sml; do
   case "$f" in
-    tests/accept/int-constant.sml|tests/accept/int-type.sml|tests/accept/overload-unresolved.sml|tests/accept/integer_basics.sml)
+    tests/accept/overload-unresolved.sml|tests/accept/integer_basics.sml)
+      # A numeric operation fixed only by SML's int default would become Number in Workman.
       if $bin roundtrip "$f" > "$tmp/unsupported" 2>&1; then
-        echo "FAIL: integer program entered deferred WM profile: $f"; exit 1
+        echo "FAIL: accepted a defaulted numeric operation: $f"; exit 1
       fi
-      rg -q 'signed 32-bit int' "$tmp/unsupported" || exit 1
+      rg -q 'only a default decides' "$tmp/unsupported" || exit 1
       ;;
     tests/accept/core.sml|tests/accept/types.sml)
       # These checker fixtures intentionally contain declarations outside the WM profile.

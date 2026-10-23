@@ -25,7 +25,6 @@ from "./subset_char.wm" import * as SubsetChar;
 from "./subset_list.wm" import * as SubsetList;
 from "./sml_list.wm" import * as SmlList;
 from "./subset_order.wm" import * as SubsetOrder;
-from "./subset_result.wm" import * as SubsetResult;
 
 from "./syntax.wm" import *;
 from "./lexer.wm" import *;
@@ -43,7 +42,7 @@ let bind = (r) => (k) => {
 
 let peek = match {
   [t, .._] => { t },
-  [] => { (TEOF, 0) }
+  [] => { (TEOF, (0: I32)) }
 };
 
 let advance = match {
@@ -68,23 +67,23 @@ let isKey = (k, ts) => {
 
 // Precedence and right associativity of the fixed infix identifiers.
 let fixity = match {
-  "*" => { Some(7, false) },
-  "/" => { Some(7, false) },
-  "div" => { Some(7, false) },
-  "mod" => { Some(7, false) },
-  "+" => { Some(6, false) },
-  "-" => { Some(6, false) },
-  "^" => { Some(6, false) },
-  "::" => { Some(5, true) },
-  "@" => { Some(5, true) },
-  "=" => { Some(4, false) },
-  "<>" => { Some(4, false) },
-  "<" => { Some(4, false) },
-  ">" => { Some(4, false) },
-  "<=" => { Some(4, false) },
-  ">=" => { Some(4, false) },
-  "o" => { Some(3, false) },
-  "before" => { Some(0, false) },
+  "*" => { Some((7: I32), false) },
+  "/" => { Some((7: I32), false) },
+  "div" => { Some((7: I32), false) },
+  "mod" => { Some((7: I32), false) },
+  "+" => { Some((6: I32), false) },
+  "-" => { Some((6: I32), false) },
+  "^" => { Some((6: I32), false) },
+  "::" => { Some((5: I32), true) },
+  "@" => { Some((5: I32), true) },
+  "=" => { Some((4: I32), false) },
+  "<>" => { Some((4: I32), false) },
+  "<" => { Some((4: I32), false) },
+  ">" => { Some((4: I32), false) },
+  "<=" => { Some((4: I32), false) },
+  ">=" => { Some((4: I32), false) },
+  "o" => { Some((3: I32), false) },
+  "before" => { Some((0: I32), false) },
   _ => { None }
 };
 
@@ -96,7 +95,7 @@ let precedence = (s) => {
       let (p, _) = payload;
       p
     },
-    None => { -1 }
+    None => { (-1: I32) }
   }
 };
 
@@ -270,10 +269,10 @@ let rec climb = (make, lhs, rest, minPrec) => {
         let rec absorb = (rhs, more) => {
           match(more) {
             [(Var(opr2), _, _), .._] => {
-              // Precedences are finite constants, so Unordered cannot occur.
-              match(SubsetOrder.compareReal(precedence(opr2), precedence(opr)), rightAssoc(opr2)) {
-                (SubsetResult.Ok(SubsetOrder.Greater), _) => { absorb(climb(make, rhs, more, precedence(opr) + 1)) },
-                (SubsetResult.Ok(SubsetOrder.Equal), true) => { absorb(climb(make, rhs, more, precedence(opr))) },
+              // Integer precedences have a total order.
+              match(SubsetOrder.compareInt(precedence(opr2), precedence(opr)), rightAssoc(opr2)) {
+                (SubsetOrder.Greater, _) => { absorb(climb(make, rhs, more, precedence(opr) + (1: I32))) },
+                (SubsetOrder.Equal, true) => { absorb(climb(make, rhs, more, precedence(opr))) },
                 _ => { (rhs, more) }
               }
             },
@@ -326,7 +325,7 @@ let resolve = (group, make, items, start) => {
         bind(pairs(rest, []))((ps) => (_) => {
           Done(
             {
-              let (tree, _) = climb(make, first, ps, 0);
+              let (tree, _) = climb(make, first, ps, (0: I32));
               tree
             },
             []
@@ -339,7 +338,7 @@ let resolve = (group, make, items, start) => {
 
 let applyExp = match {
   [f, ..args] => { Done(SmlList.foldl((a, f) => { EApp(f, a) })(f)(args), []) },
-  [] => { Fail("internal error: empty application", 0) }
+  [] => { Fail("internal error: empty application", (0: I32)) }
 };
 
 let infixExp = (opr, p, l, r) => { EApp(EId(p, ([], opr)), ETuple([l, r])) };

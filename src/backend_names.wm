@@ -18,10 +18,10 @@ from "./elab.wm" import * as Elab;
 type Binding = | Binding<String, String, Bool>;
 type Scope = | Scope<List<Binding>, List<Binding>>;
 type Symbol =
-  | Symbol<Number, String, Syntax.Pos, String, String, String>
+  | Symbol<I32, String, Syntax.Pos, String, String, String>
   | RuntimeUse<String, Syntax.Pos>
   | Invalid<String, Syntax.Pos, String>;
-type Supply = | Supply<String, Number, List<Symbol>>;
+type Supply = | Supply<String, I32, List<Symbol>>;
 
 let keywords = [
   "abstype",
@@ -154,7 +154,7 @@ let fresh = match {
     let symbol = Symbol(next, owner, pos, space, name, target);
     (
       Binding(name, target, constructor),
-      Supply(prefix, next + 1, [symbol, ..symbols])
+      Supply(prefix, next + (1: I32), [symbol, ..symbols])
     )
   }
 };
@@ -167,7 +167,7 @@ let generated = match {
       target,
       Supply(
         prefix,
-        next + 1,
+        next + (1: I32),
         [Symbol(next, owner, pos, "generated", hint, target), ..symbols]
       )
     )
@@ -257,7 +257,7 @@ let validate = match {
               match {
                 Binding(other, _, _) => { source == other }
               }
-            )) > 1
+            )) > (1: I32)
           }
         }
       )
@@ -392,7 +392,7 @@ let moduleWithRuntime = (runtime, owner, imports, prog, initial) => {
         (
           [p, ..rest],
           plus(bindings, more),
-          validate(next, owner, 0, plus(bindings, more))
+          validate(next, owner, (0: I32), plus(bindings, more))
         )
       }
     }
@@ -485,22 +485,28 @@ let moduleWithRuntime = (runtime, owner, imports, prog, initial) => {
         [] => { (Syntax.ECase(subject, []), supply) },
         [(Var(pat), Var(body)), ..rest] => {
           let (pat, guards, aliases, next) = checks(pat, supply);
-          let (name, next) = generated(next, owner, 0, "next");
+          let (name, next) = generated(next, owner, (0: I32), "next");
           let (fallback, next) = match(rest) {
             [] => {
-              let (result, next) = generated(next, owner, 0, "unmatched");
+              let (result, next) = generated(next, owner, (0: I32), "unmatched");
               (
-                Syntax.ECase(Syntax.EList([]), [(Syntax.PList([variable(0, result)]), id(0, result))]),
+                Syntax.ECase(
+                  Syntax.EList([]),
+                  [(Syntax.PList([variable((0: I32), result)]), id((0: I32), result))]
+                ),
                 next
               )
             },
             _ => { matchRules(subject, rest, next) }
           };
-          let call = Syntax.EApp(id(0, name), Syntax.ETuple([]));
+          let call = Syntax.EApp(id((0: I32), name), Syntax.ETuple([]));
           let branch = Syntax.ECase(subject, [(pat, conditions(guards, body, call)), (Syntax.PWild, call)]);
           (
             Syntax.ELet(
-              [binding(0, name, Syntax.EFn([(Syntax.PTuple([]), fallback)])), ..aliases],
+              [
+                binding((0: I32), name, Syntax.EFn([(Syntax.PTuple([]), fallback)])),
+                ..aliases
+              ],
               [branch]
             ),
             next
@@ -511,9 +517,9 @@ let moduleWithRuntime = (runtime, owner, imports, prog, initial) => {
   };
   let matchCase = (subject, rs, supply) => {
     if (SubsetList.exists(rs, (p, _) => { guarded(p) })) {
-      let (name, next) = generated(supply, owner, 0, "subject");
-      let (body, next) = matchRules(id(0, name), rs, next);
-      (Syntax.ELet([binding(0, name, subject)], [body]), next)
+      let (name, next) = generated(supply, owner, (0: I32), "subject");
+      let (body, next) = matchRules(id((0: I32), name), rs, next);
+      (Syntax.ELet([binding((0: I32), name, subject)], [body]), next)
     } else { (Syntax.ECase(subject, rs), supply) }
   };
 
@@ -605,9 +611,9 @@ let moduleWithRuntime = (runtime, owner, imports, prog, initial) => {
       Syntax.EFn(rs) => {
         let (rs, next) = rules(env, rs, supply);
         if (SubsetList.exists(rs, (p, _) => { guarded(p) })) {
-          let (name, next) = generated(next, owner, 0, "argument");
-          let (body, next) = matchRules(id(0, name), rs, next);
-          (Syntax.EFn([(variable(0, name), body)]), next)
+          let (name, next) = generated(next, owner, (0: I32), "argument");
+          let (body, next) = matchRules(id((0: I32), name), rs, next);
+          (Syntax.EFn([(variable((0: I32), name), body)]), next)
         } else { (Syntax.EFn(rs), next) }
       },
       Syntax.ECopy(p, a, b, t) => {
@@ -838,7 +844,7 @@ let projectWithRuntime = (runtime, prefix, modules) => {
                   [
                     Invalid(
                       name,
-                      0,
+                      (0: I32),
                       "panic runtime dependency cycle involving " ++ name ++ " and " ++ runtimeName
                     ),
                     ..symbols
@@ -862,7 +868,7 @@ let projectWithRuntime = (runtime, prefix, modules) => {
       }
     }
   };
-  loop(modules, [], Supply(prefix, 0, []))
+  loop(modules, [], Supply(prefix, (0: I32), []))
 };
 
 let project = (prefix, modules) => { projectWithRuntime(None, prefix, modules) };

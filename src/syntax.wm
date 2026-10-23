@@ -6,7 +6,7 @@
 
 // Byte offset into the source text.
 
-type Pos = Number;
+type Pos = I32;
 
 /* A comment's position, its text without the delimiters, and whether code precedes it on its
    line (a trailing comment). Comments are kept beside the syntax tree for translation. */

@@ -57,7 +57,15 @@ let project = (files) => {
     let site = (pos) => {
       match(sites) {
         None => { None },
-        Some(xs) => { SmlList.find((p, _) => { (p: Number) == pos })(xs) }
+        Some(xs) => {
+          match(SmlList.mapPartial(match {
+            Unify.Operand(p, t) => { if (p == pos) { Some(p, t) } else { None } },
+            Unify.Defaulted(_) => { None }
+          })(xs)) {
+            [] => { None },
+            [first, .._] => { Some(first) }
+          }
+        }
       }
     };
     let rec integer = (t) => {
@@ -162,10 +170,12 @@ let project = (files) => {
   };
   let names = SmlList.map((path, _, _, _) => { basename(path) })(files);
   let duplicate = SmlList.find((name) => {
-    SubsetList.length(SmlList.filter((other) => { name == other })(names)) > 1
+    SubsetList.length(SmlList.filter((other) => { name == other })(names)) > (1: I32)
   })(names);
   match(duplicate) {
-    Some(name) => { Unify.Err("duplicate native output filename: " ++ name, 0) },
+    Some(name) => {
+      Unify.Err("duplicate native output filename: " ++ name, (0: I32))
+    },
     None => {
       Unify.bind(Basis.initial)((env) => (st) => {
         Unify.bind(loop(env, st, files, []))((outputs) => (next) => {

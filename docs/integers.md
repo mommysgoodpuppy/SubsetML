@@ -100,12 +100,9 @@ SML's `~` sign spelling. As with SML's `fromString`, parsing is not specified to
 consume an entire input string. This is a minimal compatibility namespace, not
 a complete implementation of the SML Basis `INTEGER` signature.
 
-WM/JS integer support is **deferred**. SubsetML's checker, parser and native
-emitter are independent of WM's compiler infrastructure. Its separate WM syntax
-reader continues to read existing Number syntax as real; this change does not
-reclassify bare WM numbers. Programs using the new integer profile should use
-SubsetML source and native output. SML-to-WM translation rejects explicit integer
-syntax; integer code is not supported by the WM round-trip execution profile.
+`int` translates to Workman's `I32`, which has the same range, checked arithmetic
+and `div`/`mod` rounding; see [the translation rules](translation.md#integers).
+The `Int` namespace and `abs` have no Workman mapping yet.
 
 Compiler internals, custom Basis sizes/indices, character/scalar codes and
 `SubsetNatural` now use signed 32-bit integers; see [the migration notes](integer-migration.md). This language

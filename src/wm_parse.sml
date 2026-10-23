@@ -102,6 +102,7 @@ structure WmParse = struct
   val tyConName = fn
       ([], "Void") => ([], "unit")
     | ([], "Number") => ([], "real")
+    | ([], "I32") => ([], "int")
     | (qs, s) => (qs, decapitalize s)
 
   (* Splits a path into structure qualifiers, the named value, and record field selections. *)
@@ -176,6 +177,18 @@ structure WmParse = struct
       (WScon (SInt s), p) => if (p = minusPos + 1) then SOME (SReal ("~" ^ s ^ ".0")) else NONE
     | (WScon (SReal s), p) => if (p = minusPos + 1) then SOME (SReal ("~" ^ s)) else NONE
     | _ => NONE
+
+  (* The text of an integer literal at the start of `ts`, `-` included: `(n: I32)` is an SML int
+     constant, while every other Workman number is real. *)
+  val integerText = fn ts =>
+    case peek ts of
+      (WScon (SInt s), _) => SOME s
+    | (WKey "-", p) => (case peek (advance ts) of
+        (WScon (SInt s), q) => if q = p + 1 then SOME ("~" ^ s) else NONE
+      | _ => NONE)
+    | _ => NONE
+
+  val isIntType = fn t => case t of TyCon ([], ([], "int")) => true | _ => false
 
   (* Builds `h1 :: ... :: tail`. *)
   val consPat = fn (p, items, tail) =>
@@ -266,10 +279,13 @@ structure WmParse = struct
 
   (* A pattern that may carry a type annotation, as inside parentheses. *)
   and parseAnnotated = fn (inMatch, binds, ts) =>
-    bind (parsePat (inMatch, binds, ts)) (fn p => fn ts =>
-      if isKey (":", ts) then
-        bind (parseType (advance ts)) (fn t => fn ts => Done (PTyped (p, t), ts))
-      else Done (p, ts))
+    bind (parsePat (inMatch, binds, ts)) (fn p => fn rest =>
+      if isKey (":", rest) then
+        bind (parseType (advance rest)) (fn t => fn after =>
+          Done (case (p, isIntType t, integerText ts) of
+                  (PScon (q, _), true, SOME s) => PScon (q, SInt s)
+                | _ => PTyped (p, t), after))
+      else Done (p, rest))
 
   (* --------------------------------------------------------------------------------------- *)
   (* Expressions *)
@@ -640,13 +656,17 @@ structure WmParse = struct
      a fully constructed stage; a final explicit call supplies an insertion slot. *)
   and parsePostfixForm = fn ts =>
     let
+      (* Direct self tail calls, not `bind` continuations, so a long application chain
+         runs in constant stack on the Workman backend too. *)
       val rec calls = fn (callee, insertion, ts) =>
         if isKey ("(", ts) andalso not (lambdaAhead ts) then
-          bind (delimited ("(", parseExp, ",", ")", ts)) (fn args => fn rest =>
-            calls (apply (callee, args), SOME (callee, args), rest))
+          (case delimited ("(", parseExp, ",", ")", ts) of
+             Done (args, rest) => calls (apply (callee, args), SOME (callee, args), rest)
+           | Fail (message, offset) => Fail (message, offset))
         else (if startsSpaceArgument ts then
-          bind (if lambdaAhead ts then parseLambda ts else parsePrimary ts) (fn arg => fn rest =>
-            calls (EApp (callee, arg), NONE, rest))
+          (case (if lambdaAhead ts then parseLambda ts else parsePrimary ts) of
+             Done (arg, rest) => calls (EApp (callee, arg), NONE, rest)
+           | Fail (message, offset) => Fail (message, offset))
         else Done ((callee, insertion), ts))
     in
       bind (parsePrimary ts) (fn value => fn rest => calls (value, NONE, rest))
@@ -688,18 +708,21 @@ structure WmParse = struct
         end
     | (WKey "{", _) => parseBlock ts
     | (WKey "(", _) =>
-        bind (parseExp (advance ts)) (fn first => fn ts =>
-          case peek ts of
+        bind (parseExp (advance ts)) (fn first => fn rest =>
+          case peek rest of
             (WKey ":", _) =>
-              bind (parseType (advance ts)) (fn t => fn ts =>
-                bind (expect (")", ts)) (fn _ => fn ts => Done (ETyped (first, t), ts)))
+              bind (parseType (advance rest)) (fn t => fn after =>
+                bind (expect (")", after)) (fn _ => fn after =>
+                  Done (case (first, isIntType t, integerText (advance ts)) of
+                          (EScon (q, _), true, SOME s) => EScon (q, SInt s)
+                        | _ => ETyped (first, t), after)))
           | (WKey ",", _) =>
-              bind (separated (parseExp, ",", ")", advance ts)) (fn rest => fn ts =>
-                bind (expect (")", ts)) (fn _ => fn ts => Done (ETuple (first :: rest), ts)))
+              bind (separated (parseExp, ",", ")", advance rest)) (fn more => fn ts =>
+                bind (expect (")", ts)) (fn _ => fn ts => Done (ETuple (first :: more), ts)))
           | (WKey ";", _) =>
-              bind (separated (parseExp, ";", ")", advance ts)) (fn rest => fn ts =>
-                bind (expect (")", ts)) (fn _ => fn ts => Done (ESeq (first :: rest), ts)))
-          | _ => bind (expect (")", ts)) (fn _ => fn ts => Done (first, ts)))
+              bind (separated (parseExp, ";", ")", advance rest)) (fn more => fn ts =>
+                bind (expect (")", ts)) (fn _ => fn ts => Done (ESeq (first :: more), ts)))
+          | _ => bind (expect (")", rest)) (fn _ => fn ts => Done (first, ts)))
     | (WKey "if", _) => parseExp ts
     | (WKey "match", _) => parseExp ts
     | _ => expected ("an expression", ts)
