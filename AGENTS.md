@@ -23,9 +23,10 @@ and a custom portable Basis shared with Workman. The compiler targets MLton and 
 
 ## Related projects
 
-- `../wm-mini`: the Workman compiler. It consumes a generated Basis snapshot in
-  `tooling/frontend-v3/lib/subsetml/`, refreshed from wm-mini with
-  `deno run -A scripts/sync_frontend_v3_basis.ts ../SubsetML`. Its `tooling/pakman-subsetml/`
+- `../wm-mini`: the Workman compiler. It loads this Basis as library modules generated into
+  `subml-basis/`, refreshed from wm-mini with `deno run -A scripts/sync_subml_basis.ts ../SubsetML`;
+  WM programs import them as `"basis/x.wm"`, which `sml-entry --basis DIR` also resolves. Its
+  `tooling/pakman-subsetml/`
   (pakman ported to SubsetML) and `tooling/won/` (WON) build with this repository's
   `bin/subsetml`.
 

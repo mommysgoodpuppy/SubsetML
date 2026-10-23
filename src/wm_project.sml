@@ -12,6 +12,7 @@ from "./basis.sml" import * as Basis;
 from "./unify.sml" import * as Unify;
 from "./env.sml" import * as Env;
 from "./subset_char.sml" import * as SubsetChar;
+from "./subset_option.sml" import * as SubsetOption;
 from "./subset_string.sml" import * as SubsetString;
 from "./lexer.sml" import * as Lexer;
 *)
@@ -34,9 +35,31 @@ structure WmProject = struct
   val sourceUnit = fn Source (unit, _, _) => unit
   val edgesOf = fn Source (_, edges, _) => edges
 
+  (* "basis/won.wm" names the Basis module subset_won.wm, as in Workman. *)
+  val basisModule = fn specifier =>
+    let val count = CompilerText.size specifier in
+      if count > 9 andalso CompilerText.slice (specifier, 0, 6) = "basis/" andalso
+         CompilerText.isSuffix (specifier, ".wm") then
+        let val name = CompilerText.slice (specifier, 6, count - 9) in
+          if SubsetList.all (CompilerText.characters name,
+               fn c => SubsetChar.isLower c orelse SubsetChar.isDigit c orelse c = #"_")
+          then SOME ("subset_" ^ name ^ ".wm") else NONE
+        end
+      else NONE
+    end
+
   val validSpecifier = fn specifier =>
-    CompilerText.isSuffix (specifier, ".wm") andalso
-    ModuleImports.validPath (CompilerText.slice (specifier, 0, CompilerText.size specifier - 3) ^ ".sml")
+    SubsetOption.isSome (basisModule specifier) orelse
+    (CompilerText.isSuffix (specifier, ".wm") andalso
+     ModuleImports.validPath (CompilerText.slice (specifier, 0, CompilerText.size specifier - 3) ^ ".sml"))
+
+  (* basis is the directory holding the generated Basis modules, if the build supplies one. *)
+  val resolve = fn (basis, referrer, specifier) =>
+    case basisModule specifier of
+      NONE => ModuleProject.resolve (referrer, specifier)
+    | SOME file => (case basis of
+        NONE => SubsetResult.Err (SubsetIo.HostError "basis/ imports need --basis DIR")
+      | SOME directory => ModuleProject.identify (directory ^ "/" ^ file))
 
   (* Discovery reads only the supported import header. Preparation still validates aliases,
      private scope and later imports using the same canonical identities. *)
@@ -50,14 +73,14 @@ structure WmProject = struct
           in case remaining of
             NONE => failure (path, src, "reverse discovery requires header namespace imports", pos)
           | SOME tail => if not (validSpecifier specifier) then
-              failure (path, src, "imports require explicit relative .wm paths in the local source profile", pos)
+              failure (path, src, "imports require explicit relative .wm paths or basis/ modules in the local source profile", pos)
             else SubsetResult.map (scan tail, fn paths => (specifier, pos) :: paths) end
       | (WmLexer.WKey "from", pos) :: _ =>
           failure (path, src, "reverse discovery requires header namespace imports", pos)
       | _ => SubsetResult.Ok []
     in scan tokens end
 
-  val discover = fn roots =>
+  val discover = fn (basis, roots) =>
     let
       val rec visit = fn (resolved, active, seen) =>
         let val ModuleProject.Resolved (id, path) = resolved in
@@ -72,7 +95,7 @@ structure WmProject = struct
                     let val rec walk = fn (paths, seen) => case paths of
                         [] => SubsetResult.Ok seen
                       | (specifier, pos) :: rest =>
-                          (case ModuleProject.resolve (resolved, specifier) of
+                          (case resolve (basis, resolved, specifier) of
                             SubsetResult.Err error => failure (path, src,
                               "cannot resolve import \"" ^ specifier ^ "\": " ^ SubsetIo.errorText error, pos)
                           | SubsetResult.Ok child =>
@@ -137,13 +160,13 @@ structure WmProject = struct
             allocate (inputs, SubsetList.map (structures, fn (name, _) => (name, "")), []))
     end
 
-  val prepare = fn (units, unit) =>
+  val prepare = fn (basis, units, unit) =>
     let
       val Unit (Input (resolved, path, src), _, _) = unit
       val dependency = fn (specifier, pos) =>
         if not (validSpecifier specifier) then
-          failure (path, src, "imports require explicit relative .wm paths in the local source profile", pos)
-        else case ModuleProject.resolve (resolved, specifier) of
+          failure (path, src, "imports require explicit relative .wm paths or basis/ modules in the local source profile", pos)
+        else case resolve (basis, resolved, specifier) of
           SubsetResult.Err error => failure (path, src, "cannot resolve import \"" ^ specifier ^ "\": " ^ SubsetIo.errorText error, pos)
         | SubsetResult.Ok (ModuleProject.Resolved (target, _)) =>
             case SubsetList.find (units, fn child => ModuleProject.same (identity child, target)) of

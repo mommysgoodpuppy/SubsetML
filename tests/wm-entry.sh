@@ -63,6 +63,15 @@ let value = readA(A.value) + readB(B.value);
  subprocess.run(['mlton', '-output', root / 'spelling', mlb], check=True)
  subprocess.run([root / 'spelling'], check=True)
 
+ # "basis/x.wm" names the generated Basis module subset_x.wm in the --basis directory.
+ basis = root / 'basis'; basis.mkdir()
+ subprocess.run([compiler, 'wm', basis, 'src/subset_result.sml'], check=True)
+ entry.write_text('from "basis/result.wm" import * as R;\nlet value = R.getOr(R.map(R.Ok(1), (x) => { x + 1 }), 0);\n')
+ subprocess.run([compiler, 'sml-entry', out, '--basis', basis, entry], check=True)
+ driver.write_text('val _ = if Real.== (Entry.value, 2.0) then () else OS.Process.exit OS.Process.failure\n')
+ subprocess.run(['mlton', '-output', root / 'basis-entry', mlb], check=True)
+ subprocess.run([root / 'basis-entry'], check=True)
+
  rejected = root / 'rejected'; rejected.mkdir()
  for body, expected in [
   ('from "./left.wm" import * as Left;\nlet value = Core.value;\n', b'not explicitly imported'),
@@ -70,11 +79,12 @@ let value = readA(A.value) + readB(B.value);
   ('let value = 1;\nfrom "./core.wm" import * as Core;\n', b'imports must precede'),
   ('from "./core.wm" import { value };\n', b'header namespace imports'),
   ('from "./cycle.wm" import * as Cycle;\n', b'import cycle'),
+  ('from "basis/result.wm" import * as R;\n', b'basis/ imports need --basis DIR'),
  ]:
   entry.write_text(body)
   (root / 'cycle.wm').write_text('from "./entry.wm" import * as Entry;\n')
   result = subprocess.run([compiler, 'sml-entry', rejected, entry], capture_output=True)
   assert result.returncode != 0 and expected in result.stdout + result.stderr, (body, result)
   assert not list(rejected.iterdir())
-print('WM entry discovery: canonical diamond, private scope, source order, distinct modules and diagnostics passed')
+print('WM entry discovery: canonical diamond, private scope, source order, distinct modules, basis/ imports and diagnostics passed')
 PY

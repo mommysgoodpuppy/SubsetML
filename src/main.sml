@@ -31,7 +31,8 @@ from "./sml_target.sml" import * as SmlTarget;
      subsetml fmt FILE...           reprint each file as SubsetML
      subsetml wm OUTDIR FILE...     translate the program's files to Workman modules in OUTDIR
      subsetml sml OUTDIR FILE.wm... translate Workman modules to SubsetML files in OUTDIR
-     subsetml sml-entry OUTDIR ENTRY.wm discover and translate the supported import graph
+     subsetml sml-entry OUTDIR [--basis DIR] ENTRY.wm discover and translate the supported import graph;
+       "basis/x.wm" imports resolve to DIR/subset_x.wm
      subsetml sml OUTDIR --panic-runtime R.wm FILE.wm... select the native panic provider
      subsetml roundtrip FILE...     check that SML -> Workman -> SML preserves each file's syntax *)
 structure Main = struct
@@ -114,7 +115,7 @@ structure Main = struct
     | ParseFailure (path, src, msg, pos) => errorLineKind (path, src, "parse error", msg, pos)
 
   val usage = fn () =>
-    (eprint "usage: subsetml (check | parse | fmt | roundtrip) FILE...\n       subsetml native OUTDIR FILE.sml...\n       subsetml sml-target (mlton | mlworks) OUTDIR [--adapter CHECKER.sml NATIVE.sml]... FILE.sml...\n       subsetml wm OUTDIR FILE...\n       subsetml sml OUTDIR [--panic-runtime R.wm] FILE.wm...\n       subsetml sml-entry OUTDIR [--panic-runtime R.wm] [--native-adapter CHECKER.wm NATIVE.sml STRUCTURE]... ENTRY.wm\n";
+    (eprint "usage: subsetml (check | parse | fmt | roundtrip) FILE...\n       subsetml native OUTDIR FILE.sml...\n       subsetml sml-target (mlton | mlworks) OUTDIR [--adapter CHECKER.sml NATIVE.sml]... FILE.sml...\n       subsetml wm OUTDIR FILE...\n       subsetml sml OUTDIR [--panic-runtime R.wm] FILE.wm...\n       subsetml sml-entry OUTDIR [--basis DIR] [--panic-runtime R.wm] [--native-adapter CHECKER.wm NATIVE.sml STRUCTURE]... ENTRY.wm\n";
      SubsetProcess.exit false)
 
   val finish = fn ok => SubsetProcess.exit ok
@@ -158,7 +159,7 @@ structure Main = struct
 
   (* Reverse translation uses the same canonical resolver as SML metadata loading.
      Explicit source lists and entry discovery share preparation, resolution and checking. *)
-  val fromWmLoaded = fn (outDir, runtimePath, entryPath, adapterSpecs, sources) =>
+  val fromWmLoaded = fn (outDir, basis, runtimePath, entryPath, adapterSpecs, sources) =>
     let
       val keywordPrefix = Translate.keywordPrefix sources
       val rec traverse = fn (items, f) =>
@@ -179,7 +180,7 @@ structure Main = struct
             case SubsetList.find (units, fn unit => WmProject.name unit = name) of
               NONE => WmProject.failure ("translation", "", "missing runtime dependency " ^ name, 0)
             | SOME unit => SubsetResult.Ok unit)
-        in SubsetResult.andThen (traverse (units, fn unit => WmProject.prepare (units, unit)), fn prepared =>
+        in SubsetResult.andThen (traverse (units, fn unit => WmProject.prepare (basis, units, unit)), fn prepared =>
           SubsetResult.andThen (WmProject.order prepared, fn ordered =>
             let
               val declarations = traverse (ordered, fn WmProject.Source (unit, _, tokens) =>
@@ -228,14 +229,14 @@ structure Main = struct
     end
 
   val fromWm = fn (outDir, runtimePath, files) =>
-    fromWmLoaded (outDir, runtimePath, NONE, [], SmlList.map (fn path => (path, readFile path))
+    fromWmLoaded (outDir, NONE, runtimePath, NONE, [], SmlList.map (fn path => (path, readFile path))
       (case runtimePath of NONE => files | SOME path => path :: files))
 
-  val fromWmEntry = fn (outDir, runtimePath, adapterSpecs, entry) =>
-    case WmProject.discover (case runtimePath of NONE => [entry] | SOME runtime => [runtime, entry]) of
+  val fromWmEntry = fn (outDir, basis, runtimePath, adapterSpecs, entry) =>
+    case WmProject.discover (basis, case runtimePath of NONE => [entry] | SOME runtime => [runtime, entry]) of
       SubsetResult.Err (WmProject.Error (path, src, message, pos)) =>
         (eprint (errorLine (path, src, message, pos)); false)
-    | SubsetResult.Ok sources => fromWmLoaded (outDir, runtimePath, SOME entry, adapterSpecs, sources)
+    | SubsetResult.Ok sources => fromWmLoaded (outDir, basis, runtimePath, SOME entry, adapterSpecs, sources)
 
   (* SML -> Workman -> SML must give back the same declarations, up to Normalize. *)
   val roundTrip = fn parsed =>
@@ -341,14 +342,16 @@ structure Main = struct
         in parse (options, []) end
     | "wm" :: outDir :: files => withParsed (files, fn parsed => translate (outDir, parsed))
     | "sml-entry" :: outDir :: options =>
-        let val rec parse = fn (remaining, runtime, adapters) => case remaining of
-            [entry] => finish (fromWmEntry (outDir, runtime, SmlList.rev adapters, entry))
+        let val rec parse = fn (remaining, basis, runtime, adapters) => case remaining of
+            [entry] => finish (fromWmEntry (outDir, basis, runtime, SmlList.rev adapters, entry))
+          | "--basis" :: directory :: rest =>
+              (case basis of NONE => parse (rest, SOME directory, runtime, adapters) | SOME _ => usage ())
           | "--panic-runtime" :: path :: rest =>
-              (case runtime of NONE => parse (rest, SOME path, adapters) | SOME _ => usage ())
+              (case runtime of NONE => parse (rest, basis, SOME path, adapters) | SOME _ => usage ())
           | "--native-adapter" :: checker :: native :: exported :: rest =>
-              parse (rest, runtime, (checker, native, exported) :: adapters)
+              parse (rest, basis, runtime, (checker, native, exported) :: adapters)
           | _ => usage ()
-        in parse (options, NONE, []) end
+        in parse (options, NONE, NONE, []) end
     | "sml" :: outDir :: "--panic-runtime" :: runtime :: files =>
         if SmlList.null files then usage () else finish (fromWm (outDir, SOME runtime, files))
     | "sml" :: outDir :: files => if SmlList.null files then usage () else finish (fromWm (outDir, NONE, files))
