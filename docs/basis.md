@@ -327,8 +327,17 @@ only as a compatibility port for regression tests. String membership can use the
 
 `SubsetChar.toCode character` returns `Ok code` for codes 0–255, or `Err NonByteCharacter`
 for a foreign target character outside that domain. `fromCode code` returns `Ok character`,
-or `Err InvalidCode` for negative or greater-than-255 integer values. Both operations scan a fixed source table, bounded by 256
-entries, and need neither `ord`/`chr` nor numeric floor/integer conversion primitives.
+or `Err InvalidCode` for negative or greater-than-255 integer values. Both validate in source
+and convert through the host primitives `SubsetTextHost.charCode` and `codeChar` (`Char.ord`
+and `Char.chr` in SML, `charCodeAt` and `fromCharCode` in JavaScript). `byteChars` remains the
+complete byte-character domain in code order.
+
+These were source scans of that 256-entry table until October 2026. Every byte of text pays for
+a code conversion, often several, so the scans dominated text work: on the Workman/JS target,
+reading a 517 KB WON document took 10.8 s, of which about 9.8 s was these scans and the matching
+`toNative` table. With constant-time host conversions the same read took 1.7 s. The checker
+stub `src/subset_text_host.sml` keeps the table scans as the portable reference implementation
+of the same contract.
 
 The compiler's escape decoders now handle `fromCode` failures through their ordinary lexical
 error results. Fixed control escapes use literals. Numeric digit accumulation and Workman
@@ -376,8 +385,10 @@ reader factory rather than forge states.
 `SubsetString.fromNative string` returns `Ok bytes`, or `Err (SubsetString.NonByte offset)`
 at the first native element outside the byte domain. It calls the one extraction operation
 `SubsetTextHost.codes`, then validates in shared source. `toNative bytes` returns an exact
-native string or the same indexed error for a foreign character. Its complete literal table
-and pairwise concatenation need no construction primitive. Empty input, NULs and all high bytes
+native string or the same indexed error for a foreign character. It validates each byte in
+source and builds the string with the construction primitive `SubsetTextHost.fromCodes`, the
+inverse of `codes`, which replaced a per-byte scan of a 256-entry literal table for the same
+reason as the character code primitives. Empty input, NULs and all high bytes
 are preserved. Neither operation encodes or decodes Unicode. `concat strings` joins in order with pairwise
 concatenation; `concatWith (strings, separator)` inserts separators between adjacent strings,
 including empty strings. Empty input returns the empty string. These operations assume language
@@ -503,12 +514,12 @@ custom module declares its source dependencies and explicit primitive calls. The
 | `SubsetList` | SubsetResult | none |
 | `SubsetListPair` | SubsetResult, SubsetList | none |
 | `SubsetOrder` | SubsetResult | none |
-| `SubsetChar` | SubsetOrder, SubsetResult | none |
+| `SubsetChar` | SubsetOrder, SubsetResult | SubsetTextHost.charCode, codeChar |
 | `SubsetBytes` | SubsetChar, SubsetList, SubsetOrder, SubsetResult | none |
 | `SubsetUnicode` | SubsetChar, SubsetList, SubsetResult | none |
 | `SubsetUtf8` | SubsetChar, SubsetList, SubsetResult, SubsetUnicode | none |
 | `SubsetUtf16` | SubsetChar, SubsetList, SubsetResult, SubsetUnicode | none |
-| `SubsetString` | SubsetBytes, SubsetChar, SubsetList, SubsetResult | SubsetTextHost.codes |
+| `SubsetString` | SubsetBytes, SubsetChar, SubsetList, SubsetResult | SubsetTextHost.codes, fromCodes |
 | `SubsetNatural` | SubsetList, SubsetResult, SubsetString | none |
 | `SubsetSource` | SubsetBytes, SubsetList, SubsetResult, SubsetString | none directly; extraction through SubsetString |
 | `SubsetUtf16Source` | SubsetChar, SubsetList, SubsetResult, SubsetUnicode, SubsetUtf8, SubsetUtf16 | SubsetTextHost.codes |
@@ -639,9 +650,10 @@ older range/code arithmetic implementation; it does not include the MLWorks stri
 
 ## Minimal text boundary
 
-The baseline uses ordinary byte sequences, source Unicode codecs and one extraction operation
-for opaque native strings. String construction is portable through a complete literal table and
-ordinary concatenation. `SubsetString` validates both directions; `SubsetSource` converts once
+The baseline uses ordinary byte sequences, source Unicode codecs and four `SubsetTextHost`
+operations: extraction (`codes`), construction (`fromCodes`) and byte character code conversion
+(`charCode`, `codeChar`). Their checker stubs are portable reference implementations, except
+for extraction. `SubsetString` validates both directions; `SubsetSource` converts once
 and supplies source-built indexing. Both compiler lexers now use it.
 
 UTF-8, UTF-16LE and UTF-16BE are encoded/decoded in ordinary SubsetML over bytes and checked

@@ -41,7 +41,10 @@
         "SubsetOrder",
         "SubsetResult"
       ],
-      "primitives": []
+      "primitives": [
+        "SubsetTextHost.charCode",
+        "SubsetTextHost.codeChar"
+      ]
     },
     "SubsetBytes": {
       "source": "src/subset_bytes.sml",
@@ -91,7 +94,8 @@
         "SubsetBytes"
       ],
       "primitives": [
-        "SubsetTextHost.codes"
+        "SubsetTextHost.codes",
+        "SubsetTextHost.fromCodes"
       ]
     },
     "SubsetNatural": {
@@ -244,7 +248,10 @@
       "checkerStub": "src/subset_text_host.sml",
       "workman": "lib/subset_text_host.wm",
       "operations": [
-        "codes"
+        "codes",
+        "charCode",
+        "codeChar",
+        "fromCodes"
       ]
     },
     "SubsetHost": {

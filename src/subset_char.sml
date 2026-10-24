@@ -1,6 +1,7 @@
 (* @subsetml
 from "./subset_result.sml" import * as SubsetResult;
 from "./subset_order.sml" import * as SubsetOrder;
+from "./subset_text_host.sml" import * as SubsetTextHost;
 *)
 
 (* Custom Basis ASCII character operations.
@@ -53,24 +54,14 @@ structure SubsetChar = struct
     #"\240", #"\241", #"\242", #"\243", #"\244", #"\245", #"\246", #"\247",
     #"\248", #"\249", #"\250", #"\251", #"\252", #"\253", #"\254", #"\255"]
 
+  (* Code conversion is a host primitive: a scan of byteChars made every byte of text cost
+     hundreds of steps (docs/basis.md, "Byte character codes"). *)
   val toCode = fn c =>
-    let
-      val rec go = fn
-          ([], code) => SubsetResult.Err NonByteCharacter
-        | (x :: xs, code) => if c = x then SubsetResult.Ok code else go (xs, code + 1)
-    in go (byteChars, 0) end
+    let val code = SubsetTextHost.charCode c
+    in if code >= 0 andalso code <= 255 then SubsetResult.Ok code else SubsetResult.Err NonByteCharacter end
 
-  (* Integer codes are validated against the byte range before lookup. *)
   val fromCode = fn (code : int) =>
-    if code >= 0 andalso code <= 255 then
-      let
-        val rec go = fn
-            ([], remaining) => SubsetResult.Err InvalidCode
-          | (c :: rest, remaining) =>
-              if remaining <= 0 then
-                (if remaining >= 0 then SubsetResult.Ok c else SubsetResult.Err InvalidCode)
-              else go (rest, remaining - 1)
-      in go (byteChars, code) end
+    if code >= 0 andalso code <= 255 then SubsetResult.Ok (SubsetTextHost.codeChar code)
     else SubsetResult.Err InvalidCode
 
   val rec member = fn (c : char, chars) =>
