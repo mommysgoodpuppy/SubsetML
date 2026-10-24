@@ -4,4 +4,6 @@ structure SubsetTextHost = struct
   val charCode = fn c => Int32.fromInt (Char.ord c)
   val codeChar = fn code => Char.chr (Int32.toInt code)
   val fromCodes = fn codes => String.implode (List.map (fn code => Char.chr (Int32.toInt code)) codes)
+  val encodeUtf8 = fn value => value
+  val decodeUtf8 = fn bytes => bytes
 end

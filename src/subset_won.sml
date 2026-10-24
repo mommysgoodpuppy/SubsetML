@@ -6,6 +6,7 @@ from "./subset_result.sml" import * as SubsetResult;
 from "./subset_list.sml" import * as SubsetList;
 from "./subset_string.sml" import * as SubsetString;
 from "./subset_natural.sml" import * as SubsetNatural;
+from "./subset_text.sml" import * as SubsetText;
 *)
 
 (* Public portable WON encoding and decoding API. *)
@@ -213,6 +214,20 @@ structure SubsetWon = struct
       fn node : node =>
         (case #value node of
             SubsetWonValue.Text content => SubsetResult.Ok content
+          | _ => mismatch (node, "text"))
+    )
+
+  (* Text as host text, like a number spelling converted by the caller. Decoded text is
+     always valid UTF-8; a hand-built Text value may not be. *)
+  val textString = fn found =>
+    SubsetResult.andThen (
+      found,
+      fn node : node =>
+        (case #value node of
+            SubsetWonValue.Text content =>
+              (case SubsetText.fromUtf8 content of
+                  SubsetResult.Ok value => SubsetResult.Ok value
+                | SubsetResult.Err _ => mismatch (node, "UTF-8 text"))
           | _ => mismatch (node, "text"))
     )
 

@@ -4,7 +4,11 @@
 
    `codes` reads a native string. `charCode`, `codeChar` and `fromCodes` convert byte
    characters and build a native string; their bodies here are the portable reference
-   implementation, which adapters replace with constant-time host operations. *)
+   implementation, which adapters replace with constant-time host operations.
+
+   `encodeUtf8` and `decodeUtf8` convert between host text and a byte string of its UTF-8.
+   An SML string is already UTF-8 bytes, so both are identities here and in the SML adapter;
+   the Workman/JS adapter converts UTF-16 text. SubsetText validates both directions. *)
 structure SubsetTextHost = struct
   val codes = fn (value : string) => ([] : int list)
 
@@ -102,4 +106,11 @@ structure SubsetTextHost = struct
           ([], acc) => acc
         | (code :: rest, acc) => go (rest, acc ^ piece (byteStrings, code))
     in go (codes, "") end
+
+  (* Host text to a byte string of its UTF-8. A result that is not a byte string, or not
+     valid UTF-8, reports text the host cannot encode. *)
+  val encodeUtf8 = fn (value : string) => value
+
+  (* Requires a byte string of valid UTF-8. *)
+  val decodeUtf8 = fn (bytes : string) => bytes
 end

@@ -5,7 +5,7 @@ structure SubsetWonValue = struct
       Null
       | Boolean of bool
       | Number of string
-      | Text of string
+      | Text of char list
       | Blob of char list
       | List of value list
       | Record of (string * value) list

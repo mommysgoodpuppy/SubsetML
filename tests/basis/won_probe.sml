@@ -1,42 +1,42 @@
 (* WON conformance probe: the same SubsetML source runs natively and as generated Workman. *)
 structure WonProbe = struct
 
+  (* Text values are UTF-8 bytes; these fixtures spell them as byte strings. *)
+  val text = fn s => SubsetWonValue.Text (SubsetResult.getOr (SubsetString.fromNative s, []))
+
   (* Semantic fixture is constructed independently of the parser, on both runtimes. *)
   val request = fn () =>
     SubsetWonValue.Tag (
       "Request",
       [("id", SubsetWonValue.Number "9007199254740993123456789")],
       SubsetWonValue.Record [
-        ("method", SubsetWonValue.Text "save"),
+        ("method", text "save"),
         ("allBytes", SubsetWonValue.Blob SubsetChar.byteChars),
         (
           "asciiText",
-          SubsetWonValue.Text (SubsetResult.getOr (
-            SubsetString.toNative (SubsetResult.getOr (SubsetList.take (SubsetChar.byteChars, 128), [])),
-            ""
-          ))
+          SubsetWonValue.Text (SubsetResult.getOr (SubsetList.take (SubsetChar.byteChars, 128), []))
         ),
         ("precise", SubsetWonValue.Number "-0.12345678901234567890123456789e400"),
         ("payload", SubsetWonValue.Blob [#"\^@", #"\255", #"\128", #"\"", #"\\", #"\n"]),
-        ("unicode", SubsetWonValue.Text "caf\195\169 \240\159\152\128"),
+        ("unicode", text "caf\195\169 \240\159\152\128"),
         (
           "view",
           SubsetWonValue.Tag (
             "Paragraph",
             [],
             SubsetWonValue.List [
-              SubsetWonValue.Text "Click ",
-              SubsetWonValue.Tag ("Strong", [("enabled", SubsetWonValue.Boolean true)], SubsetWonValue.Text "Save"),
-              SubsetWonValue.Text " to continue.",
+              text "Click ",
+              SubsetWonValue.Tag ("Strong", [("enabled", SubsetWonValue.Boolean true)], text "Save"),
+              text " to continue.",
               SubsetWonValue.Tag ("Ready", [], SubsetWonValue.Null)
             ]
           )
         ),
         (
           "empty",
-          SubsetWonValue.List [SubsetWonValue.Null, SubsetWonValue.Record [], SubsetWonValue.List [], SubsetWonValue.Text "", SubsetWonValue.Blob []]
+          SubsetWonValue.List [SubsetWonValue.Null, SubsetWonValue.Record [], SubsetWonValue.List [], text "", SubsetWonValue.Blob []]
         ),
-        ("strange key\n", SubsetWonValue.Text "quote: \" slash: \\ tab:\t NUL:\^@")
+        ("strange key\n", text "quote: \" slash: \\ tab:\t NUL:\^@")
       ]
     )
   val response = fn () =>
@@ -68,6 +68,7 @@ structure WonProbe = struct
       val doc = SubsetWon.read "{server = {port = 8080} items = [1 X<id = 2>(\"y\")] none = null \"odd key\" = true}"
       val items = SubsetWon.get (doc, "items")
       val wrong = SubsetWon.text (SubsetWon.get (items, "x"))
+      val unicode = SubsetResult.getOr (SubsetString.fromNative "caf\195\169 \240\159\152\128", [])
       val checks = [
         is (SubsetWon.number (SubsetWon.get (SubsetWon.get (doc, "server"), "port")), SubsetResult.Ok "8080"),
         is (
@@ -76,7 +77,17 @@ structure WonProbe = struct
         ),
         is (wrong, SubsetResult.Err "items: expected record"),
         is (SubsetWon.number (SubsetWon.attribute (SubsetWon.index (items, 1), "id")), SubsetResult.Ok "2"),
-        is (SubsetWon.text (SubsetWon.payload (SubsetWon.index (items, 1))), SubsetResult.Ok "y"),
+        is (SubsetWon.text (SubsetWon.payload (SubsetWon.index (items, 1))), SubsetResult.Ok [#"y"]),
+        is (SubsetWon.textString (SubsetWon.payload (SubsetWon.index (items, 1))), SubsetResult.Ok "y"),
+        is (
+          SubsetWon.textString (SubsetWon.root (SubsetWonValue.Text [#"\255"])),
+          SubsetResult.Err "document: expected UTF-8 text"
+        ),
+        is (SubsetWon.textString (SubsetWon.get (doc, "none")), SubsetResult.Err "none: expected text"),
+        (case SubsetResult.andThen (SubsetText.fromUtf8 unicode, SubsetText.toUtf8) of
+            SubsetResult.Ok bytes => bytes = unicode
+          | SubsetResult.Err _ => false),
+        not (SubsetResult.isOk (SubsetText.fromUtf8 [#"a", #"\255"])),
         is (SubsetWon.tagName (SubsetWon.index (items, 1)), SubsetResult.Ok "X"),
         is (SubsetWon.number (SubsetWon.index (items, 5)), SubsetResult.Err "items[5]: missing"),
         is (
@@ -116,7 +127,7 @@ structure WonProbe = struct
             SubsetWonValue.List [SubsetWonValue.Number "1", SubsetWonValue.Number "2"]
           ]
         ),
-        ("Title(\"Settings\")", SubsetWonValue.Tag ("Title", [], SubsetWonValue.Text "Settings")),
+        ("Title(\"Settings\")", SubsetWonValue.Tag ("Title", [], text "Settings")),
         ("X[1]", SubsetWonValue.Tag ("X", [], SubsetWonValue.List [SubsetWonValue.Number "1"])),
         ("Meta<a = true>", SubsetWonValue.Tag ("Meta", [("a", SubsetWonValue.Boolean true)], SubsetWonValue.Null)),
         (
@@ -136,7 +147,7 @@ structure WonProbe = struct
       val invalidValues = [
         SubsetWonValue.Number "true",
         SubsetWonValue.Number "1 2",
-        SubsetWonValue.Text "\255",
+        SubsetWonValue.Text [#"\255"],
         SubsetWonValue.Tag ("null", [], SubsetWonValue.Null),
         SubsetWonValue.Tag ("bad name", [], SubsetWonValue.Null),
         SubsetWonValue.Record [("x", SubsetWonValue.Null), ("x", SubsetWonValue.Null)],

@@ -116,7 +116,7 @@ structure SubsetWonParser = struct
                 val xs = SubsetList.reverse acc
               in
                 if SubsetWonSyntax.textValid xs then
-                  SubsetResult.Ok (SubsetWonSyntax.native xs, advance cur)
+                  SubsetResult.Ok (xs, advance cur)
                 else
                   fail (cursor, "text is not valid UTF-8")
               end
@@ -243,7 +243,10 @@ structure SubsetWonParser = struct
         else
           SubsetResult.Ok (name, stop))
     in
-      if peek (cursor, #"\"") then requireQuotedKey (text cursor) else name cursor
+      if peek (cursor, #"\"") then
+        requireQuotedKey (SubsetResult.map (text cursor, fn (xs, stop) => (SubsetWonSyntax.native xs, stop)))
+      else
+        name cursor
     end
 
   val blob = fn cursor =>

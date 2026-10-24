@@ -98,6 +98,19 @@
         "SubsetTextHost.fromCodes"
       ]
     },
+    "SubsetText": {
+      "source": "src/subset_text.sml",
+      "sourceDependencies": [
+        "SubsetResult",
+        "SubsetString",
+        "SubsetUnicode",
+        "SubsetUtf8"
+      ],
+      "primitives": [
+        "SubsetTextHost.encodeUtf8",
+        "SubsetTextHost.decodeUtf8"
+      ]
+    },
     "SubsetNatural": {
       "source": "src/subset_natural.sml",
       "sourceDependencies": [
@@ -202,6 +215,7 @@
         "SubsetNatural",
         "SubsetResult",
         "SubsetString",
+        "SubsetText",
         "SubsetWonParser",
         "SubsetWonSyntax",
         "SubsetWonValue"
@@ -251,7 +265,9 @@
         "codes",
         "charCode",
         "codeChar",
-        "fromCodes"
+        "fromCodes",
+        "encodeUtf8",
+        "decodeUtf8"
       ]
     },
     "SubsetHost": {

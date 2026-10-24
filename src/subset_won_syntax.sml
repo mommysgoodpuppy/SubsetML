@@ -84,7 +84,8 @@ structure SubsetWonSyntax = struct
       ]
     end
 
-  val quote = fn s =>
+  (* Quotes UTF-8 bytes as a byte string; encode's round trip rejects invalid UTF-8. *)
+  val quote = fn content =>
     let
       val escape = fn c =>
         (case c of
@@ -94,14 +95,14 @@ structure SubsetWonSyntax = struct
           | #"\r" => "\\r"
           | #"\t" => "\\t"
           | _ => if SubsetChar.isCntrl c then "\\x" ^ hexByte c else native [c])
-      val escaped = SubsetString.concat (SubsetList.map (bytes s, escape))
+      val escaped = SubsetString.concat (SubsetList.map (content, escape))
     in
       "\"" ^ escaped ^ "\""
     end
 
   val textValid = fn xs => SubsetResult.isOk (SubsetUtf8.decode xs)
 
-  val keyText = fn key => if identifier key then key else quote key
+  val keyText = fn key => if identifier key then key else quote (bytes key)
 
   val duplicate = fn (fields, key) =>
     SubsetList.exists (

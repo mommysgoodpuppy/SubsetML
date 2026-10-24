@@ -502,6 +502,34 @@ scalars, arbitrary bytes, boundary values and truncated encodings supplement exp
 cases. Helper functions such as `split`, `encodeOne`, `decodeOne` and `readUnit` are internal
 implementation interfaces; the stable entry points are the operations documented above.
 
+### Host text
+
+A Basis string is a byte string. Natively that is an SML string; on Workman/JS it is a JS
+string with one code unit per byte, which is how the JS file adapter reads files. Text written
+in Workman itself, such as a literal or a file read with `Deno.readTextFile`, is UTF-16 instead,
+and the two share the `String` type. Passing such text where a byte string is expected fails
+for units above 255 and silently reinterprets text whose units are all at most 255.
+
+`SubsetText` converts explicitly between host text and strict UTF-8 bytes.
+`toUtf8 text` returns `Ok bytes`, and `fromUtf8 bytes` returns `Ok text`; both return
+`Err (SubsetUnicode.Error (reason, offset))` with the strict codec's rules. Validation is
+`SubsetUtf8.decode` in source, so both backends accept and reject the same byte sequences.
+Host text that cannot be encoded, a JS lone surrogate, reports `InvalidScalar` at its UTF-16
+index. Use it at a host-language edge, for example a WM program building WON text; SubsetML
+code that already holds byte strings converts with `SubsetString`.
+
+The conversion is two primitives, `SubsetTextHost.encodeUtf8` and `decodeUtf8`, between host
+text and a byte string. An SML string is already UTF-8 bytes, so both are identities in the
+checker stub and the SML adapter. The Workman/JS adapter uses the URI codecs, which are native
+and linear; encoding ill-formed text returns it unchanged so the byte-string check rejects it.
+A source implementation would have to see UTF-16 units, which the byte-domain `codes`
+contract does not expose, and would build per-unit lists for whole documents.
+
+WON uses the same split. A text value is its UTF-8 bytes, `SubsetWonValue.Text of char list`,
+in the way a number is its spelling, and `SubsetWon.textString` converts a text value to host
+text. Documents, keys and tag names remain byte strings; names are ASCII and read the same in
+both representations.
+
 ## Dependencies and primitive boundary
 
 The dependency inventory is [basis-dependencies.json](basis-dependencies.json). Each implemented
@@ -520,6 +548,7 @@ custom module declares its source dependencies and explicit primitive calls. The
 | `SubsetUtf8` | SubsetChar, SubsetList, SubsetResult, SubsetUnicode | none |
 | `SubsetUtf16` | SubsetChar, SubsetList, SubsetResult, SubsetUnicode | none |
 | `SubsetString` | SubsetBytes, SubsetChar, SubsetList, SubsetResult | SubsetTextHost.codes, fromCodes |
+| `SubsetText` | SubsetResult, SubsetString, SubsetUnicode, SubsetUtf8 | SubsetTextHost.encodeUtf8, decodeUtf8 |
 | `SubsetNatural` | SubsetList, SubsetResult, SubsetString | none |
 | `SubsetSource` | SubsetBytes, SubsetList, SubsetResult, SubsetString | none directly; extraction through SubsetString |
 | `SubsetUtf16Source` | SubsetChar, SubsetList, SubsetResult, SubsetUnicode, SubsetUtf8, SubsetUtf16 | SubsetTextHost.codes |
@@ -650,10 +679,10 @@ older range/code arithmetic implementation; it does not include the MLWorks stri
 
 ## Minimal text boundary
 
-The baseline uses ordinary byte sequences, source Unicode codecs and four `SubsetTextHost`
-operations: extraction (`codes`), construction (`fromCodes`) and byte character code conversion
-(`charCode`, `codeChar`). Their checker stubs are portable reference implementations, except
-for extraction. `SubsetString` validates both directions; `SubsetSource` converts once
+The baseline uses ordinary byte sequences, source Unicode codecs and six `SubsetTextHost`
+operations: extraction (`codes`), construction (`fromCodes`), byte character code conversion
+(`charCode`, `codeChar`) and host text conversion (`encodeUtf8`, `decodeUtf8`). Their checker
+stubs are portable reference implementations, except for extraction. `SubsetString` validates both directions; `SubsetSource` converts once
 and supplies source-built indexing. Both compiler lexers now use it.
 
 UTF-8, UTF-16LE and UTF-16BE are encoded/decoded in ordinary SubsetML over bytes and checked
