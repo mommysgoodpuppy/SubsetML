@@ -409,6 +409,38 @@ It takes linear time. `SubsetString.str c` delegates to `toNative [c]`, preservi
 and all high bytes and rejecting a foreign non-byte character with `NonByte 0`.
 Neither helper adds a host primitive.
 
+`SubsetString.isPrefix (value, prefix)`, `isSuffix (value, suffix)` and
+`isSubstring (value, needle)` are the SML `STRING` counterparts with data-first
+arguments. They return `Result<bool, error>`, validating the complete value and
+then the complete pattern before searching. Empty patterns match every valid
+value, including the empty value. Matching compares exact bytes, including NUL
+and high bytes. `fields (value, delimiter)` calls the byte-character predicate
+once per byte, left to right after validation; it preserves empty fields,
+including a final empty field after a trailing delimiter. `tokens` omits empty
+fields. Thus fields of empty input are `[""]`, whereas tokens are `[]`.
+These helpers add no host operations. Prefix/suffix and splitting are linear;
+substring search uses a simple scan, worst-case O(value bytes * pattern bytes).
+`SubsetBytes.isPrefix/isSuffix/isSubstring` supply the underlying sequence
+operations and, like `fields` and `trim`, expect already validated byte input.
+
+`SubsetString.extract (value, start, count)` and `substring (value, start, count)`
+follow SML `STRING` range rules with byte indices and `int` counts. `extract` takes
+`SubsetOptionValue.NONE` for the suffix, or `SOME count` for a bounded substring.
+A zero-length range at EOF succeeds. Negative or out-of-bounds indices/counts
+return `InvalidIndex`; bounds checks never add start and count, so extreme counts
+do not overflow. Input validation precedes bounds checking, including empty slices.
+These two APIs use `slice_error = InvalidIndex | StringError of error`, preserving
+the existing conversion error type and its callers.
+
+`map (value, transform)` passes each byte `char` to the callback from left to right,
+once per byte, after complete input validation. It checks the mapped byte list
+before reconstruction and reports a foreign non-byte output at its output index.
+`translate (value, transform)` instead takes a callback returning a byte string;
+it validates each replacement before advancing to the next input byte, stopping
+at the first invalid replacement. Its `NonByte` offset is local to that
+replacement. Empty input invokes neither callback. These source implementations
+are linear in input plus output size and add no host operations.
+
 `SubsetSource.fromBytes bytes` validates and builds an immutable balanced byte index;
 `fromNative string` performs checked conversion once, then builds the same index. The former
 returns `SubsetBytes` errors, the latter `SubsetString` errors. `length source` is constant time;
@@ -531,6 +563,37 @@ Host text that cannot be encoded, a JS lone surrogate, reports `InvalidScalar` a
 index. Use it at a host-language edge, for example a WM program building WON text; SubsetML
 code that already holds byte strings converts with `SubsetString`.
 
+`SubsetText.isPrefix (value, prefix)`, `isSuffix (value, suffix)` and
+`isSubstring (value, needle)` provide the same exact-match contracts for Unicode
+host text. Both operands are validated as UTF-8 before searching; no normalization
+or case folding is performed. Valid UTF-8 patterns cannot match inside a scalar.
+`fields (value, delimiter)` and `tokens (value, delimiter)` are the Unicode
+counterparts of SML `STRING.fields/tokens`: the predicate receives Unicode scalar
+`int` values, once per scalar from left to right, after complete validation.
+Their empty-field behavior matches the byte-string versions. Every helper
+returns a `SubsetUnicode.error` Result; invalid text is never replaced with empty
+text or an empty list. They use only the existing conversion boundary and source
+algorithms. Splitting is linear in input plus output size, with scalar/byte lists
+allocated; substring search has the same quadratic worst case as the byte helper.
+
+`SubsetText.explode value` and `implode scalars` convert between host text and
+Unicode scalar `int` lists; `str scalar` is the singleton form of `implode`.
+They use the strict codecs and return `SubsetUnicode.error` Results. No
+normalization or grapheme segmentation is performed.
+
+`SubsetText.extract (value, start, count)` and `substring (value, start, count)`
+follow the byte-string APIs' range rules but count **Unicode scalars**, not UTF-8
+bytes, UTF-16 units or graphemes. They validate the entire input before checking
+bounds and use `slice_error = InvalidIndex | UnicodeError of SubsetUnicode.error`.
+`map (value, transform)` maps scalars to scalars and validates the mapped list;
+invalid output offsets count scalars in that mapped list. `translate` maps each
+scalar to host text, validates each replacement before invoking the next callback,
+and stops at the first invalid replacement. Unicode errors from a replacement
+are local to that replacement, under the existing host-text conversion rules.
+Callbacks run once per scalar, left to right, after complete input validation.
+These operations take linear time and storage in input plus output size, using
+only the existing representation adapters and source codecs.
+
 The conversion is two primitives, `SubsetTextHost.encodeUtf8` and `decodeUtf8`, between host
 text and a byte string. An SML string is already UTF-8 bytes, so both are identities in the
 checker stub and the SML adapter. The Workman/JS adapter uses the URI codecs, which are native
@@ -542,6 +605,48 @@ WON uses the same split. A text value is its UTF-8 bytes, `SubsetWonValue.Text o
 in the way a number is its spelling, and `SubsetWon.textString` converts a text value to host
 text. Documents, keys and tag names remain byte strings; names are ASCII and read the same in
 both representations.
+
+### Decimal integers, padding and lexical paths
+
+`SubsetInt.fromString value` is the decimal `INTEGER.fromString` counterpart:
+skip ASCII whitespace, accept an optional `+`, `-` or `~`, and parse a decimal
+prefix. Trailing input is not consumed or required to be whitespace. The stricter
+`parseDecimal value` requires complete consumption with an optional sign and no
+whitespace; `parseNatural value` accepts only one or more ASCII digits. Leading
+zeros are accepted; callers enforcing canonical spelling must check that policy.
+All return `Result<int, SubsetInt.error>`, with `InvalidInteger`, `Overflow`, or
+`StringError of SubsetString.error`. Entire byte input is validated first.
+Overflow is checked before arithmetic in the signed 32-bit range, including
+`~2147483648`; long runs of leading zeros use constant call-stack space. Parsing
+uses no SML Basis scanner or host number parser.
+
+`SubsetStringCvt.padLeft/padRight (value, width, c)` implement the `STRING_CVT`
+padding counterparts with byte widths and byte characters. `padTextLeft/padTextRight
+(value, width, scalar)` provide Unicode host-text variants counting scalars.
+Input and padding characters are validated even if no padding is needed. If
+width is at most the input length, including negative widths, return the input;
+otherwise insert enough copies to reach width, without truncating. Widths are
+`int`, not display columns, graphemes or UTF-16 units. Allocation failure remains
+a runtime resource failure. Construction uses source repetition/concatenation,
+not a new host operation.
+
+`SubsetPath.dir value` is a checked, source-only `OS.Path.dir` counterpart for
+slash-separated Unicode paths. The directory is everything before the final
+slash, preserving redundant separators; a root slash remains `/`. A bare filename
+or empty input has directory `""`. A trailing slash denotes an empty final file.
+There is no normalization, filesystem lookup, volume parsing or Windows syntax
+inference. This explicitly lexical profile returns `SubsetUnicode.error` on
+malformed host text. An application can layer its own empty-parent policy over
+that result, as pakman does for compatibility.
+
+`SubsetText.size` counts scalars. `trim (value, predicate)` removes the maximal
+prefix and suffix whose scalars satisfy the predicate; interior characters are
+preserved. Boundary predicates may be evaluated twice when prefix and suffix
+meet. `compare (left, right)` validates both operands and returns `SubsetOrder` in
+UTF-16 lexical order on every host, preserving JS string comparison for valid
+text. This differs from `SubsetString.compare`'s byte order for some Unicode
+strings. No locale, normalization, display width or malformed-unit order is
+implied. All of these are source algorithms over the existing text boundary.
 
 ## Dependencies and primitive boundary
 
@@ -562,8 +667,11 @@ custom module declares its source dependencies and explicit primitive calls. The
 | `SubsetUnicode` | SubsetBool, SubsetChar, SubsetList, SubsetResult | none |
 | `SubsetUtf8` | SubsetChar, SubsetList, SubsetResult, SubsetUnicode | none |
 | `SubsetUtf16` | SubsetChar, SubsetList, SubsetResult, SubsetUnicode | none |
-| `SubsetString` | SubsetChar, SubsetList, SubsetResult, SubsetBytes | SubsetTextHost.codes, fromCodes |
-| `SubsetText` | SubsetResult, SubsetString, SubsetUnicode, SubsetUtf8 | SubsetTextHost.encodeUtf8, decodeUtf8 |
+| `SubsetString` | SubsetOptionValue, SubsetChar, SubsetList, SubsetResult, SubsetBytes | SubsetTextHost.codes, fromCodes |
+| `SubsetText` | SubsetOptionValue, SubsetList, SubsetBytes, SubsetResult, SubsetString, SubsetUnicode, SubsetUtf8, SubsetOrder | SubsetTextHost.encodeUtf8, decodeUtf8 |
+| `SubsetInt` | SubsetResult, SubsetString, SubsetList, SubsetChar | none |
+| `SubsetStringCvt` | SubsetResult, SubsetList, SubsetString, SubsetText | none |
+| `SubsetPath` | SubsetResult, SubsetList, SubsetString, SubsetText | none |
 | `SubsetNatural` | SubsetBool, SubsetList, SubsetResult, SubsetString | none |
 | `SubsetSource` | SubsetBytes, SubsetList, SubsetResult, SubsetString | none directly; extraction through SubsetString |
 | `SubsetUtf16Source` | SubsetOptionValue, SubsetResult, SubsetList, SubsetUnicode, SubsetUtf8, SubsetUtf16, SubsetChar | SubsetTextHost.codes |

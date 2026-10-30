@@ -108,7 +108,8 @@
         "SubsetChar",
         "SubsetList",
         "SubsetResult",
-        "SubsetBytes"
+        "SubsetBytes",
+        "SubsetOptionValue"
       ],
       "primitives": [
         "SubsetTextHost.codes",
@@ -121,12 +122,36 @@
         "SubsetResult",
         "SubsetString",
         "SubsetUnicode",
-        "SubsetUtf8"
+        "SubsetUtf8",
+        "SubsetList",
+        "SubsetBytes",
+        "SubsetOptionValue",
+        "SubsetOrder"
       ],
       "primitives": [
         "SubsetTextHost.encodeUtf8",
         "SubsetTextHost.decodeUtf8"
       ]
+    },
+    "SubsetInt": {
+      "source": "src/subset_int.sml",
+      "sourceDependencies": [
+        "SubsetResult",
+        "SubsetString",
+        "SubsetList",
+        "SubsetChar"
+      ],
+      "primitives": []
+    },
+    "SubsetStringCvt": {
+      "source": "src/subset_string_cvt.sml",
+      "sourceDependencies": [
+        "SubsetResult",
+        "SubsetList",
+        "SubsetString",
+        "SubsetText"
+      ],
+      "primitives": []
     },
     "SubsetNatural": {
       "source": "src/subset_natural.sml",
@@ -242,6 +267,16 @@
         "SubsetWonParser",
         "SubsetWonSyntax",
         "SubsetWonValue"
+      ],
+      "primitives": []
+    },
+    "SubsetPath": {
+      "source": "src/subset_path.sml",
+      "sourceDependencies": [
+        "SubsetResult",
+        "SubsetList",
+        "SubsetString",
+        "SubsetText"
       ],
       "primitives": []
     }

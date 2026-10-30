@@ -1,4 +1,5 @@
 (* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./subset_result.sml" import * as SubsetResult;
 from "./subset_list.sml" import * as SubsetList;
 from "./subset_char.sml" import * as SubsetChar;
@@ -9,6 +10,7 @@ from "./subset_bytes.sml" import * as SubsetBytes;
 (* Native byte-string boundary. Extraction and reconstruction are SubsetTextHost primitives. *)
 structure SubsetString = struct
   datatype error = NonByte of int
+  datatype slice_error = InvalidIndex | StringError of error
   val fromNative = fn value =>
     let
       val rec go = fn
@@ -54,4 +56,45 @@ structure SubsetString = struct
   (* Checked byte-string helpers share the extraction/reconstruction boundaries. *)
   val size = fn value => SubsetResult.map (fromNative value, SubsetList.length)
   val str = fn c => toNative [c]
+
+  (* SML STRING counterparts, with data-first arguments and typed boundary errors.
+     Validate complete operands even when a match could be decided early. *)
+  val isPrefix = fn (value, prefix) =>
+    SubsetResult.andThen (fromNative value, fn bytes =>
+      SubsetResult.map (fromNative prefix, fn wanted => SubsetBytes.isPrefix (bytes, wanted)))
+  val isSuffix = fn (value, suffix) =>
+    SubsetResult.andThen (fromNative value, fn bytes =>
+      SubsetResult.map (fromNative suffix, fn wanted => SubsetBytes.isSuffix (bytes, wanted)))
+  val isSubstring = fn (value, needle) =>
+    SubsetResult.andThen (fromNative value, fn bytes =>
+      SubsetResult.map (fromNative needle, fn wanted => SubsetBytes.isSubstring (bytes, wanted)))
+
+  val fields = fn (value, delimiter) =>
+    SubsetResult.andThen (fromNative value, fn bytes =>
+      SubsetList.traverse (SubsetBytes.fields (bytes, delimiter), toNative))
+  val tokens = fn (value, delimiter) =>
+    SubsetResult.map (fields (value, delimiter), fn pieces =>
+      SubsetList.filter (pieces, fn piece => piece <> ""))
+
+  (* Range errors are separate from the existing byte-conversion error type.
+     Successive checked drops/takes avoid overflowing start + count. *)
+  val extract = fn (value, start, count) =>
+    SubsetResult.andThen (SubsetResult.mapErr (fromNative value, StringError), fn bytes =>
+      SubsetResult.andThen (SubsetResult.mapErr (SubsetList.drop (bytes, start), fn error => InvalidIndex), fn rest =>
+        let
+          val selected = case count of
+              SubsetOptionValue.NONE => SubsetResult.Ok rest
+            | SubsetOptionValue.SOME size =>
+                SubsetResult.mapErr (SubsetList.take (rest, size), fn error => InvalidIndex)
+        in SubsetResult.andThen (selected, fn chosen =>
+          SubsetResult.mapErr (toNative chosen, StringError)) end))
+  val substring = fn (value, start, count) => extract (value, start, SubsetOptionValue.SOME count)
+
+  val map = fn (value, transform) =>
+    SubsetResult.andThen (fromNative value, fn bytes =>
+      toNative (SubsetList.map (bytes, transform)))
+  val translate = fn (value, transform) =>
+    SubsetResult.andThen (fromNative value, fn bytes =>
+      SubsetResult.andThen (SubsetList.traverse (bytes, fn c => fromNative (transform c)), fn pieces =>
+        toNative (SubsetList.concat pieces)))
 end

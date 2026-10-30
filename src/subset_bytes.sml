@@ -63,6 +63,21 @@ structure SubsetBytes = struct
             else go (rest, c :: field, acc)
     in go (bytes, [], []) end
 
+  (* Like fields/trim, these operate on byte sequences already checked at the boundary.
+     Data first: the sequence precedes the sought prefix, suffix or substring. *)
+  val rec isPrefix = fn
+      (bytes, []) => true
+    | ([], c :: rest) => false
+    | (c :: bytes, wanted :: rest) => c = wanted andalso isPrefix (bytes, rest)
+  val isSuffix = fn (bytes, suffix) =>
+    isPrefix (SubsetList.reverse bytes, SubsetList.reverse suffix)
+  val isSubstring = fn (bytes, needle) =>
+    let
+      val rec search = fn rest =>
+        if isPrefix (rest, needle) then true
+        else case rest of [] => false | c :: tail => search tail
+    in search bytes end
+
   val reader = fn bytes => SubsetResult.map (validate bytes, fn valid => Reader (valid, 0))
   val position = fn Reader (bytes, offset) => offset
   val peek = fn Reader ([], offset) => NONE | Reader (c :: rest, offset) => SOME c
