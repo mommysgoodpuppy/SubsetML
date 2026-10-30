@@ -1,4 +1,5 @@
 (* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./syntax.sml" import * as Syntax;
 from "./sml_list.sml" import * as SmlList;
 from "./compiler_text.sml" import * as CompilerText;
@@ -14,6 +15,8 @@ from "./basis.sml" import * as Basis;
 (* Native SML emission makes the int32 choice explicit, independently of the
    host compiler's default int. Source formatting remains source formatting. *)
 structure NativeInt = struct
+  open SubsetOptionValue
+
   open Syntax
 
   val basename = fn path => case SmlList.rev (CompilerText.fields (path, fn c => c = #"/")) of

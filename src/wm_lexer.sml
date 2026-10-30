@@ -1,4 +1,5 @@
 (* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./syntax.sml" import * as Syntax;
 from "./sml_list.sml" import * as SmlList;
 from "./subset_char.sml" import * as SubsetChar;
@@ -13,6 +14,7 @@ from "./lexer.sml" import * as Lexer;
    (../wm-mini/tooling/frontend-v3/lexical-design.md), for the fragment that corresponds to
    SubsetML. Identifiers may also contain primes. *)
 structure WmLexer = struct
+  open SubsetOptionValue
 
   open Syntax
 

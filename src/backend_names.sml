@@ -1,4 +1,6 @@
 (* @subsetml
+from "./subset_bool.sml" import * as SubsetBool;
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./syntax.sml" import * as Syntax;
 from "./subset_list.sml" import * as SubsetList;
 from "./compiler_text.sml" import * as CompilerText;
@@ -9,6 +11,8 @@ from "./elab.sml" import * as Elab;
 (* Shared target spelling and lexical binding resolution. Module keys are supplied by the
    canonical project planner. A binding has its own allocation even when source names repeat. *)
 structure BackendNames = struct
+  open SubsetOptionValue
+
   datatype binding = Binding of string * string * bool
   datatype scope = Scope of binding list * binding list
   datatype symbol = Symbol of int * string * Syntax.pos * string * string * string
@@ -42,7 +46,7 @@ structure BackendNames = struct
      empty/digit-leading names; the project allocator still resolves spelling collisions. *)
   val moduleHint = fn stem =>
     let
-      val pieces = CompilerText.fields (stem, fn c => not (SubsetChar.isAlphaNum c))
+      val pieces = CompilerText.fields (stem, fn c => SubsetBool.not (SubsetChar.isAlphaNum c))
       val capitalize = fn text => case CompilerText.characters text of
         [] => "" | first :: rest => CompilerText.implode (SubsetChar.toUpper first :: rest)
       val hint = CompilerText.implode (SubsetList.concat
@@ -53,13 +57,13 @@ structure BackendNames = struct
     end
 
   val empty = Scope ([], [])
-  val plus = fn (Scope (av, at), Scope (bv, bt)) => Scope (bv @ av, bt @ at)
+  val plus = fn (Scope (av, at), Scope (bv, bt)) => Scope (SubsetList.append (bv, av), SubsetList.append (bt, at))
   val lookup = fn (bindings, name) => SubsetList.find (bindings, fn Binding (source, _, _) => source = name)
   val label = fn (prefix, name) => if member (keywords, name) then prefix ^ "Label_" ^ name else name
   val fresh = fn (Supply (prefix, next, symbols), owner, pos, space, name, constructor) =>
     let
       val unsafe = member (keywords, name) orelse
-        (space = "value" andalso not constructor andalso member (Elab.omittedConstructors, name))
+        (space = "value" andalso SubsetBool.not constructor andalso member (Elab.omittedConstructors, name))
       val target = if unsafe then prefix ^ space ^ CompilerText.natural next ^ "_" ^ name else name
       val symbol = Symbol (next, owner, pos, space, name, target)
     in (Binding (name, target, constructor), Supply (prefix, next + 1, symbol :: symbols)) end
@@ -82,7 +86,7 @@ structure BackendNames = struct
       val rec skip = fn (text, prefix) => case prefix of [] => text
         | _ :: rest => (case text of _ :: xs => skip (xs, rest) | [] => [])
       val rec replace = fn (text, prefix, replacement) =>
-        if begins (text, prefix) then replacement @ replace (skip (text, prefix), prefix, replacement)
+        if begins (text, prefix) then SubsetList.append (replacement, replace (skip (text, prefix), prefix, replacement))
         else case text of [] => [] | c :: rest => c :: replace (rest, prefix, replacement)
     in SubsetList.foldLeft (symbols, message, fn (symbol, message) => case symbol of
       Symbol (_, _, _, _, source, target) =>
@@ -200,13 +204,13 @@ structure BackendNames = struct
           [] => ([], [], [], supply)
         | p :: rest => let val (p, guards, aliases, next) = checks (p, supply)
                           val (rest, more, moreAliases, next) = checkList (rest, next)
-                      in (p :: rest, guards @ more, aliases @ moreAliases, next) end
+                      in (p :: rest, SubsetList.append (guards, more), SubsetList.append (aliases, moreAliases), next) end
       val rec conditions = fn (guards, yes, no) => case guards of
           [] => yes | guard :: rest => Syntax.EIf (guard, conditions (rest, yes, no), no)
       (* Continuations live outside branch binders. Their bodies are not duplicated, and
          constructing a thunk does not execute later branches or evaluate their pins. *)
       val rec matchRules = fn (subject, rs, supply) =>
-        if not (SubsetList.exists (rs, fn (p, _) => guarded p)) then (Syntax.ECase (subject, rs), supply)
+        if SubsetBool.not (SubsetList.exists (rs, fn (p, _) => guarded p)) then (Syntax.ECase (subject, rs), supply)
         else case rs of [] => (Syntax.ECase (subject, []), supply)
         | (pat, body) :: rest =>
             let
@@ -297,7 +301,7 @@ structure BackendNames = struct
             let
               val (plainPs, plainDelta, next) = patterns (env, SubsetList.map (plain, fn (pat, _) => pat), supply)
               val (recPs, recDelta, next) = patterns (env, SubsetList.map (recs, fn (pat, _) => pat), next)
-              val next = if SubsetList.exists (plainPs @ recPs, guarded) then
+              val next = if SubsetList.exists (SubsetList.append (plainPs, recPs), guarded) then
                 let val Supply (prefix, count, symbols) = next
                 in Supply (prefix, count, Invalid (owner, p,
                   "numeric/pinned binding patterns are outside the reverse-WM profile; use match") :: symbols) end
@@ -389,7 +393,7 @@ structure BackendNames = struct
                   | NONE => next) else next
                 val dependencies = if runtimeUsed (next, name) then
                   (case runtime of SOME runtimeName =>
-                    if member (dependencies, runtimeName) then dependencies else dependencies @ [runtimeName]
+                    if member (dependencies, runtimeName) then dependencies else SubsetList.append (dependencies, [runtimeName])
                   | NONE => dependencies) else dependencies
                 val (rest, next) = loop (rest, (name, exports) :: cache, next)
             in ((name, dependencies, (path, src, prog, cs)) :: rest, next) end

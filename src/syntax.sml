@@ -1,9 +1,14 @@
+(* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
+*)
+
 (* Abstract syntax of SubsetML (docs/spec.md §4, §7, §8).
 
    Derived forms are kept as written so diagnostics can talk about the source; the elaborator
    expands them as in Appendix A of the Definition. Infix applications are already resolved:
    `a + b` is EApp (EId "+", ETuple [a, b]) and `x :: xs` is PApp ("::", PTuple [x, xs]). *)
 structure Syntax = struct
+  open SubsetOptionValue
 
   (* Byte offset into the source text. *)
   type pos = int

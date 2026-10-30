@@ -1,4 +1,6 @@
 /* @subsetml
+from "./subset_bool.sml" import * as SubsetBool;
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./compiler_text.sml" import * as CompilerText;
 from "./subset_result.sml" import * as SubsetResult;
 from "./module_project.sml" import * as ModuleProject;
@@ -12,6 +14,7 @@ from "./sml_list.sml" import * as SmlList;
 /* SML source-list targets. Build descriptions and native adapters are distinct
    from portable source semantics; the complete plan precedes all file writes. */
 
+from "./subset_option_value.wm" import * as SubsetOptionValue;
 from "./compiler_text.wm" import * as CompilerText;
 from "./subset_result.wm" import * as SubsetResult;
 from "./module_project.wm" import * as ModuleProject;
@@ -19,7 +22,10 @@ from "./subset_io.wm" import * as SubsetIo;
 from "./native_int.wm" import * as NativeInt;
 from "./unify.wm" import * as Unify;
 from "./subset_list.wm" import * as SubsetList;
+from "./subset_bool.wm" import * as SubsetBool;
 from "./sml_list.wm" import * as SmlList;
+
+from "./subset_option_value.wm" import *;
 
 let quote = (text) => { "\"" ++ CompilerText.escapeSmlString(text) ++ "\"" };
 let error = (text) => { SubsetResult.Err(text) };
@@ -63,7 +69,7 @@ let emit = (target, specifications, files) => {
                 match {
                   ModuleProject.Resolved(id, _) => {
                     if (SubsetList.exists(selected, (key, _) => { ModuleProject.same(key, id) })) { error("duplicate native adapter: " ++ checker) } else {
-                      if (!SubsetList.exists(identities, (_, key) => { ModuleProject.same(key, id) })) {
+                      if (SubsetBool.not(SubsetList.exists(identities, (_, key) => { ModuleProject.same(key, id) }))) {
                         error("native adapter checker is not in the source list: " ++ checker)
                       } else {
                         SubsetResult.andThen(read(native), (text) => { select(rest, identities, [(id, text), ..selected]) })
@@ -145,7 +151,7 @@ let emit = (target, specifications, files) => {
                         )
                       ]
                     };
-                    SubsetResult.Ok([("prelude.sml", prelude), ..List.append(adapted, build)])
+                    SubsetResult.Ok([("prelude.sml", prelude), ..SubsetList.append(adapted, build)])
                   }
                 )
               }

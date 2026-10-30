@@ -18,7 +18,7 @@ echo "round trips: $pass passed, $fail failed"
 # sml -> wm -> sml: each file's declarations survive the translation (up to Normalize)
 set --
 # The compiler's integer code translates as I32.
-$bin roundtrip src/subset_result.sml src/subset_list.sml || { echo "FAIL: integer compiler module round trip"; exit 1; }
+$bin roundtrip src/subset_option_value.sml src/subset_result.sml src/subset_list.sml || { echo "FAIL: integer compiler module round trip"; exit 1; }
 for f in tests/accept/*.sml; do
   case "$f" in
     tests/accept/overload-unresolved.sml|tests/accept/integer_basics.sml)

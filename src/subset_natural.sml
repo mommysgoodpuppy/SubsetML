@@ -1,4 +1,5 @@
 (* @subsetml
+from "./subset_bool.sml" import * as SubsetBool;
 from "./subset_list.sml" import * as SubsetList;
 from "./subset_result.sml" import * as SubsetResult;
 from "./subset_string.sml" import * as SubsetString;
@@ -13,8 +14,8 @@ structure SubsetNatural = struct
   val split = fn (value : int, base : int) => (value div base, value mod base)
 
   val divide = fn (value, base) =>
-    if not (isValid value) then SubsetResult.Err InvalidNatural
-    else (if not (isValid base) orelse base <= 0 then SubsetResult.Err InvalidDivisor
+    if SubsetBool.not (isValid value) then SubsetResult.Err InvalidNatural
+    else (if SubsetBool.not (isValid base) orelse base <= 0 then SubsetResult.Err InvalidDivisor
     else SubsetResult.Ok (split (value, base)))
 
   val toString = fn value =>

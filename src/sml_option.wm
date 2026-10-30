@@ -1,5 +1,13 @@
+/* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
+*/
+
 /* Portable option algorithms for the custom SubsetML Basis.
    Current SML-shaped signatures are transitional; checked APIs will use Result. */
+
+from "./subset_option_value.wm" import * as SubsetOptionValue;
+
+from "./subset_option_value.wm" import *;
 
 let getOpt = (opt, fallback) => {
   match(opt) {

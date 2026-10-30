@@ -1,10 +1,13 @@
 (* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./subset_natural.sml" import * as SubsetNatural;
 *)
 
 (* Persistent binary trie over nonnegative signed integers. Each child stores
    the remaining key bits, so insertion never constructs a 2^31 scale. *)
 structure IntMap = struct
+  open SubsetOptionValue
+
   datatype 'a map = Empty | Leaf of int * 'a | Branch of 'a map * 'a map
   val empty = Empty
   val rec find = fn (tree, key) => case tree of

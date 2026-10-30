@@ -1,3 +1,4 @@
+open SubsetOptionValue
 (* Full-SML observation harness; the library itself remains within SubsetML. *)
 fun assert (label, condition) = if condition then () else (print ("FAIL " ^ label ^ "\n"); OS.Process.exit OS.Process.failure)
 fun observe run xs =

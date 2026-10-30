@@ -1,5 +1,7 @@
 (* Portable failure contracts and reader behavior, shared with generated Workman. *)
 structure TextBasis = struct
+  open SubsetOptionValue
+
   val fails = fn (result, reason, offset) =>
     case result of
       SubsetResult.Ok value => false

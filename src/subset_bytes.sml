@@ -1,4 +1,5 @@
 (* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./subset_result.sml" import * as SubsetResult;
 from "./subset_char.sml" import * as SubsetChar;
 from "./subset_list.sml" import * as SubsetList;
@@ -7,6 +8,8 @@ from "./subset_order.sml" import * as SubsetOrder;
 
 (* Byte sequences and immutable sequential readers; no native-string access. *)
 structure SubsetBytes = struct
+  open SubsetOptionValue
+
   datatype error = InvalidIndex | OutOfBounds | NonByte of int
   datatype reader = Reader of char list * int
 

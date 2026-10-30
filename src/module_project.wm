@@ -1,4 +1,6 @@
 /* @subsetml
+from "./subset_bool.sml" import * as SubsetBool;
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./syntax.sml" import * as Syntax;
 from "./module_imports.sml" import * as ModuleImports;
 from "./subset_io.sml" import * as SubsetIo;
@@ -14,6 +16,7 @@ from "./unify.sml" import * as Unify;
 
 // Entry-file loading with explicit imports, canonical identity and private working scope.
 
+from "./subset_option_value.wm" import * as SubsetOptionValue;
 from "./syntax.wm" import * as Syntax;
 from "./module_imports.wm" import * as ModuleImports;
 from "./subset_io.wm" import * as SubsetIo;
@@ -21,10 +24,13 @@ from "./subset_list.wm" import * as SubsetList;
 from "./compiler_text.wm" import * as CompilerText;
 from "./subset_string.wm" import * as SubsetString;
 from "./subset_result.wm" import * as SubsetResult;
+from "./subset_bool.wm" import * as SubsetBool;
 from "./translate.wm" import * as Translate;
 from "./env.wm" import * as Env;
 from "./elab.wm" import * as Elab;
 from "./unify.wm" import * as Unify;
+
+from "./subset_option_value.wm" import *;
 
 // The canonical key is constructed only at the resolver boundary.
 type ModuleId = | ModuleId<String>;
@@ -122,7 +128,7 @@ let cycle = (active, repeated) => {
   let ordered = SubsetList.dropWhile(
     SubsetList.reverse(active),
     match {
-      Resolved(id, _) => { !same(id, repeatedId) }
+      Resolved(id, _) => { SubsetBool.not(same(id, repeatedId)) }
     }
   );
   "import cycle: " ++ SubsetString.concatWith(SubsetList.map(SubsetList.append(ordered, [repeated]), location), " -> ")
@@ -236,7 +242,7 @@ let check = match {
                   Some(entry) => {
                     let (_, exports) = entry;
                     let Env.Env(_, topTypes, topValues) = exports;
-                    if (!(if (SubsetList.isEmpty(topTypes)) { SubsetList.isEmpty(topValues) } else { false })) {
+                    if (SubsetBool.not(if (SubsetList.isEmpty(topTypes)) { SubsetList.isEmpty(topValues) } else { false })) {
                       SubsetResult.Err(CheckFailure(
                         path,
                         src,

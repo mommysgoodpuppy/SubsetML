@@ -1,4 +1,6 @@
 /* @subsetml
+from "./subset_bool.sml" import * as SubsetBool;
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./syntax.sml" import * as Syntax;
 from "./lexer.sml" import * as Lexer;
 from "./sml_option.sml" import * as SmlOption;
@@ -16,15 +18,19 @@ from "./subset_result.sml" import * as SubsetResult;
    SubsetML has no exceptions, so every parsing function returns a `res`: either the parsed value
    with the remaining tokens, or an error. `bind` sequences two parsing steps. */
 
+from "./subset_option_value.wm" import * as SubsetOptionValue;
 from "./syntax.wm" import * as Syntax;
 from "./lexer.wm" import * as Lexer;
 from "./sml_option.wm" import * as SmlOption;
 from "./subset_string.wm" import * as SubsetString;
+from "./subset_list.wm" import * as SubsetList;
 from "./compiler_text.wm" import * as CompilerText;
 from "./subset_char.wm" import * as SubsetChar;
-from "./subset_list.wm" import * as SubsetList;
 from "./sml_list.wm" import * as SmlList;
 from "./subset_order.wm" import * as SubsetOrder;
+from "./subset_bool.wm" import * as SubsetBool;
+
+from "./subset_option_value.wm" import *;
 
 from "./syntax.wm" import *;
 from "./lexer.wm" import *;
@@ -144,7 +150,7 @@ let describe = match {
   TKey(k) => { "`" ++ k ++ "`" },
   TId(s) => { "identifier `" ++ s ++ "`" },
   TLong(q, s) => {
-    "identifier `" ++ SubsetString.concatWith(List.append(q, [s]), ".") ++ "`"
+    "identifier `" ++ SubsetString.concatWith(SubsetList.append(q, [s]), ".") ++ "`"
   },
   TTyVar(s) => { "type variable `" ++ s ++ "`" },
   TScon(_) => { "a constant" },
@@ -202,7 +208,7 @@ let longStrId = (ts) => {
     (TId(s), _) => {
       if (isAlnumId(s)) { Done([s], advance(ts)) } else { expected("a structure name", ts) }
     },
-    (TLong(q, s), _) => { Done(List.append(q, [s]), advance(ts)) },
+    (TLong(q, s), _) => { Done(SubsetList.append(q, [s]), advance(ts)) },
     _ => { expected("a structure name", ts) }
   }
 };
@@ -350,7 +356,9 @@ let infixPat = (opr, p, l, r) => { PApp(p, ([], opr), PTuple([l, r])) };
 
 let startsTyCon = (ts) => {
   match(peek(ts)) {
-    (TId(s), _) => { if (isAlnumId(s)) { !isInfix(s) } else { false } },
+    (TId(s), _) => {
+      if (isAlnumId(s)) { SubsetBool.not(isInfix(s)) } else { false }
+    },
     (TLong(_, _), _) => { true },
     _ => { false }
   }
@@ -455,7 +463,7 @@ let startsAtPat = (ts) => {
     (TKey(k), _) => {
       if (if (if (k == "_") { true } else { k == "(" }) { true } else { k == "[" }) { true } else { k == "{" }
     },
-    (TId(s), _) => { !isInfix(s) },
+    (TId(s), _) => { SubsetBool.not(isInfix(s)) },
     (TLong(_, _), _) => { true },
     (TScon(_), _) => { true },
     _ => { false }
@@ -578,7 +586,7 @@ let startsAtExp = (ts) => {
     (TKey(k), _) => {
       if (if (if (if (k == "(") { true } else { k == "[" }) { true } else { k == "{" }) { true } else { k == "#" }) { true } else { k == "let" }
     },
-    (TId(s), _) => { !isInfix(s) },
+    (TId(s), _) => { SubsetBool.not(isInfix(s)) },
     (TLong(_, _), _) => { true },
     (TScon(_), _) => { true },
     _ => { false }
@@ -828,7 +836,7 @@ and parseDec = (ts) => {
       let rec more = (acc, ts) => {
         match(peek(ts)) {
           (TId(s), _) => {
-            if (if (isAlnumId(s)) { !isInfix(s) } else { false }) {
+            if (if (isAlnumId(s)) { SubsetBool.not(isInfix(s)) } else { false }) {
               bind(longStrId(ts))((id) => (ts) => { more([id, ..acc], ts) })
             } else { Done(SmlList.rev(acc), ts) }
           },
@@ -855,7 +863,7 @@ and parseValBind = (isRec, plain, recs, ts) => {
         bind(parseExp(ts))((e) => (ts) => {
           let ok = match(e) {
             EFn(_) => { true },
-            _ => { !isRec }
+            _ => { SubsetBool.not(isRec) }
           };
           let plain' = if (isRec) { plain } else { [(pat, e), ..plain] };
           let recs' = if (isRec) { [(pat, e), ..recs] } else { recs };
@@ -916,7 +924,7 @@ let parseStrBind = (ts) => {
       Fail("signature ascription is not part of SubsetML", posOf(ts))
     } else {
       bind(expect("=", ts))((_) => (ts) => {
-        if (!isKey("struct", ts)) {
+        if (SubsetBool.not(isKey("struct", ts))) {
           Fail("only `struct ... end` structure expressions are part of SubsetML", posOf(ts))
         } else {
           bind(parseDecs(advance(ts)))((ds) => (ts) => {

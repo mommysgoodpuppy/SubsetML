@@ -1,5 +1,7 @@
 (* Executed unchanged through MLton and through the generated Workman module graph. *)
 structure PortableBasis = struct
+  open SubsetOptionValue
+
   val names = ["a", "b", "c"]
   val yes = SmlList.exists (fn x => x = "b") names
     andalso SmlList.all (fn x => x <> "d") names

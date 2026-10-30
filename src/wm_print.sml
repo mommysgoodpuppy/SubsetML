@@ -1,4 +1,6 @@
 (* @subsetml
+from "./subset_bool.sml" import * as SubsetBool;
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./syntax.sml" import * as Syntax;
 from "./doc.sml" import * as Doc;
 from "./compiler_text.sml" import * as CompilerText;
@@ -18,6 +20,7 @@ from "./subset_process.sml" import * as SubsetProcess;
    Translate rejects unsupported declaration forms before printing; no embedded SML
    declarations are emitted. Expression compatibility forms retain their own mappings. *)
 structure WmPrint = struct
+  open SubsetOptionValue
 
   open Syntax
   open Doc
@@ -45,19 +48,20 @@ structure WmPrint = struct
 
   (* Numeric adapters retain SML argument order. Keep this table shared with the reader. *)
   val numNames =
-    SmlList.concat (SmlList.map (fn (q, names) =>
-      SmlList.map (fn x => ((["Num", q], x), ([q], x))) names)
-      [("String", ["size", "sub", "substring", "extract"]),
-       ("List", ["length", "nth", "take", "drop", "tabulate"]),
-       ("Char", ["ord", "chr"]), ("CharVector", ["tabulate"])])
-    @ SmlList.map (fn x => ((["Num"], x), (["Number"], x)))
-        ["div", "mod", "toString", "fromString"]
-    @ SmlList.map (fn x => (([], x), (["I32"], x))) ["div", "mod"]
+    SubsetList.concat [
+      SmlList.concat (SmlList.map (fn (q, names) =>
+        SmlList.map (fn x => ((["Num", q], x), ([q], x))) names)
+        [("String", ["size", "sub", "substring", "extract"]),
+         ("List", ["length", "nth", "take", "drop", "tabulate"]),
+         ("Char", ["ord", "chr"]), ("CharVector", ["tabulate"])]),
+      SmlList.map (fn x => ((["Num"], x), (["Number"], x)))
+        ["div", "mod", "toString", "fromString"],
+      SmlList.map (fn x => (([], x), (["I32"], x))) ["div", "mod"]]
 
   (* Basis constructors spelled differently in Workman. *)
   val valueName = fn
-      ([], "NONE") => "None"
-    | ([], "SOME") => "Some"
+      (qs, "NONE") => dotted (qs, "None")
+    | (qs, "SOME") => dotted (qs, "Some")
     | id =>
         (case SmlList.find (fn (sml, _) => sml = id) numNames of
            SOME entry => let val (sml, wm) = entry in dotted wm end
@@ -66,7 +70,7 @@ structure WmPrint = struct
   (* Workman tells constructors from variables by case; SubsetML code follows the same
      convention, with the Definition's lowercase constructors as exceptions. *)
   val isConName = fn (qs, s) =>
-    not (SmlList.null qs) orelse startsUpper s orelse s = "true" orelse s = "false"
+    SubsetBool.not (SmlList.null qs) orelse startsUpper s orelse s = "true" orelse s = "false"
     orelse s = "nil"
 
   (* `'a` is written `a`: Workman type variables are lowercase type names. *)
@@ -141,7 +145,7 @@ structure WmPrint = struct
      written `Var(x)`. *)
 
   val rec pat = fn (inMatch, binds, p) =>
-    let val child = fn (b, q) => pat (inMatch, b orelse not inMatch, q) in
+    let val child = fn (b, q) => pat (inMatch, b orelse SubsetBool.not inMatch, q) in
       case p of
         PWild => text "_"
       | PScon (pos, c) => atom (pos, scon c)
@@ -157,7 +161,7 @@ structure WmPrint = struct
           let
             val rec spine = fn
                 (PApp (_, ([], "::"), PTuple [h, t]), acc) => spine (t, h :: acc)
-              | (PList items, acc) => (SmlList.rev acc @ items, NONE)
+              | (PList items, acc) => (SubsetList.append (SmlList.rev acc, items), NONE)
               | (PId (_, ([], "nil")), acc) => (SmlList.rev acc, NONE)
               | (tail, acc) => (SmlList.rev acc, SOME tail)
             val (items, tail) = spine (p, [])
@@ -167,7 +171,7 @@ structure WmPrint = struct
                 NONE => []
               | SOME q => [cat (text "..", child (true, q))]
           in
-            cat (atom (pos, ""), group ("[", ",", "]", itemDocs @ tailDocs))
+            cat (atom (pos, ""), group ("[", ",", "]", SubsetList.append (itemDocs, tailDocs)))
           end
       | PApp (pos, id, PTuple (args :: more)) =>
           cats [atom (pos, valueName id),
@@ -177,7 +181,7 @@ structure WmPrint = struct
           let
             val field = fn
                 (l, PId (_, ([], x))) =>
-                  if x = l andalso not (isConName ([], x)) then text l
+                  if x = l andalso SubsetBool.not (isConName ([], x)) then text l
                   else cats [text (l ^ " = "), child (false, PId (0, ([], x)))]
               | (l, q) => cats [text (l ^ " = "), child (false, q)]
           in
@@ -189,7 +193,7 @@ structure WmPrint = struct
   (* Patterns Workman accepts as lambda parameters: no constructors or constants. *)
   val rec paramOk = fn
       PWild => true
-    | PId (_, id) => not (isConName id)
+    | PId (_, id) => SubsetBool.not (isConName id)
     | PTuple ps => SmlList.all paramOk ps
     | PList ps => SmlList.all paramOk ps
     | PRecord (_, fields) => SmlList.all (fn (_, q) => paramOk q) fields
@@ -235,7 +239,7 @@ structure WmPrint = struct
 
   (* An expression usable as `e.lab`: a variable or a chain of such selections. *)
   val rec selectable = fn
-      EId (_, id) => not (isConName id)
+      EId (_, id) => SubsetBool.not (isConName id)
     | EApp (ESelect (_, l), e) => startsAlpha l andalso selectable e
     | _ => false
 
@@ -274,7 +278,7 @@ structure WmPrint = struct
         let
           val rec spine = fn
               (EApp (EId (_, ([], "::")), ETuple [h, t]), acc) => spine (t, h :: acc)
-            | (EList items, acc) => (SmlList.rev acc @ items, NONE)
+            | (EList items, acc) => (SubsetList.append (SmlList.rev acc, items), NONE)
             | (EId (_, ([], "nil")), acc) => (SmlList.rev acc, NONE)
             | (tail, acc) => (SmlList.rev acc, SOME tail)
           val (items, tail) = spine (EApp (EId (p, ([], "::")), ETuple [h, t]), [])
@@ -283,7 +287,7 @@ structure WmPrint = struct
               NONE => []
             | SOME e => [cat (text "..", exp e)]
         in
-          (10, cat (atom (p, ""), group ("[", ",", "]", SmlList.map exp items @ tailDocs)))
+          (10, cat (atom (p, ""), group ("[", ",", "]", SubsetList.append (SmlList.map exp items, tailDocs))))
         end
     | EApp (EId (p, (["Real"], opr)), ETuple [l, r]) =>
         if opr = "==" orelse opr = "!=" then
@@ -378,7 +382,7 @@ structure WmPrint = struct
       val rec exps = fn
           (_, []) => []
         | (i, e :: rest) => (if i < count - 1 then cat (exp e, text ";") else exp e) :: exps (i + 1, rest)
-      val items = SmlList.map (fn d => dec ([], d)) ds @ exps (0, es)
+      val items = SubsetList.append (SmlList.map (fn d => dec ([], d)) ds, exps (0, es))
     in
       case items of
         [single] =>
@@ -422,9 +426,9 @@ structure WmPrint = struct
     | DDatatype (p, binds) =>
         let
           val con = fn
-              (cp, c, NONE) => atom (cp, c)
-            | (cp, c, SOME (TyTuple ts)) => cats [atom (cp, c), text "<", join (", ", SmlList.map ty ts), text ">"]
-            | (cp, c, SOME t) => cats [atom (cp, c), text "<", ty t, text ">"]
+              (cp, c, NONE) => atom (cp, valueName ([], c))
+            | (cp, c, SOME (TyTuple ts)) => cats [atom (cp, valueName ([], c)), text "<", join (", ", SmlList.map ty ts), text ">"]
+            | (cp, c, SOME t) => cats [atom (cp, valueName ([], c)), text "<", ty t, text ">"]
           val bind = fn (vs, tycon, cons) =>
             let
               val head = text (capitalize tycon ^ typeParams vs ^ " =")
@@ -457,7 +461,7 @@ structure WmPrint = struct
       val rec go = fn
           ([], _) => []
         | (c :: rest, first) =>
-            if SubsetChar.isUpper c andalso not first
+            if SubsetChar.isUpper c andalso SubsetBool.not first
             then #"_" :: SubsetChar.toLower c :: go (rest, false)
             else SubsetChar.toLower c :: go (rest, false)
     in

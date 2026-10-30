@@ -1,4 +1,5 @@
 (* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./types.sml" import * as Types;
 from "./env.sml" import * as Env;
 from "./subset_result.sml" import * as SubsetResult;
@@ -16,6 +17,7 @@ from "./sml_list.sml" import * as SmlList;
    its own names, argument order and Result-based failures (docs/basis.md, spec section 9).
    Current interface types are parsed with the SubsetML parser. *)
 structure Basis = struct
+  open SubsetOptionValue
 
   open Types
   open Env
@@ -269,23 +271,23 @@ structure Basis = struct
         end
 
   (* The initial environment, or the first malformed entry. *)
-  val initial =
+  val build = fn (selectedTypes, selectedConstructors, selectedSpecial, selectedValues, selectedStructures) =>
     let
       val topEnv =
-        Env.Env ([], topTypes,
-             SmlList.map conEntry (boolCons @ listCons @ optionCons @ orderCons) @ special)
+        Env.Env ([], selectedTypes,
+             SubsetList.append (SmlList.map conEntry selectedConstructors, selectedSpecial))
       (* The structures' types, so that value types can name them (TextIO.instream). *)
       val typesEnv =
         SmlList.foldl (fn ((path, tys, _), env) =>
                       nest (env, path, withTypes (SmlList.map (fn (n, tn) => (n, tyStr tn)) tys)))
-          topEnv structures
+          topEnv selectedStructures
       val values = fn (scope, entries) =>
         SmlList.foldl (fn ((name, text), acc) =>
                       case acc of
                         Unify.Err (message, pos) => Unify.Err (message, pos)
                       | Unify.Ok (vals, st) =>
                           case scheme (scope, text) of
-                            Unify.Ok (s, _) => Unify.Ok (vals @ [(name, (s, SValue))], st)
+                            Unify.Ok (s, _) => Unify.Ok (SubsetList.append (vals, [(name, (s, SValue))]), st)
                           | Unify.Err (msg, _) => Unify.Err ("basis entry " ^ name ^ ": " ^ msg, 0))
           (Unify.Ok ([], Unify.initial)) entries
       (* Values are elaborated where their structure's types are in scope. *)
@@ -294,7 +296,7 @@ structure Basis = struct
           SOME entry => let val (inner, _) = entry in plus (typesEnv, inner) end
         | NONE => typesEnv
     in
-      case values (typesEnv, topValues) of
+      case values (typesEnv, selectedValues) of
         Unify.Err (message, pos) => Unify.Err (message, pos)
       | Unify.Ok (tops, _) =>
           SmlList.foldl (fn ((path, _, entries), acc) =>
@@ -304,7 +306,26 @@ structure Basis = struct
                             case values (scopeOf path, entries) of
                               Unify.Ok (vals, _) => Unify.Ok (nest (env, path, withValues vals), st)
                             | Unify.Err (message, pos) => Unify.Err (message, pos))
-            (Unify.Ok (plus (typesEnv, withValues tops), Unify.initial)) structures
+            (Unify.Ok (plus (typesEnv, withValues tops), Unify.initial)) selectedStructures
+    end
+
+  val initial = build (topTypes, SubsetList.concat [boolCons, listCons, optionCons, orderCons],
+    special, topValues, structures)
+
+  (* Portable authored source has no SML Basis structures or convenience values.
+     Only representation-level operations remain; see docs/runtime-dependencies.md. *)
+  val portableInitial =
+    let
+      (* Positive allowlists: expanding the compatibility environment must not
+         silently expand the native implementation contract. *)
+      val select = fn (names, entries) => SmlList.filter
+        (fn (name, _) => SmlList.exists (fn candidate => candidate = name) names) entries
+    in build (
+      select (["unit", "bool", "int", "real", "string", "char", "list"], topTypes),
+      SubsetList.append (boolCons, listCons),
+      select (["=", "<>", "+", "-", "*", "<", ">", "<=", ">=", "~"], special),
+      select (["^", "/", "div", "mod"], topValues),
+      [])
     end
 
 end

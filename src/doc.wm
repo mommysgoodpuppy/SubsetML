@@ -1,4 +1,6 @@
 /* @subsetml
+from "./subset_bool.sml" import * as SubsetBool;
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./syntax.sml" import * as Syntax;
 from "./sml_list.sml" import * as SmlList;
 from "./sml_option.sml" import * as SmlOption;
@@ -17,16 +19,20 @@ from "./subset_string.sml" import * as SubsetString;
    document's first line, its text, and the source offset of the earliest node printed on it.
    The offsets let `render` put the source comments and blank lines back in place. */
 
+from "./subset_option_value.wm" import * as SubsetOptionValue;
 from "./syntax.wm" import * as Syntax;
 from "./sml_list.wm" import * as SmlList;
+from "./subset_list.wm" import * as SubsetList;
 from "./sml_option.wm" import * as SmlOption;
 from "./compiler_text.wm" import * as CompilerText;
-from "./subset_list.wm" import * as SubsetList;
 from "./subset_bytes.wm" import * as SubsetBytes;
 from "./subset_char.wm" import * as SubsetChar;
 from "./subset_result.wm" import * as SubsetResult;
 from "./subset_source.wm" import * as SubsetSource;
+from "./subset_bool.wm" import * as SubsetBool;
 from "./subset_string.wm" import * as SubsetString;
+
+from "./subset_option_value.wm" import *;
 
 from "./syntax.wm" import *;
 
@@ -62,7 +68,7 @@ let cat = (a: Doc, b: Doc) => {
         ]
       )
     },
-    _ => { List.append(a, b) }
+    _ => { SubsetList.append(a, b) }
   }
 };
 
@@ -191,7 +197,7 @@ let render = (src, comments, style, lines) => {
   let blankIfNeeded = (acc, lastTag, p) => {
     match(acc) {
       [(Var(t), _), .._] => {
-        if (if (if (blankLineBefore(src, p)) { lastTag < lineStart(src, p) } else { false }) { !isBlankText(t) } else { false }) { [("", false), ..acc] } else { acc }
+        if (if (if (blankLineBefore(src, p)) { lastTag < lineStart(src, p) } else { false }) { SubsetBool.not(isBlankText(t)) } else { false }) { [("", false), ..acc] } else { acc }
       },
       [] => { acc }
     }

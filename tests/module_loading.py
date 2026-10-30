@@ -138,11 +138,11 @@ for command in commands:
             assert route.encode() in result.stderr, result.stderr
         if source.name == 'bad.sml':
             assert b':2:1: import error:' in result.stderr, result.stderr
-    result = subprocess.run(command + ['check', str(repo / 'src/main.sml')], cwd=root, capture_output=True)
+    result = subprocess.run(command + ['check-portable', str(repo / 'src/main.sml')], cwd=root, capture_output=True)
     assert result.returncode == 0, result.stderr.decode(errors='replace')
 print(f'SubsetML module loading: {len(cases)} cases and compiler entry passed on {len(commands)} backends')
 
-wm_repo = repo.parent / 'wm-mini'
+wm_repo = repo.parents[1] if (repo.parents[1] / 'src/main.ts').is_file() else repo.parent / 'wm-mini'
 if shutil.which('deno') and (wm_repo / 'src/compiler.ts').exists():
     manifest = root / 'reference.json'
     manifest.write_text(json.dumps(reference))

@@ -1,6 +1,11 @@
+(* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
+*)
+
 (* Custom Basis Result. Core operations take data first; procedure adapters are curried.
    Errors are ordinary datatype values. *)
 structure SubsetResult = struct
+  open SubsetOptionValue
 
   datatype ('a, 'e) result = Ok of 'a | Err of 'e
 

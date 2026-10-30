@@ -1,4 +1,6 @@
 (* @subsetml
+from "./subset_bool.sml" import * as SubsetBool;
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./syntax.sml" import * as Syntax;
 from "./wm_lexer.sml" import * as WmLexer;
 from "./subset_string.sml" import * as SubsetString;
@@ -18,6 +20,7 @@ from "./sml_option.sml" import * as SmlOption;
    the reverse profile (`%`, receiver pipes, JSON, FFI imports, ...) are reported as errors.
    Numeric and pinned match patterns survive internally until binding resolution lowers them. *)
 structure WmParse = struct
+  open SubsetOptionValue
 
   open Syntax
   open WmLexer
@@ -92,12 +95,15 @@ structure WmParse = struct
     case CompilerText.characters s of [] => "" | c :: rest => CompilerText.stringOf (SubsetChar.toLower c :: rest)
 
   val valueName = fn
-      ([], "None") => ([], "NONE")
-    | ([], "Some") => ([], "SOME")
+      (qs, "None") => (qs, "NONE")
+    | (qs, "Some") => (qs, "SOME")
     | id =>
         (case SmlList.find (fn (_, wm) => wm = id) WmPrint.numNames of
            SOME entry => let val (sml, _) = entry in sml end
          | NONE => id)
+
+  val constructorName = fn name =>
+    let val (_, target) = valueName ([], name) in target end
 
   val tyConName = fn
       ([], "Void") => ([], "unit")
@@ -218,7 +224,7 @@ structure WmParse = struct
     end
 
   val rec parsePat = fn (inMatch, binds, ts) =>
-    let val child = fn b => fn ts => parseAnnotated (inMatch, b orelse not inMatch, ts) in
+    let val child = fn b => fn ts => parseAnnotated (inMatch, b orelse SubsetBool.not inMatch, ts) in
       case peek ts of
         (WKey "_", _) => Done (PWild, advance ts)
       | (WKey "void", _) => Done (PTuple [], advance ts)
@@ -373,9 +379,9 @@ structure WmParse = struct
       val (es, after) = exps (rest, [])
       val body =
         case (after, terminated) of
-          ([], true) => es @ [ETuple []]
+          ([], true) => SubsetList.append (es, [ETuple []])
         | ([], false) => es
-        | (_, _) => es @ [blockExp (after, terminated)]
+        | (_, _) => SubsetList.append (es, [blockExp (after, terminated)])
     in
       case (ds, body) of
         ([], [single]) => single
@@ -446,7 +452,7 @@ structure WmParse = struct
           TyVar name => [name]
         | TyCon (args, _) => SmlList.concat (SmlList.map variablesIn args)
         | TyTuple args => SmlList.concat (SmlList.map variablesIn args)
-        | TyArrow (a, b) => variablesIn a @ variablesIn b
+        | TyArrow (a, b) => SubsetList.append (variablesIn a, variablesIn b)
         | TyRecord fields => SmlList.concat (SmlList.map (fn (_, t) => variablesIn t) fields)
       val argumentShape = fn t =>
         case t of TyVar _ => true
@@ -564,7 +570,7 @@ structure WmParse = struct
           (WKey "}", _) => Done ((SmlList.rev acc, true), advance ts)
         | _ =>
             if startsDecl ts then
-              bind (parseDecl ts) (fn ds => fn ts => items (SmlList.map IDec ds @ acc, ts))
+              bind (parseDecl ts) (fn ds => fn ts => items (SubsetList.append (SmlList.map IDec ds, acc), ts))
             else
               bind (parseExp ts) (fn e => fn ts =>
                 if isKey (";", ts) then items (IExp e :: acc, advance ts)
@@ -662,7 +668,7 @@ structure WmParse = struct
       (* Direct self tail calls, not `bind` continuations, so a long application chain
          runs in constant stack on the Workman backend too. *)
       val rec calls = fn (callee, insertion, ts) =>
-        if isKey ("(", ts) andalso not (lambdaAhead ts) then
+        if isKey ("(", ts) andalso SubsetBool.not (lambdaAhead ts) then
           (case delimited ("(", parseExp, ",", ")", ts) of
              Done (args, rest) => calls (apply (callee, args), SOME (callee, args), rest)
            | Fail (message, offset) => Fail (message, offset))
@@ -746,7 +752,7 @@ structure WmParse = struct
             else Done (Field (label, EId (offset, ([], label))), advance ts)
         | _ => expected ("a record field or spread", ts)
     in
-      if not (SubsetList.isEmpty selections) then Fail ("expected a nominal record type name", p)
+      if SubsetBool.not (SubsetList.isEmpty selections) then Fail ("expected a nominal record type name", p)
       else case candidate of
         NONE => Fail ("unknown record layout " ^ SubsetString.concatWith (path, ".") ^ "; supply its declaration when translating", p)
       | SOME (Layout (_, recordName, variables, fields)) =>
@@ -761,7 +767,7 @@ structure WmParse = struct
                       SOME pair => let val (_, name) = pair in TyVar name end | NONE => t)
                   | TyCon (args, (qs, n)) =>
                       let val builtin = SmlList.exists (fn b => b = n) ["real", "string", "char", "bool", "unit", "list", "option"]
-                          val qs = if SubsetList.isEmpty qs andalso not builtin andalso sourceOwner <> owner then [sourceOwner] else qs
+                          val qs = if SubsetList.isEmpty qs andalso SubsetBool.not builtin andalso sourceOwner <> owner then [sourceOwner] else qs
                       in TyCon (SmlList.map fieldType args, (qs, n)) end
                   | TyTuple types => TyTuple (SmlList.map fieldType types)
                   | TyArrow (a, b) => TyArrow (fieldType a, fieldType b)
@@ -782,7 +788,7 @@ structure WmParse = struct
                           [] => SOME []
                         | Spread _ :: _ => NONE
                         | Field (label, value) :: rest =>
-                            if not (pure value) then NONE
+                            if SubsetBool.not (pure value) then NONE
                             else (case (SmlList.find (fn (l, _) => l = label) fields, direct rest) of
                               (SOME entry, SOME tail) =>
                                 let
@@ -812,7 +818,7 @@ structure WmParse = struct
                 val rec finish = fn (remaining, index, bindings, values, explicit) =>
                   case remaining of
                     [] =>
-                      (case SmlList.find (fn (label, _) => not (SmlList.exists (fn (l, _) => l = label) values)) fields of
+                      (case SmlList.find (fn (label, _) => SubsetBool.not (SmlList.exists (fn (l, _) => l = label) values)) fields of
                          SOME pair => let val (label, _) = pair in Fail ("missing record field " ^ label, p) end
                        | NONE =>
                            let
@@ -919,7 +925,7 @@ structure WmParse = struct
                    in
                      bind (delimited ("{", field, ",", "}", ts)) (fn fields => fn ts =>
                        bind (expect (";", ts)) (fn _ => fn ts =>
-                         Done (DType (p, [(vs, decapitalize name, TyRecord (SmlList.map (fn (l, t) => (l, parameterType (vs, t))) fields))]) ::
+                         Done (DType (p, [(vs, decapitalize name, TyRecord (SmlList.map (fn (l, t) => (l, parameterType (vs, t))) fields))]) :: SubsetList.append (
                            (case fieldPrefix of NONE => [] | SOME prefix =>
                              let
                                val arguments = SmlList.map (fn (label, _) =>
@@ -929,10 +935,10 @@ structure WmParse = struct
                                val target = TyCon (SmlList.map TyVar vs, ([], decapitalize name))
                                val body = ETyped (ERecord (p, SmlList.map (fn (label, argument) =>
                                  (label, EId (p, ([], argument)))) arguments), target)
-                             in [DVal (p, [], [(PId (p, ([], name)), EFn [(parameter, body)])], [])] end) @
+                             in [DVal (p, [], [(PId (p, ([], name)), EFn [(parameter, body)])], [])] end),
                            (case fieldPrefix of NONE => [] | SOME _ =>
                              SmlList.map (fn (label, t) => DType (p,
-                               [(vs, fieldAlias (decapitalize name, label), parameterType (vs, t))])) fields), ts)))
+                               [(vs, fieldAlias (decapitalize name, label), parameterType (vs, t))])) fields)), ts)))
                    end))
            | _ => expected ("a record name", advance ts))
       | (WKey "from", _) =>
@@ -965,14 +971,14 @@ structure WmParse = struct
       val constructor = fn ts =>
         case peek ts of
           (WName [c], cp) =>
-            if not (isUpperName c) then expected ("a constructor", ts)
+            if SubsetBool.not (isUpperName c) then expected ("a constructor", ts)
             else
               (if isKey ("<", advance ts) then
                  bind (delimited ("<", parseType, ",", ">", advance ts)) (fn args => fn ts =>
                    case args of
-                     [single] => Done ((cp, c, SOME single), ts)
-                   | _ => Done ((cp, c, SOME (TyTuple args)), ts))
-               else Done ((cp, c, NONE), advance ts))
+                     [single] => Done ((cp, constructorName c, SOME single), ts)
+                   | _ => Done ((cp, constructorName c, SOME (TyTuple args)), ts))
+               else Done ((cp, constructorName c, NONE), advance ts))
         | _ => expected ("a constructor", ts)
       val rec members = fn (acc, ts) =>
         if isKey ("|", ts) then
@@ -1002,7 +1008,7 @@ structure WmParse = struct
       bind (bindings ts) (fn bs => fn ts =>
         bind (expect (";", ts)) (fn _ => fn ts =>
           case (SmlList.all (fn (_, _, alias, _) => SmlOption.isSome alias) bs,
-                SmlList.all (fn (_, _, alias, _) => not (SmlOption.isSome alias)) bs) of
+                SmlList.all (fn (_, _, alias, _) => SubsetBool.not (SmlOption.isSome alias)) bs) of
             (true, _) => Done ([DType (p, SmlList.map (fn (vs, n, alias, _) => let val SOME t = alias in (vs, n, parameterType (vs, t)) end) bs)], ts)
           | (_, true) => Done ([DDatatype (p, SmlList.map (fn (vs, n, _, cons) => (vs, n,
               SmlList.map (fn (q, c, arg) => (q, c, case arg of
@@ -1028,7 +1034,7 @@ structure WmParse = struct
                     bind (expect (";", ts)) (fn _ => fn ts => items (DVal (0, [], [(PId (0, ([], "it")), e)], []) :: decs, exps, ts)))
         in
           case items ([], [], ts) of
-            Done ((decs, exps), _) => Module (aliases @ decs, exps, comments)
+            Done ((decs, exps), _) => Module (SubsetList.append (aliases, decs), exps, comments)
           | Fail (message, pos) => ParseError (message, pos)
         end
     end
@@ -1055,7 +1061,7 @@ structure WmParse = struct
                 case remaining of
                   (WKey ";", stop) :: tail =>
                     (case parseModuleTokens ([], owner, src, Tokens (
-                      SubsetList.filter (tokens, fn (_, p) => p <= stop) @ [(WEOF, stop + 1)], [])) of
+                      SubsetList.append (SubsetList.filter (tokens, fn (_, p) => p <= stop), [(WEOF, stop + 1)]), [])) of
                        Module ([DType (_, [(variables, name, TyRecord fields)])], [], _) =>
                          scan (tail, Layout (owner, name, variables, fields) :: layouts, depth)
                      | Module (_, _, _) => Fail ("invalid record declaration", start)

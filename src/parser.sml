@@ -1,4 +1,6 @@
 (* @subsetml
+from "./subset_bool.sml" import * as SubsetBool;
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./syntax.sml" import * as Syntax;
 from "./lexer.sml" import * as Lexer;
 from "./sml_option.sml" import * as SmlOption;
@@ -16,6 +18,7 @@ from "./subset_result.sml" import * as SubsetResult;
    SubsetML has no exceptions, so every parsing function returns a `res`: either the parsed value
    with the remaining tokens, or an error. `bind` sequences two parsing steps. *)
 structure Parser = struct
+  open SubsetOptionValue
 
   open Syntax
   open Lexer
@@ -115,7 +118,7 @@ structure Parser = struct
   val describe = fn
       TKey k => "`" ^ k ^ "`"
     | TId s => "identifier `" ^ s ^ "`"
-    | TLong (q, s) => "identifier `" ^ SubsetString.concatWith (q @ [s], ".") ^ "`"
+    | TLong (q, s) => "identifier `" ^ SubsetString.concatWith (SubsetList.append (q, [s]), ".") ^ "`"
     | TTyVar s => "type variable `" ^ s ^ "`"
     | TScon _ => "a constant"
     | TEOF => "end of input"
@@ -151,7 +154,7 @@ structure Parser = struct
   val longStrId = fn ts =>
     case peek ts of
       (TId s, _) => if isAlnumId s then Done ([s], advance ts) else expected ("a structure name", ts)
-    | (TLong (q, s), _) => Done (q @ [s], advance ts)
+    | (TLong (q, s), _) => Done (SubsetList.append (q, [s]), advance ts)
     | _ => expected ("a structure name", ts)
 
   val isNumericLabel = fn s =>
@@ -260,7 +263,7 @@ structure Parser = struct
 
   val startsTyCon = fn ts =>
     case peek ts of
-      (TId s, _) => isAlnumId s andalso not (isInfix s)
+      (TId s, _) => isAlnumId s andalso SubsetBool.not (isInfix s)
     | (TLong (_, _), _) => true
     | _ => false
 
@@ -343,7 +346,7 @@ structure Parser = struct
   val startsAtPat = fn ts =>
     case peek ts of
       (TKey k, _) => k = "_" orelse k = "(" orelse k = "[" orelse k = "{"
-    | (TId s, _) => not (isInfix s)
+    | (TId s, _) => SubsetBool.not (isInfix s)
     | (TLong (_, _), _) => true
     | (TScon _, _) => true
     | _ => false
@@ -433,7 +436,7 @@ structure Parser = struct
   val startsAtExp = fn ts =>
     case peek ts of
       (TKey k, _) => k = "(" orelse k = "[" orelse k = "{" orelse k = "#" orelse k = "let"
-    | (TId s, _) => not (isInfix s)
+    | (TId s, _) => SubsetBool.not (isInfix s)
     | (TLong (_, _), _) => true
     | (TScon _, _) => true
     | _ => false
@@ -629,7 +632,7 @@ structure Parser = struct
             val rec more = fn (acc, ts) =>
               case peek ts of
                 (TId s, _) =>
-                  if isAlnumId s andalso not (isInfix s)
+                  if isAlnumId s andalso SubsetBool.not (isInfix s)
                   then bind (longStrId ts) (fn id => fn ts => more (id :: acc, ts))
                   else Done (SmlList.rev acc, ts)
               | (TLong (_, _), _) => bind (longStrId ts) (fn id => fn ts => more (id :: acc, ts))
@@ -653,7 +656,7 @@ structure Parser = struct
                 val ok =
                   case e of
                     EFn _ => true
-                  | _ => not isRec
+                  | _ => SubsetBool.not isRec
                 val plain' = if isRec then plain else (pat, e) :: plain
                 val recs' = if isRec then (pat, e) :: recs else recs
               in
@@ -699,7 +702,7 @@ structure Parser = struct
       if isKey (":", ts) then Fail ("signature ascription is not part of SubsetML", posOf ts)
       else
         bind (expect ("=", ts)) (fn _ => fn ts =>
-          if not (isKey ("struct", ts)) then
+          if SubsetBool.not (isKey ("struct", ts)) then
             Fail ("only `struct ... end` structure expressions are part of SubsetML", posOf ts)
           else
             bind (parseDecs (advance ts)) (fn ds => fn ts =>

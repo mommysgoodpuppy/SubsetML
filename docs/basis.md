@@ -72,9 +72,13 @@ ordinary values chosen by each operation or its caller. There is no unsafe unwra
 | `SubsetOption.filter (option, predicate)` | Keep a present value satisfying the predicate; otherwise NONE. |
 | `SubsetOption.toResult (option, error)` | SOME becomes Ok; NONE becomes Err with the caller's error. |
 
-Option uses the existing `option` datatype (`NONE`/`SOME`, generated as `None`/`Some`), rather
-than a second representation. Tuple arguments are evaluated normally by SML: fallback values
-and supplied errors are eager, not lazily invoked callbacks.
+Option is declared in ordinary source by `SubsetOptionValue`:
+`datatype 'a option = NONE | SOME of 'a` (generated as `None`/`Some`).
+`SubsetOption` opens that datatype and adds the helper functions above.
+The separate datatype module avoids a cycle with `SubsetResult.toOption`.
+Portable code imports and opens `SubsetOptionValue`; it does not receive an
+initial host `option`. The WM snapshot adopts WM's existing Option identity
+with `@basis-type Option`, keeping FFI results and constructors interoperable.
 
 ### Error procedures
 
@@ -546,28 +550,29 @@ custom module declares its source dependencies and explicit primitive calls. The
 
 | Module | Source dependencies | Explicit host primitive calls |
 |---|---|---|
-| `SubsetResult` | none | none |
+| `SubsetOptionValue` | none | none |
+| `SubsetResult` | SubsetOptionValue | none |
 | `SubsetBool` | none | none |
-| `SubsetOption` | SubsetResult | none |
-| `SubsetList` | SubsetResult | none |
-| `SubsetListPair` | SubsetResult, SubsetList | none |
+| `SubsetOption` | SubsetOptionValue, SubsetResult | none |
+| `SubsetList` | SubsetOptionValue, SubsetResult | none |
+| `SubsetListPair` | SubsetList, SubsetResult | none |
 | `SubsetOrder` | SubsetResult | none |
-| `SubsetChar` | SubsetOrder, SubsetResult | SubsetTextHost.charCode, codeChar |
-| `SubsetBytes` | SubsetChar, SubsetList, SubsetOrder, SubsetResult | none |
-| `SubsetUnicode` | SubsetChar, SubsetList, SubsetResult | none |
+| `SubsetChar` | SubsetBool, SubsetOrder, SubsetResult | SubsetTextHost.charCode, codeChar |
+| `SubsetBytes` | SubsetOptionValue, SubsetChar, SubsetList, SubsetResult, SubsetOrder | none |
+| `SubsetUnicode` | SubsetBool, SubsetChar, SubsetList, SubsetResult | none |
 | `SubsetUtf8` | SubsetChar, SubsetList, SubsetResult, SubsetUnicode | none |
 | `SubsetUtf16` | SubsetChar, SubsetList, SubsetResult, SubsetUnicode | none |
-| `SubsetString` | SubsetBytes, SubsetChar, SubsetList, SubsetResult | SubsetTextHost.codes, fromCodes |
+| `SubsetString` | SubsetChar, SubsetList, SubsetResult, SubsetBytes | SubsetTextHost.codes, fromCodes |
 | `SubsetText` | SubsetResult, SubsetString, SubsetUnicode, SubsetUtf8 | SubsetTextHost.encodeUtf8, decodeUtf8 |
-| `SubsetNatural` | SubsetList, SubsetResult, SubsetString | none |
+| `SubsetNatural` | SubsetBool, SubsetList, SubsetResult, SubsetString | none |
 | `SubsetSource` | SubsetBytes, SubsetList, SubsetResult, SubsetString | none directly; extraction through SubsetString |
-| `SubsetUtf16Source` | SubsetChar, SubsetList, SubsetResult, SubsetUnicode, SubsetUtf8, SubsetUtf16 | SubsetTextHost.codes |
-| `SubsetSmlEscape` | SubsetList, SubsetResult, SubsetString | none directly; native-string entry uses extraction through SubsetString |
-| `SubsetIo` | SubsetList, SubsetResult, SubsetString | SubsetHost.readFile, writeFile, writeStdout, writeStderr |
+| `SubsetUtf16Source` | SubsetOptionValue, SubsetResult, SubsetList, SubsetUnicode, SubsetUtf8, SubsetUtf16, SubsetChar | SubsetTextHost.codes |
+| `SubsetSmlEscape` | SubsetOptionValue, SubsetList, SubsetResult, SubsetString | none directly; native-string entry uses extraction through SubsetString |
+| `SubsetIo` | SubsetList, SubsetResult, SubsetString | SubsetHost.canonicalPath, readFile, writeFile, writeStdout, writeStderr |
 | `SubsetProcess` | SubsetIo, SubsetList, SubsetResult | SubsetHost.arguments, exit |
 
 This does not mean a backend needs no runtime. It needs ordinary language support for datatype
-values, options, lists, tuples, booleans, unit, functions, pattern matching, recursion, character literals and character equality.
+values, lists, tuples, booleans, unit, functions, pattern matching, recursion, character literals and character equality. Options are source-defined datatypes.
 User callbacks may introduce their own dependencies; they are not hidden library primitives.
 
 No final primitive ABI is assumed yet. Native string conversion, byte-list/tree indexing
@@ -617,8 +622,10 @@ The first portable modules live alongside the compiler sources:
 | `SmlOption` (`src/sml_option.sml`) | `getOpt`, `isSome`, `map`, `mapPartial`, `join`, `filter`, `compose`, `composePartial` |
 | `SmlChar` (`src/sml_char.sml`) | `compare`, `contains`, `notContains`, `isLower`, `isUpper`, `isDigit`, `isGraph`, `isPrint`, `isCntrl`, `isAscii`, `isAlpha`, `isAlphaNum`, `isHexDigit`, `isSpace`, `isPunct`, `toLower`, `toUpper` |
 
-These currently retain the types, argument order and results of the SML routines they came
-from. That is their present implementation contract, not a constraint on the custom Basis. List predicates
+These retain the argument order and result shapes of their SML origins, except
+that `SmlList` and `SmlOption` now use the source-owned `SubsetOptionValue.option`
+rather than the host SML option type. Comparison tests convert at that boundary.
+Their present contracts are not a constraint on the custom Basis. List predicates
 short-circuit; mapping and application visit elements from left to right; `foldr` invokes
 its callback from right to left. ListPair functions stop at the shorter input, as their
 non-`Eq` SML counterparts do. The list and option modules call no host library functions. SmlChar needs only character
@@ -764,3 +771,23 @@ codes and the text-host contract now use `int`. This is a breaking API migration
 generated WM mirrors use Workman's `I32`. The unrelated legacy `Num` adapter retains
 its real-valued compatibility interface. Integer arithmetic can dynamically raise
 `Overflow`/`Div`; authored SubsetML still has no exception handlers.
+
+## Enforced portability profile
+
+`bin/subsetml check-portable ENTRY.sml` checks authored source without SML Basis
+structures or convenience pervasives. `make selfcheck` applies it to the complete
+custom Basis inventory, including WON, and tests rejection of accidental library
+leakage. The [runtime dependency audit](runtime-dependencies.md) records the
+minimal initial environment, every explicit runtime operation and its motivation,
+existing SML adapter implementation dependencies, and compiler source portability.
+The compatibility `check` environment is broader and is not a portability guarantee.
+
+## Strict compiler self-check (2026-10-30)
+
+All compiler sources now pass `check-portable`; `make selfcheck` enforces this for
+both the source list and `src/main.sml` entry graph. The generated WM compiler has
+the same requirement through `make wm-selfcheck`. Compiler list append and boolean
+negation use shared source functions, and the native compiler build no longer
+loads the legacy `lib/num.sml` adapter. `check` retains its separate SML-compatible
+library environment for external fixtures; that environment is not used for
+compiler source self-checking.

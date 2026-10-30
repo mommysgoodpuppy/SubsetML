@@ -1,4 +1,5 @@
 /* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./syntax.sml" import * as Syntax;
 from "./doc.sml" import * as Doc;
 from "./subset_string.sml" import * as SubsetString;
@@ -11,6 +12,7 @@ from "./parser.sml" import * as Parser;
 /* Prints abstract syntax as SubsetML source. Used for the wm-to-SML direction and for the
    constructs that have no Workman form. Parentheses follow the precedence of the parser. */
 
+from "./subset_option_value.wm" import * as SubsetOptionValue;
 from "./syntax.wm" import * as Syntax;
 from "./doc.wm" import * as Doc;
 from "./subset_string.wm" import * as SubsetString;
@@ -18,6 +20,8 @@ from "./subset_list.wm" import * as SubsetList;
 from "./compiler_text.wm" import * as CompilerText;
 from "./sml_list.wm" import * as SmlList;
 from "./parser.wm" import * as Parser;
+
+from "./subset_option_value.wm" import *;
 
 from "./syntax.wm" import *;
 from "./doc.wm" import *;

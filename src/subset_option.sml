@@ -1,9 +1,11 @@
 (* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./subset_result.sml" import * as SubsetResult;
 *)
 
 (* Custom Basis optional values. Absence is normal; callers choose errors explicitly. *)
 structure SubsetOption = struct
+  open SubsetOptionValue
 
   val getOr = fn (value, fallback) => case value of NONE => fallback | SOME x => x
   val isSome = fn NONE => false | SOME x => true

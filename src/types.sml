@@ -1,4 +1,5 @@
 (* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./subset_list.sml" import * as SubsetList;
 from "./compiler_text.sml" import * as CompilerText;
 from "./subset_char.sml" import * as SubsetChar;
@@ -8,6 +9,7 @@ from "./subset_result.sml" import * as SubsetResult;
 
 (* Semantic types (Definition §4.2), as the type checker represents them. *)
 structure Types = struct
+  open SubsetOptionValue
 
   (* A type name (Definition §4.1): its stamp, its printed name, its arity, and whether it
      admits equality, given type arguments that do. *)
@@ -129,7 +131,7 @@ structure Types = struct
   val rec tynames = fn t =>
     case t of
       TCon (n, ts) => stampOf n :: SmlList.concat (SmlList.map tynames ts)
-    | TArrow (a, b) => tynames a @ tynames b
+    | TArrow (a, b) => SubsetList.append (tynames a, tynames b)
     | TRecord fields => SmlList.concat (SmlList.map (fn (_, a) => tynames a) fields)
     | _ => []
 

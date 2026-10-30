@@ -90,3 +90,13 @@ file/process adapters from `lib/`, replacing their generated host declarations.
 Run the generated compiler with `wm run src/main.wm -- check FILE...`.
 String construction, byte indexing and codecs come from shared SubsetML source.
 Edit the `.sml` files; the `.wm` files are overwritten.
+
+### Portable source checking
+
+Use `bin/subsetml check-portable ENTRY.sml` to check an explicit import graph
+without SML Basis structures or convenience pervasives. `make selfcheck` requires
+this profile for the entire custom Basis and compiler, including the explicit
+compiler entry graph. `make wm-selfcheck` runs that strict check through the
+generated WM compiler too.
+See the [runtime dependency audit](docs/runtime-dependencies.md) for the exact
+native implementation obligations and the motivation for each host operation.

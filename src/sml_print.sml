@@ -1,4 +1,5 @@
 (* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./syntax.sml" import * as Syntax;
 from "./doc.sml" import * as Doc;
 from "./subset_string.sml" import * as SubsetString;
@@ -11,6 +12,7 @@ from "./parser.sml" import * as Parser;
 (* Prints abstract syntax as SubsetML source. Used for the wm-to-SML direction and for the
    constructs that have no Workman form. Parentheses follow the precedence of the parser. *)
 structure SmlPrint = struct
+  open SubsetOptionValue
 
   open Syntax
   open Doc

@@ -1,4 +1,6 @@
 (* @subsetml
+from "./subset_bool.sml" import * as SubsetBool;
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./syntax.sml" import * as Syntax;
 from "./sml_list.sml" import * as SmlList;
 from "./sml_option.sml" import * as SmlOption;
@@ -17,6 +19,7 @@ from "./subset_string.sml" import * as SubsetString;
    document's first line, its text, and the source offset of the earliest node printed on it.
    The offsets let `render` put the source comments and blank lines back in place. *)
 structure Doc = struct
+  open SubsetOptionValue
 
   open Syntax
 
@@ -45,7 +48,7 @@ structure Doc = struct
       ((ia, ta, pa) :: restA, (_, tb, pb) :: restB) =>
         SmlList.revAppend (restA,
           (ia, ta ^ tb, minTag (pa, pb)) :: SmlList.map (fn (i, t, p) => (i + ia, t, p)) restB)
-    | _ => a @ b
+    | _ => SubsetList.append (a, b)
 
   val cats = fn ds => SmlList.foldl (fn (d, acc) => cat (acc, d)) empty ds
 
@@ -156,7 +159,7 @@ structure Doc = struct
       val blankIfNeeded = fn (acc, lastTag, p) =>
         case acc of
           (t, _) :: _ =>
-            if blankLineBefore (src, p) andalso lastTag < lineStart (src, p) andalso not (isBlankText t)
+            if blankLineBefore (src, p) andalso lastTag < lineStart (src, p) andalso SubsetBool.not (isBlankText t)
             then ("", false) :: acc
             else acc
         | [] => acc

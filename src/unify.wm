@@ -1,4 +1,6 @@
 /* @subsetml
+from "./subset_bool.sml" import * as SubsetBool;
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./types.sml" import * as Types;
 from "./syntax.sml" import * as Syntax;
 from "./int_map.sml" import * as IntMap;
@@ -17,15 +19,19 @@ from "./subset_list.sml" import * as SubsetList;
    variable's level is the outermost declaration it escapes to. At the end of the declaration,
    variables still above level n are free in no enclosing context and may be generalized. */
 
+from "./subset_option_value.wm" import * as SubsetOptionValue;
 from "./types.wm" import * as Types;
 from "./syntax.wm" import * as Syntax;
 from "./int_map.wm" import * as IntMap;
 from "./sml_list.wm" import * as SmlList;
+from "./subset_list.wm" import * as SubsetList;
 from "./subset_char.wm" import * as SubsetChar;
 from "./subset_result.wm" import * as SubsetResult;
 from "./compiler_text.wm" import * as CompilerText;
+from "./subset_bool.wm" import * as SubsetBool;
 from "./subset_string.wm" import * as SubsetString;
-from "./subset_list.wm" import * as SubsetList;
+
+from "./subset_option_value.wm" import *;
 
 from "./types.wm" import *;
 
@@ -131,7 +137,7 @@ let freeVars = (st, t) => {
   let rec go = (t, acc) => {
     match(prune(st, t)) {
       TVar(v) => {
-        if (SmlList.exists((w) => { w == v })(acc)) { acc } else { List.append(acc, [v]) }
+        if (SmlList.exists((w) => { w == v })(acc)) { acc } else { SubsetList.append(acc, [v]) }
       },
       TCon(_, ts) => { SmlList.foldl(go)(acc)(ts) },
       TArrow(a, b) => { go(b, go(a, acc)) },
@@ -158,9 +164,9 @@ let varName = (i) => {
 let showAll = (st, ts) => {
   let ts' = SmlList.map((t) => { resolve(st, t) })(ts);
   let vars = SmlList.foldl((t, acc) => {
-    List.append(
+    SubsetList.append(
       acc,
-      SmlList.filter((v) => { !SmlList.exists((w) => { w == v })(acc) })(freeVars(st, t))
+      SmlList.filter((v) => { SubsetBool.not(SmlList.exists((w) => { w == v })(acc)) })(freeVars(st, t))
     )
   })([])(ts');
   let rec indexOf = match {
@@ -171,7 +177,7 @@ let showAll = (st, ts) => {
   let rec rigids = match {
     TRigid(name) => { [name] },
     TCon(_, ts) => { SmlList.concat(SmlList.map(rigids)(ts)) },
-    TArrow(a, b) => { List.append(rigids(a), rigids(b)) },
+    TArrow(a, b) => { SubsetList.append(rigids(a), rigids(b)) },
     TRecord(fields) => { SmlList.concat(SmlList.map((_, a) => { rigids(a) })(fields)) },
     _ => { [] }
   };
@@ -386,7 +392,7 @@ and bindVar = (st, v, t) => {
 let instantiate = (st, level, (kinds, body)) => {
   let (args, st') = SmlList.foldl((k, (acc, st)) => {
     let (t, st') = fresh(st, k, level);
-    (List.append(acc, [t]), st')
+    (SubsetList.append(acc, [t]), st')
   })([], st)(kinds);
   (substGen(args, body), st')
 };
@@ -435,5 +441,5 @@ let generalize = (st, level, rigid, t) => {
       TGen(_) => { t }
     }
   };
-  (List.append(kinds, SmlList.map((_) => { KPlain })(rigid)), go(t'))
+  (SubsetList.append(kinds, SmlList.map((_) => { KPlain })(rigid)), go(t'))
 };

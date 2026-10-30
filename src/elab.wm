@@ -1,4 +1,6 @@
 /* @subsetml
+from "./subset_bool.sml" import * as SubsetBool;
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./syntax.sml" import * as Syntax;
 from "./types.sml" import * as Types;
 from "./unify.sml" import * as Unify;
@@ -19,6 +21,7 @@ from "./subset_result.sml" import * as SubsetResult;
    sides of `val` one level deeper than their context, so that the type variables left above
    the context's level at the end can be generalized (Unify). */
 
+from "./subset_option_value.wm" import * as SubsetOptionValue;
 from "./syntax.wm" import * as Syntax;
 from "./types.wm" import * as Types;
 from "./unify.wm" import * as Unify;
@@ -28,7 +31,10 @@ from "./subset_string.wm" import * as SubsetString;
 from "./subset_list.wm" import * as SubsetList;
 from "./compiler_text.wm" import * as CompilerText;
 from "./sml_list_pair.wm" import * as SmlListPair;
+from "./subset_bool.wm" import * as SubsetBool;
 from "./subset_result.wm" import * as SubsetResult;
+
+from "./subset_option_value.wm" import *;
 
 from "./syntax.wm" import *;
 from "./types.wm" import *;
@@ -50,7 +56,7 @@ let member = (x, xs) => { SmlList.exists((y) => { y == x })(xs) };
 
 let memberInt = (x, xs) => { SmlList.exists((y) => { y == x })(xs) };
 
-let longName = (qs, x) => { SubsetString.concatWith(List.append(qs, [x]), ".") };
+let longName = (qs, x) => { SubsetString.concatWith(SubsetList.append(qs, [x]), ".") };
 
 // Folds a res-returning step over a list.
 let rec foldRes = (f, acc, xs, st) => {
@@ -65,7 +71,7 @@ let rec foldRes = (f, acc, xs, st) => {
 let mapRes = (f, xs, st) => {
   bind(foldRes(
     (acc, x, st) => {
-      bind(f(x, st))((y) => (st) => { Ok(List.append(acc, [y]), st) })
+      bind(f(x, st))((y) => (st) => { Ok(SubsetList.append(acc, [y]), st) })
     },
     [],
     xs,
@@ -232,7 +238,7 @@ let rec tyVarsOf = (t) => {
     TyVar(v) => { [v] },
     TyCon(args, _) => { concatMap(tyVarsOf, args) },
     TyTuple(ts) => { concatMap(tyVarsOf, ts) },
-    TyArrow(a, b) => { List.append(tyVarsOf(a), tyVarsOf(b)) },
+    TyArrow(a, b) => { SubsetList.append(tyVarsOf(a), tyVarsOf(b)) },
     TyRecord(fields) => { concatMap((_, a) => { tyVarsOf(a) }, fields) }
   }
 };
@@ -243,7 +249,7 @@ let rec patTyVars = (p) => {
     PTuple(ps) => { concatMap(patTyVars, ps) },
     PList(ps) => { concatMap(patTyVars, ps) },
     PApp(_, _, q) => { patTyVars(q) },
-    PTyped(q, t) => { List.append(patTyVars(q), tyVarsOf(t)) },
+    PTyped(q, t) => { SubsetList.append(patTyVars(q), tyVarsOf(t)) },
     _ => { [] }
   }
 };
@@ -255,21 +261,21 @@ let rec expTyVars = (e) => {
     EList(es) => { concatMap(expTyVars, es) },
     ESeq(es) => { concatMap(expTyVars, es) },
     ELet(_, es) => { concatMap(expTyVars, es) },
-    EApp(f, a) => { List.append(expTyVars(f), expTyVars(a)) },
-    ETyped(x, t) => { List.append(expTyVars(x), tyVarsOf(t)) },
-    EAndalso(a, b) => { List.append(expTyVars(a), expTyVars(b)) },
-    EOrelse(a, b) => { List.append(expTyVars(a), expTyVars(b)) },
+    EApp(f, a) => { SubsetList.append(expTyVars(f), expTyVars(a)) },
+    ETyped(x, t) => { SubsetList.append(expTyVars(x), tyVarsOf(t)) },
+    EAndalso(a, b) => { SubsetList.append(expTyVars(a), expTyVars(b)) },
+    EOrelse(a, b) => { SubsetList.append(expTyVars(a), expTyVars(b)) },
     EIf(c, a, b) => {
-      List.append(expTyVars(c), List.append(expTyVars(a), expTyVars(b)))
+      SubsetList.concat([expTyVars(c), expTyVars(a), expTyVars(b)])
     },
     ECase(x, rules) => {
-      List.append(
+      SubsetList.append(
         expTyVars(x),
-        concatMap((p, y) => { List.append(patTyVars(p), expTyVars(y)) }, rules)
+        concatMap((p, y) => { SubsetList.append(patTyVars(p), expTyVars(y)) }, rules)
       )
     },
     EFn(rules) => {
-      concatMap((p, y) => { List.append(patTyVars(p), expTyVars(y)) }, rules)
+      concatMap((p, y) => { SubsetList.append(patTyVars(p), expTyVars(y)) }, rules)
     },
     ECopy(_, source, _, _) => { expTyVars(source) },
     _ => { [] }
@@ -277,7 +283,9 @@ let rec expTyVars = (e) => {
 };
 
 let distinct = (xs) => {
-  SmlList.foldl((x, acc) => { if (member(x, acc)) { acc } else { List.append(acc, [x]) } })([])(xs)
+  SmlList.foldl((x, acc) => {
+    if (member(x, acc)) { acc } else { SubsetList.append(acc, [x]) }
+  })([])(xs)
 };
 
 // ---------------------------------------------------------------------------------------
@@ -343,7 +351,7 @@ let mergeVars = (pos, a, b, st) => {
       let (x, _) = entry;
       Err("variable " ++ x ++ " is bound twice in a pattern", pos)
     },
-    None => { Ok(List.append(a, b), st) }
+    None => { Ok(SubsetList.append(a, b), st) }
   }
 };
 
@@ -401,7 +409,7 @@ let rec pat = (ctx, p, st) => {
         bind(foldRes(
           ((fs, vars), (l, f), st) => {
             bind(pat(ctx, f, st))((t, vs) => (st) => {
-              bind(mergeVars(q, vars, vs, st))((vars') => (st) => { Ok((List.append(fs, [(l, t)]), vars'), st) })
+              bind(mergeVars(q, vars, vs, st))((vars') => (st) => { Ok((SubsetList.append(fs, [(l, t)]), vars'), st) })
             })
           },
           ([], []),
@@ -460,7 +468,7 @@ and pats = (ctx, pos, ps, st) => {
   foldRes(
     ((ts, vars), p, st) => {
       bind(pat(ctx, p, st))((t, vs) => (st) => {
-        bind(mergeVars(at(pos, patPos(p)), vars, vs, st))((vars') => (st) => { Ok((List.append(ts, [t]), vars'), st) })
+        bind(mergeVars(at(pos, patPos(p)), vars, vs, st))((vars') => (st) => { Ok((SubsetList.append(ts, [t]), vars'), st) })
       })
     },
     ([], []),
@@ -765,10 +773,10 @@ and dec = (ctx, d, st) => {
 
 // `val`: Definition §4.10 rules 15-16 and the closure of §4.8.
 and valDec = ((env, level, scoped), pos, tyvars, plain, recs, st) => {
-  let bindings = List.append(plain, recs);
-  let implicit = SmlList.filter((v) => { !member(v, scoped) })(distinct(concatMap((p, e) => { List.append(patTyVars(p), expTyVars(e)) }, bindings)));
-  let explicit = distinct(List.append(tyvars, implicit));
-  let inner = (env, level + (1: I32), List.append(scoped, explicit));
+  let bindings = SubsetList.append(plain, recs);
+  let implicit = SmlList.filter((v) => { SubsetBool.not(member(v, scoped)) })(distinct(concatMap((p, e) => { SubsetList.append(patTyVars(p), expTyVars(e)) }, bindings)));
+  let explicit = distinct(SubsetList.append(tyvars, implicit));
+  let inner = (env, level + (1: I32), SubsetList.append(scoped, explicit));
   // A binding's pattern, its type and variables, checked against its expression's type.
   let plainBinding = ((p, e), st) => {
     bind(exp(inner, e, st))((te) => (st) => {
@@ -804,7 +812,7 @@ and valDec = ((env, level, scoped), pos, tyvars, plain, recs, st) => {
     bind(mapRes(plainBinding, plain, st))((plainResults) => (st) => {
       bind(mapRes(recPattern, recs, st))((recVars) => (st) => {
         let recEnv = withValues(SmlList.map((v, t) => { (v, (([], t), SValue)) })(SmlList.concat(recVars)));
-        let recInner = (plus(env, recEnv), level + (1: I32), List.append(scoped, explicit));
+        let recInner = (plus(env, recEnv), level + (1: I32), SubsetList.append(scoped, explicit));
         bind(foldRes(
           (_, ((_, e), vars), st) => {
             match(vars) {
@@ -818,7 +826,7 @@ and valDec = ((env, level, scoped), pos, tyvars, plain, recs, st) => {
           SmlListPair.zip(recs, recVars),
           st
         ))((_) => (st) => {
-          let results = List.append(plainResults, SmlList.map((vars) => { (vars, true) })(recVars));
+          let results = SubsetList.append(plainResults, SmlList.map((vars) => { (vars, true) })(recVars));
           closeValBindings(level, explicit, pos, results, st)
         })
       })
@@ -841,7 +849,7 @@ and closeValBindings = (level, explicit, pos, results, st) => {
           (acc, (vars, generalizable), st) => {
             foldRes(
               (acc, (x, t), st) => {
-                bind(closeBinding(level, explicit, generalizable, pos, x, t, st))((entry) => (st) => { Ok(List.append(acc, [entry]), st) })
+                bind(closeBinding(level, explicit, generalizable, pos, x, t, st))((entry) => (st) => { Ok(SubsetList.append(acc, [entry]), st) })
               },
               acc,
               vars,
@@ -896,7 +904,7 @@ and settleSelections = (level, st) => {
           }
         })(freeVars(st, f));
         Ok(
-          (List.append(pending, [sel]), if (progress) { true } else { escaped }),
+          (SubsetList.append(pending, [sel]), if (progress) { true } else { escaped }),
           adjust(st, receiverLevel, f)
         )
       },
@@ -979,7 +987,7 @@ and rigidNames = (t) => {
   match(t) {
     TRigid(v) => { [v] },
     TCon(_, ts) => { concatMap(rigidNames, ts) },
-    TArrow(a, b) => { List.append(rigidNames(a), rigidNames(b)) },
+    TArrow(a, b) => { SubsetList.append(rigidNames(a), rigidNames(b)) },
     TRecord(fields) => { concatMap((_, a) => { rigidNames(a) }, fields) },
     _ => { [] }
   }
@@ -1002,7 +1010,10 @@ and typeDec = ((env, _, _), pos, binds, st) => {
                 TyRecord(_) => { recordDeclared(pos, body, st) },
                 _ => { Ok(void, st) }
               })((_) => (st) => {
-                Ok(List.append(acc, [(name, TyStr(SubsetList.length(params), body, []))]), st)
+                Ok(
+                  SubsetList.append(acc, [(name, TyStr(SubsetList.length(params), body, []))]),
+                  st
+                )
               })
             })
           })
@@ -1061,7 +1072,7 @@ and datatypeDec = ((env, _, _), pos, binds, st) => {
   // Fresh type names, first assuming every one admits equality.
   let (stamps, st1) = SmlList.foldl((_, (acc, st)) => {
     let (s, st') = freshStamp(st);
-    (List.append(acc, [s]), st')
+    (SubsetList.append(acc, [s]), st')
   })([], st)(binds);
   let nameFor = (eqs, (params, name, _), s) => { (s, name, SubsetList.length(params), memberInt(s, eqs)) };
   let tyFor = (tn) => {

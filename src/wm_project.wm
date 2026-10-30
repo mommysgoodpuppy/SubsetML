@@ -1,4 +1,6 @@
 /* @subsetml
+from "./subset_bool.sml" import * as SubsetBool;
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./module_project.sml" import * as ModuleProject;
 from "./syntax.sml" import * as Syntax;
 from "./wm_lexer.sml" import * as WmLexer;
@@ -20,6 +22,7 @@ from "./lexer.sml" import * as Lexer;
 /* Source-list reverse translation shares the source loader's canonical identities.
    Backend names are chosen separately; they are never filesystem identities. */
 
+from "./subset_option_value.wm" import * as SubsetOptionValue;
 from "./module_project.wm" import * as ModuleProject;
 from "./syntax.wm" import * as Syntax;
 from "./wm_lexer.wm" import * as WmLexer;
@@ -30,12 +33,15 @@ from "./subset_char.wm" import * as SubsetChar;
 from "./subset_option.wm" import * as SubsetOption;
 from "./module_imports.wm" import * as ModuleImports;
 from "./subset_io.wm" import * as SubsetIo;
+from "./subset_bool.wm" import * as SubsetBool;
 from "./wm_parse.wm" import * as WmParse;
 from "./basis.wm" import * as Basis;
 from "./unify.wm" import * as Unify;
 from "./env.wm" import * as Env;
 from "./subset_string.wm" import * as SubsetString;
 from "./lexer.wm" import * as Lexer;
+
+from "./subset_option_value.wm" import *;
 
 type Input = | Input<ModuleProject.Resolved, String, String>;
 type ProjectUnit = | Unit<Input, String, String>;
@@ -132,7 +138,7 @@ let headerPaths = (path, src, tokens) => {
             failure(path, src, "reverse discovery requires header namespace imports", pos)
           },
           Some(tail) => {
-            if (!validSpecifier(specifier)) {
+            if (SubsetBool.not(validSpecifier(specifier))) {
               failure(
                 path,
                 src,
@@ -303,7 +309,7 @@ let plan = (sources) => {
 let prepare = (basis, units, unit) => {
   let Unit(Input(resolved, path, src), _, _) = unit;
   let dependency = (specifier, pos) => {
-    if (!validSpecifier(specifier)) {
+    if (SubsetBool.not(validSpecifier(specifier))) {
       failure(
         path,
         src,
@@ -348,7 +354,7 @@ let prepare = (basis, units, unit) => {
         (WmLexer.WKey(";"), _),
         ..rest
       ] => {
-        if (!CompilerText.firstIs(alias, SubsetChar.isUpper)) {
+        if (SubsetBool.not(CompilerText.firstIs(alias, SubsetChar.isUpper))) {
           failure(
             path,
             src,
@@ -420,7 +426,7 @@ let prepare = (basis, units, unit) => {
             [(WmLexer.WName([head, ..tail]), Var(pos)), ..rest] => {
               match(SubsetList.find(aliases, (alias, _) => { alias == head })) {
                 None => {
-                  if (if (!SubsetList.isEmpty(tail)) { SubsetList.exists(units, (u) => { name(u) == head }) } else { false }) {
+                  if (if (SubsetBool.not(SubsetList.isEmpty(tail))) { SubsetList.exists(units, (u) => { name(u) == head }) } else { false }) {
                     failure(
                       path,
                       src,
@@ -442,7 +448,7 @@ let prepare = (basis, units, unit) => {
         SubsetResult.map(
           rewrite(tokens, []),
           (body) => {
-            (SubsetList.reverse(edges), List.append(SubsetList.reverse(opens), body))
+            (SubsetList.reverse(edges), SubsetList.append(SubsetList.reverse(opens), body))
           }
         )
       }
@@ -492,7 +498,7 @@ let order = (sources) => {
                 pathOf(unit),
                 textOf(unit),
                 "import cycle: " ++ SubsetString.concatWith(
-                  List.append(SubsetList.map(SubsetList.reverse([unit, ..active]), pathOf), [specifier]),
+                  SubsetList.append(SubsetList.map(SubsetList.reverse([unit, ..active]), pathOf), [specifier]),
                   " -> "
                 ),
                 pos
@@ -564,7 +570,7 @@ let adapters = (units, specifications) => {
     match(remaining) {
       [] => { SubsetResult.Ok(SubsetList.reverse(seen)) },
       [(Var(checker), Var(native), Var(exported)), ..rest] => {
-        if (!structureIdentifier(exported)) {
+        if (SubsetBool.not(structureIdentifier(exported))) {
           failure(
             checker,
             "",
@@ -576,7 +582,7 @@ let adapters = (units, specifications) => {
             match(ModuleProject.identify(checker)) {
               SubsetResult.Err(error) => { failure(checker, "", SubsetIo.errorText(error), (0: I32)) },
               SubsetResult.Ok(ModuleProject.Resolved(id, _)) => {
-                if (!SubsetList.exists(units, (unit) => { ModuleProject.same(identity(unit), id) })) {
+                if (SubsetBool.not(SubsetList.exists(units, (unit) => { ModuleProject.same(identity(unit), id) }))) {
                   failure(checker, "", "native adapter checker is not in the entry graph", (0: I32))
                 } else {
                   if (SubsetList.exists(
@@ -648,7 +654,7 @@ let mlb = (units, sources, modules, entry, adapters) => {
                       match(edges) {
                         [] => { SubsetResult.Ok("", "") },
                         [Edge(_, pos, alias, target), ..rest] => {
-                          if (!structureIdentifier(alias)) {
+                          if (SubsetBool.not(structureIdentifier(alias))) {
                             failure(
                               pathOf(unit),
                               textOf(unit),

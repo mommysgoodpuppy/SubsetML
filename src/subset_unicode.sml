@@ -1,4 +1,5 @@
 (* @subsetml
+from "./subset_bool.sml" import * as SubsetBool;
 from "./subset_result.sml" import * as SubsetResult;
 from "./subset_list.sml" import * as SubsetList;
 from "./subset_char.sml" import * as SubsetChar;
@@ -15,7 +16,7 @@ structure SubsetUnicode = struct
 
   val isScalar = fn (value : int) =>
     value >= 0 andalso value <= 1114111
-    andalso not (value >= 55296 andalso value <= 57343)
+    andalso SubsetBool.not (value >= 55296 andalso value <= 57343)
     andalso (let val (whole, residue) = split (value, 1) in residue <= 0 end)
 
   val scalarError = fn value =>

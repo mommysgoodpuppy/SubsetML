@@ -1,4 +1,5 @@
 (* @subsetml
+from "./subset_bool.sml" import * as SubsetBool;
 from "./subset_result.sml" import * as SubsetResult;
 from "./subset_order.sml" import * as SubsetOrder;
 from "./subset_text_host.sml" import * as SubsetTextHost;
@@ -152,7 +153,7 @@ structure SubsetChar = struct
   val isAlphaNum = fn c => isAlpha c orelse isDigit c
   val isHexDigit = fn c => isDigit c orelse member (c,
     [#"a", #"b", #"c", #"d", #"e", #"f", #"A", #"B", #"C", #"D", #"E", #"F"])
-  val isPunct = fn c => isGraph c andalso not (isAlphaNum c)
+  val isPunct = fn c => isGraph c andalso SubsetBool.not (isAlphaNum c)
 
   (* Only ASCII has a source-defined order here. Other characters are rejected. *)
   val compareAscii = fn (left, right) =>

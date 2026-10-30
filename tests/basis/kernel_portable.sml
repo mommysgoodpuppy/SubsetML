@@ -1,5 +1,7 @@
 (* Focused execution of the source-only compiler kernel, without CLI host I/O. *)
 structure KernelPortable = struct
+  open SubsetOptionValue
+
   val lists =
     (case SubsetList.at (["a", "b"], 1) of SubsetResult.Ok "b" => true | other => false)
     andalso (case SubsetList.at (["a"], 1) of SubsetResult.Err SubsetList.OutOfBounds => true | other => false)

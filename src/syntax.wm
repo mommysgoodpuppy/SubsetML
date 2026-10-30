@@ -1,11 +1,18 @@
+/* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
+*/
+
 /* Abstract syntax of SubsetML (docs/spec.md §4, §7, §8).
 
    Derived forms are kept as written so diagnostics can talk about the source; the elaborator
    expands them as in Appendix A of the Definition. Infix applications are already resolved:
    `a + b` is EApp (EId "+", ETuple [a, b]) and `x :: xs` is PApp ("::", PTuple [x, xs]). */
 
-// Byte offset into the source text.
+from "./subset_option_value.wm" import * as SubsetOptionValue;
 
+from "./subset_option_value.wm" import *;
+
+// Byte offset into the source text.
 type Pos = I32;
 
 /* A comment's position, its text without the delimiters, and whether code precedes it on its

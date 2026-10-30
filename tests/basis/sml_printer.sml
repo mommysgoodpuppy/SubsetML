@@ -1,5 +1,7 @@
 (* Canonical literal spellings and printer precedence, shared across native and WM execution. *)
 structure SmlPrinter = struct
+  open SubsetOptionValue
+
   val escaped = fn (result, expected) =>
     case result of SubsetResult.Err error => false | SubsetResult.Ok text => text = expected
   val render = fn document => Doc.render ("", [], fn lines => lines, document)

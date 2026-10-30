@@ -1,4 +1,5 @@
 (* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./syntax.sml" import * as Syntax;
 from "./sml_list.sml" import * as SmlList;
 from "./subset_char.sml" import * as SubsetChar;
@@ -10,6 +11,7 @@ from "./compiler_text.sml" import * as CompilerText;
 
 (* Lexical analysis (docs/spec.md §2, Definition §2). *)
 structure Lexer = struct
+  open SubsetOptionValue
 
   open Syntax
 

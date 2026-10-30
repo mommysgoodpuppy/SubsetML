@@ -1,5 +1,7 @@
 (* The custom library executes through both MLton and generated Workman. *)
 structure CustomBasis = struct
+  open SubsetOptionValue
+
 
   val names = ["a", "b", "c"]
   val resultOk = SubsetResult.map (SubsetResult.Ok "a", fn x => x ^ "!") = SubsetResult.Ok "a!"

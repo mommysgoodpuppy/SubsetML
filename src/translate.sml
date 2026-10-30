@@ -1,4 +1,7 @@
 (* @subsetml
+from "./subset_bool.sml" import * as SubsetBool;
+from "./subset_list.sml" import * as SubsetList;
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./syntax.sml" import * as Syntax;
 from "./sml_list.sml" import * as SmlList;
 from "./compiler_text.sml" import * as CompilerText;
@@ -21,6 +24,7 @@ from "./wm_parse.sml" import * as WmParse;
    becomes one Workman module: `structure FooBar` in foo_bar.sml becomes foo_bar.wm, and the
    file's other top-level declarations join the module. *)
 structure Translate = struct
+  open SubsetOptionValue
 
   open Syntax
 
@@ -35,9 +39,9 @@ structure Translate = struct
 
   val rec tyQuals = fn
       TyVar _ => []
-    | TyCon (args, (qs, _)) => head qs @ concatMap (tyQuals, args)
+    | TyCon (args, (qs, _)) => SubsetList.append (head qs, concatMap (tyQuals, args))
     | TyTuple ts => concatMap (tyQuals, ts)
-    | TyArrow (a, b) => tyQuals a @ tyQuals b
+    | TyArrow (a, b) => SubsetList.append (tyQuals a, tyQuals b)
     | TyRecord fields => concatMap (fn (_, t) => tyQuals t, fields)
 
   val rec patQuals = fn
@@ -48,31 +52,31 @@ structure Translate = struct
     | PRecord (_, fields) => concatMap (fn (_, p) => patQuals p, fields)
     | PTuple ps => concatMap (patQuals, ps)
     | PList ps => concatMap (patQuals, ps)
-    | PApp (_, (qs, _), p) => head qs @ patQuals p
-    | PTyped (p, t) => patQuals p @ tyQuals t
+    | PApp (_, (qs, _), p) => SubsetList.append (head qs, patQuals p)
+    | PTyped (p, t) => SubsetList.append (patQuals p, tyQuals t)
 
   val rec expQuals = fn
       EScon (_, _) => []
     | EId (_, (qs, _)) => head qs
     | ERecord (_, fields) => concatMap (fn (_, e) => expQuals e, fields)
     | ESelect (_, _) => []
-    | ECopy (_, source, target, t) => expQuals source @ expQuals target @ tyQuals t
+    | ECopy (_, source, target, t) => SubsetList.concat [expQuals source, expQuals target, tyQuals t]
     | ETuple es => concatMap (expQuals, es)
     | EList es => concatMap (expQuals, es)
     | ESeq es => concatMap (expQuals, es)
-    | ELet (ds, es) => concatMap (decQuals, ds) @ concatMap (expQuals, es)
-    | EApp (f, a) => expQuals f @ expQuals a
-    | ETyped (e, t) => expQuals e @ tyQuals t
-    | EAndalso (a, b) => expQuals a @ expQuals b
-    | EOrelse (a, b) => expQuals a @ expQuals b
-    | EIf (c, a, b) => expQuals c @ expQuals a @ expQuals b
-    | ECase (e, rules) => expQuals e @ ruleQuals rules
+    | ELet (ds, es) => SubsetList.append (concatMap (decQuals, ds), concatMap (expQuals, es))
+    | EApp (f, a) => SubsetList.append (expQuals f, expQuals a)
+    | ETyped (e, t) => SubsetList.append (expQuals e, tyQuals t)
+    | EAndalso (a, b) => SubsetList.append (expQuals a, expQuals b)
+    | EOrelse (a, b) => SubsetList.append (expQuals a, expQuals b)
+    | EIf (c, a, b) => SubsetList.concat [expQuals c, expQuals a, expQuals b]
+    | ECase (e, rules) => SubsetList.append (expQuals e, ruleQuals rules)
     | EFn rules => ruleQuals rules
 
-  and ruleQuals = fn rules => concatMap (fn (p, e) => patQuals p @ expQuals e, rules)
+  and ruleQuals = fn rules => concatMap (fn (p, e) => SubsetList.append (patQuals p, expQuals e), rules)
 
   and decQuals = fn
-      DVal (_, _, plain, recs) => ruleQuals (plain @ recs)
+      DVal (_, _, plain, recs) => ruleQuals (SubsetList.append (plain, recs))
     | DType (_, binds) => concatMap (fn (_, _, t) => tyQuals t, binds)
     | DDatatype (_, binds) =>
         concatMap (fn (_, _, cons) =>
@@ -175,25 +179,25 @@ structure Translate = struct
         EId (q, (_, x)) => [(q, x)]
       | ERecord (q, fields) => concatMap (fn (l, x) => (q, l) :: expNames (q, x), fields)
       | ESelect (q, l) => [(q, l)]
-      | ECopy (_, source, target, _) => go source @ go target
+      | ECopy (_, source, target, _) => SubsetList.append (go source, go target)
       | ETuple es => concatMap (go, es)
       | EList es => concatMap (go, es)
       | ESeq es => concatMap (go, es)
-      | ELet (ds, es) => concatMap (decNames, ds) @ concatMap (go, es)
-      | EApp (f, a) => go f @ go a
+      | ELet (ds, es) => SubsetList.append (concatMap (decNames, ds), concatMap (go, es))
+      | EApp (f, a) => SubsetList.append (go f, go a)
       | ETyped (x, _) => go x
-      | EAndalso (a, b) => go a @ go b
-      | EOrelse (a, b) => go a @ go b
-      | EIf (c, a, b) => go c @ go a @ go b
-      | ECase (x, rules) => go x @ ruleNames (pos, rules)
+      | EAndalso (a, b) => SubsetList.append (go a, go b)
+      | EOrelse (a, b) => SubsetList.append (go a, go b)
+      | EIf (c, a, b) => SubsetList.concat [go c, go a, go b]
+      | ECase (x, rules) => SubsetList.append (go x, ruleNames (pos, rules))
       | EFn rules => ruleNames (pos, rules)
       | EScon (_, _) => []
     end
 
-  and ruleNames = fn (pos, rules) => concatMap (fn (p, e) => patNames (pos, p) @ expNames (pos, e), rules)
+  and ruleNames = fn (pos, rules) => concatMap (fn (p, e) => SubsetList.append (patNames (pos, p), expNames (pos, e)), rules)
 
   and decNames = fn
-      DVal (pos, _, plain, recs) => ruleNames (pos, plain @ recs)
+      DVal (pos, _, plain, recs) => ruleNames (pos, SubsetList.append (plain, recs))
     | DType (pos, binds) => SmlList.map (fn (_, tycon, _) => (pos, tycon)) binds
     | DDatatype (pos, binds) =>
         concatMap (fn (_, tycon, cons) => (pos, tycon) :: SmlList.map (fn (cp, c, _) => (cp, c)) cons, binds)
@@ -213,19 +217,20 @@ structure Translate = struct
                        binds)
         | DDatatype (pos, binds) =>
             concatMap (fn (_, tycon, cons) =>
-                         (if isUpper tycon then [(pos, "type `" ^ tycon ^ "` should start lowercase")] else [])
-                         @ concatMap (fn (cp, c, _) =>
+                         SubsetList.append (
+                         (if isUpper tycon then [(pos, "type `" ^ tycon ^ "` should start lowercase")] else []),
+                         concatMap (fn (cp, c, _) =>
                                         if isUpper c then []
-                                        else [(cp, "constructor `" ^ c ^ "` should start uppercase")], cons),
+                                        else [(cp, "constructor `" ^ c ^ "` should start uppercase")], cons)),
                        binds)
         | _ => []
     in
-      concatMap (keyword, concatMap (decNames, decs) @ concatMap (fn e => expNames (0, e), exps))
-      @ concatMap (casing, decs)
+      SubsetList.append (concatMap (keyword, SubsetList.append (concatMap (decNames, decs), concatMap (fn e => expNames (0, e), exps))),
+        concatMap (casing, decs))
     end
 
   val distinct = fn xs =>
-    SmlList.foldl (fn (x, acc) => if SmlList.exists (fn y => y = x) acc then acc else acc @ [x]) [] xs
+    SmlList.foldl (fn (x, acc) => if SmlList.exists (fn y => y = x) acc then acc else SubsetList.append (acc, [x])) [] xs
 
   (* --------------------------------------------------------------------------------------- *)
   (* Files *)
@@ -282,16 +287,16 @@ structure Translate = struct
   val declarationGaps = fn (structures, prog) =>
     let
       val rec expressions = fn es => concatMap (expression, es)
-      and rules = fn rs => expressions (SmlList.map (fn (_, e) => e) rs) @ concatMap (fn (p, _) => patterns p, rs)
+      and rules = fn rs => SubsetList.append (expressions (SmlList.map (fn (_, e) => e) rs), concatMap (fn (p, _) => patterns p, rs))
       and expression = fn e => case e of
           EScon _ => [] | EId _ => [] | ESelect _ => []
         | ERecord (_, fields) => expressions (SmlList.map (fn (_, e) => e) fields)
         | ETuple es => expressions es | EList es => expressions es | ESeq es => expressions es
-        | ELet (ds, es) => concatMap (declaration, ds) @ expressions es
+        | ELet (ds, es) => SubsetList.append (concatMap (declaration, ds), expressions es)
         | EApp (a, b) => expressions [a, b] | ETyped (e, _) => expression e
         | EAndalso (a, b) => expressions [a, b] | EOrelse (a, b) => expressions [a, b]
         | EIf (a, b, c) => expressions [a, b, c]
-        | ECase (e, rs) => expression e @ rules rs | EFn rs => rules rs
+        | ECase (e, rs) => SubsetList.append (expression e, rules rs) | EFn rs => rules rs
         | ECopy (_, a, b, _) => expressions [a, b]
       and patterns = fn p => case p of
           PTyped (p, _) => patterns p
@@ -300,9 +305,9 @@ structure Translate = struct
         | PApp (_, _, p) => patterns p | _ => []
       and declaration = fn d => case d of
           DVal (_, variables, plain, recs) =>
-            (if not (SmlList.null variables) then ["explicit val type variables"]
-             else (if not (SmlList.null plain) andalso not (SmlList.null recs)
-             then ["mixed plain/recursive val bindings"] else [])) @ rules (plain @ recs)
+            SubsetList.append ((if SubsetBool.not (SmlList.null variables) then ["explicit val type variables"]
+             else (if SubsetBool.not (SmlList.null plain) andalso SubsetBool.not (SmlList.null recs)
+             then ["mixed plain/recursive val bindings"] else [])), rules (SubsetList.append (plain, recs)))
         | DType (_, binds) =>
             (if (case binds of [] => false | [_] => false | _ => true) andalso
               SmlList.exists (fn (_, _, t) => case t of TyRecord _ => true | _ => false) binds
@@ -349,7 +354,7 @@ structure Translate = struct
     let
       val (self, phrases) = module prog
       val (decs, exps) = parts phrases
-      val used = distinct (concatMap (decQuals, decs) @ concatMap (expQuals, exps))
+      val used = distinct (SubsetList.append (concatMap (decQuals, decs), concatMap (expQuals, exps)))
       val start =
         case prog of
           TopDecs (SStructure (p, _) :: _) :: _ => p
@@ -361,8 +366,8 @@ structure Translate = struct
       val defaulted = case Basis.initial of Unify.Err _ => false | Unify.Ok (basis, _) =>
         (case Elab.program (basis, prog, Unify.lenient) of Unify.Err _ => false
          | Unify.Ok (_, st) => case defaultedSite st of SOME _ => true | NONE => false)
-      val gaps = declarationGaps (structures, phrases) @
-        (if defaulted then [defaultedMessage] else [])
+      val gaps = SubsetList.append (declarationGaps (structures, phrases),
+        (if defaulted then [defaultedMessage] else []))
       val doc = if SmlList.null gaps then Doc.stack (SmlList.map (fn td => WmPrint.topdec (structures, td)) phrases) else Doc.text ""
       val body =
         case imports of
@@ -370,7 +375,7 @@ structure Translate = struct
         | _ => Doc.stack [Doc.stack imports, Doc.text "", doc]
       val expected = WmPrint.fileName self
     in
-      if not (SmlList.null gaps) then
+      if SubsetBool.not (SmlList.null gaps) then
         TranslateError (path ^ ": unsupported WM translation: " ^ SubsetString.concatWith (gaps, ", ") ^
           "; embedded SML declarations are not supported")
       else (if self <> "" andalso expected <> baseName path ^ ".wm" then
@@ -484,7 +489,7 @@ structure Translate = struct
               val rec imported = fn (structures, seen) => case structures of [] => NONE
                 | (n, (body, _)) :: rest =>
                     if SmlList.exists (fn x => x = n) seen then imported (rest, seen)
-                    else (case find (body, path @ [n]) of SOME id => SOME id
+                    else (case find (body, SubsetList.append (path, [n])) of SOME id => SOME id
                       | NONE => imported (rest, n :: seen))
             in case localType (types, []) of SOME id => SOME id | NONE => imported (structures, []) end
         in if Types.stampOf nominal < Types.firstStamp then SOME ([], Types.nameOf nominal)
@@ -562,7 +567,7 @@ structure Translate = struct
         | SStructure (p, bs) =>
             Unify.bind (Elab.foldRes (fn ((delta, output), (n, ds), st) =>
               Unify.bind (declarations (env, ds, st)) (fn (body, ds) => fn st =>
-                Unify.Ok ((Env.plus (delta, Env.withStructure (n, body, false)), output @ [(n, ds)]), st)),
+                Unify.Ok ((Env.plus (delta, Env.withStructure (n, body, false)), SubsetList.append (output, [(n, ds)])), st)),
               (Env.empty, []), bs, st)) (fn (delta, bs) => fn st =>
                 Unify.Ok ((delta, SStructure (p, bs)), st))
       val rec structures = fn (env, sds, st) =>
@@ -607,7 +612,7 @@ structure Translate = struct
               val needed = SmlList.filter (fn m => nameOfModule m <> name andalso
                 SmlList.exists (fn n => n = nameOfModule m) (deps item)) modules
               val rec walk = fn
-                  ([], done, acc) => Unify.Ok ((name :: done, acc @ [item]), Unify.initial)
+                  ([], done, acc) => Unify.Ok ((name :: done, SubsetList.append (acc, [item])), Unify.initial)
                 | (m :: rest, done, acc) =>
                     Unify.bind (order (m, name :: visiting, done, acc)) (fn (done, acc) => fn _ =>
                       walk (rest, done, acc))
@@ -619,7 +624,7 @@ structure Translate = struct
             let val Unify.State (vars, next, sels, recs, _) = st in
               Unify.bind (portableValues (env, prog, Unify.State (vars, next, sels, recs, SOME [])))
                 (fn (env, prog) => fn st => Unify.bind (wmNumbers st) (fn _ => fn st =>
-                  elaborate (env, rest, st, acc @ [(path, src, realEquality (st, prog), comments)])))
+                  elaborate (env, rest, st, SubsetList.append (acc, [(path, src, realEquality (st, prog), comments)]))))
             end
       val rec strict = fn
           (_, [], st) => Unify.Ok ((), st)
@@ -661,7 +666,7 @@ structure Translate = struct
                   SOME (([Types.KPlain], Types.TArrow (Types.TCon (tn, []), Types.TGen index)), Env.SValue) =>
                     (Types.stampOf tn = Types.stampOf Types.stringName) andalso (index = 0)
                 | _ => false
-            in if selected andalso not valid then
+            in if selected andalso SubsetBool.not valid then
                  Unify.Err ("panic runtime must export panic : string -> 'a", 0)
                else Unify.Ok (body, Unify.initial) end
       val rec rewrite = fn (basis, remaining, cache, st, acc) =>

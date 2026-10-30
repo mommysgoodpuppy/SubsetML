@@ -8,7 +8,7 @@ import tempfile
 
 repo = Path.cwd()
 compiler = repo / 'bin/subsetml'
-wm = repo.parent / 'wm-mini'
+wm = repo.parents[1] if (repo.parents[1] / 'src/main.ts').is_file() else repo.parent / 'wm-mini'
 
 def run(args, **kwargs):
     result = subprocess.run(list(map(str, args)), capture_output=True, **kwargs)

@@ -4,6 +4,7 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 runner=""
 if command -v wm >/dev/null 2>&1; then
+  make wm
   if ! wm compile src/main.wm "$tmp/compiler.mjs" > "$tmp/compile.log" 2>&1; then
     cat "$tmp/compile.log" >&2
     exit 1

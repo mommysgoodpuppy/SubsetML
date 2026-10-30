@@ -1,4 +1,5 @@
 /* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./types.sml" import * as Types;
 from "./env.sml" import * as Env;
 from "./subset_result.sml" import * as SubsetResult;
@@ -16,6 +17,7 @@ from "./sml_list.sml" import * as SmlList;
    its own names, argument order and Result-based failures (docs/basis.md, spec section 9).
    Current interface types are parsed with the SubsetML parser. */
 
+from "./subset_option_value.wm" import * as SubsetOptionValue;
 from "./types.wm" import * as Types;
 from "./env.wm" import * as Env;
 from "./subset_result.wm" import * as SubsetResult;
@@ -25,6 +27,8 @@ from "./unify.wm" import * as Unify;
 from "./parser.wm" import * as Parser;
 from "./elab.wm" import * as Elab;
 from "./sml_list.wm" import * as SmlList;
+
+from "./subset_option_value.wm" import *;
 
 from "./types.wm" import *;
 from "./env.wm" import *;
@@ -363,26 +367,29 @@ let rec nest = (outer, path, inner) => {
 };
 
 // The initial environment, or the first malformed entry.
-let initial = {
+let build = (
+  selectedTypes,
+  selectedConstructors,
+  selectedSpecial,
+  selectedValues,
+  selectedStructures
+) => {
   let topEnv = Env.Env(
     [],
-    topTypes,
-    List.append(
-      SmlList.map(conEntry)(List.append(boolCons, List.append(listCons, List.append(optionCons, orderCons)))),
-      special
-    )
+    selectedTypes,
+    SubsetList.append(SmlList.map(conEntry)(selectedConstructors), selectedSpecial)
   );
   // The structures' types, so that value types can name them (TextIO.instream).
   let typesEnv = SmlList.foldl(((path, tys, _), env) => {
     nest(env, path, withTypes(SmlList.map((n, tn) => { (n, tyStr(tn)) })(tys)))
-  })(topEnv)(structures);
+  })(topEnv)(selectedStructures);
   let values = (scope, entries) => {
     SmlList.foldl(((name, text), acc) => {
       match(acc) {
         Unify.Err(message, pos) => { Unify.Err(message, pos) },
         Unify.Ok(vals, st) => {
           match(scheme(scope, text)) {
-            Unify.Ok(s, _) => { Unify.Ok(List.append(vals, [(name, (s, SValue))]), st) },
+            Unify.Ok(s, _) => { Unify.Ok(SubsetList.append(vals, [(name, (s, SValue))]), st) },
             Unify.Err(msg, _) => { Unify.Err("basis entry " ++ name ++ ": " ++ msg, (0: I32)) }
           }
         }
@@ -399,7 +406,7 @@ let initial = {
       None => { typesEnv }
     }
   };
-  match(values(typesEnv, topValues)) {
+  match(values(typesEnv, selectedValues)) {
     Unify.Err(message, pos) => { Unify.Err(message, pos) },
     Unify.Ok(tops, _) => {
       SmlList.foldl(((path, _, entries), acc) => {
@@ -412,7 +419,32 @@ let initial = {
             }
           }
         }
-      })(Unify.Ok(plus(typesEnv, withValues(tops)), Unify.initial))(structures)
+      })(Unify.Ok(plus(typesEnv, withValues(tops)), Unify.initial))(selectedStructures)
     }
   }
+};
+
+let initial = build(
+  topTypes,
+  SubsetList.concat([boolCons, listCons, optionCons, orderCons]),
+  special,
+  topValues,
+  structures
+);
+
+/* Portable authored source has no SML Basis structures or convenience values.
+   Only representation-level operations remain; see docs/runtime-dependencies.md. */
+let portableInitial = {
+  /* Positive allowlists: expanding the compatibility environment must not
+     silently expand the native implementation contract. */
+  let select = (names, entries) => {
+    SmlList.filter((name, _) => { SmlList.exists((candidate) => { candidate == name })(names) })(entries)
+  };
+  build(
+    select(["unit", "bool", "int", "real", "string", "char", "list"], topTypes),
+    SubsetList.append(boolCons, listCons),
+    select(["=", "<>", "+", "-", "*", "<", ">", "<=", ">=", "~"], special),
+    select(["^", "/", "div", "mod"], topValues),
+    []
+  )
 };

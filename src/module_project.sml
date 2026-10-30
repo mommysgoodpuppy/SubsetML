@@ -1,4 +1,6 @@
 (* @subsetml
+from "./subset_bool.sml" import * as SubsetBool;
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./syntax.sml" import * as Syntax;
 from "./module_imports.sml" import * as ModuleImports;
 from "./subset_io.sml" import * as SubsetIo;
@@ -14,6 +16,8 @@ from "./unify.sml" import * as Unify;
 
 (* Entry-file loading with explicit imports, canonical identity and private working scope. *)
 structure ModuleProject = struct
+  open SubsetOptionValue
+
   (* The canonical key is constructed only at the resolver boundary. *)
   datatype moduleId = ModuleId of string
   datatype resolved = Resolved of moduleId * string
@@ -70,7 +74,7 @@ structure ModuleProject = struct
     let
       val Resolved (repeatedId, _) = repeated
       val ordered = SubsetList.dropWhile (SubsetList.reverse active,
-        fn Resolved (id, _) => not (same (id, repeatedId)))
+        fn Resolved (id, _) => SubsetBool.not (same (id, repeatedId)))
     in
       "import cycle: " ^ SubsetString.concatWith
         (SubsetList.map (SubsetList.append (ordered, [repeated]), location), " -> ")
@@ -139,7 +143,7 @@ structure ModuleProject = struct
                            val (_, exports) = entry
                            val Env.Env (_, topTypes, topValues) = exports
                          in
-                           if not (SubsetList.isEmpty topTypes andalso SubsetList.isEmpty topValues) then
+                           if SubsetBool.not (SubsetList.isEmpty topTypes andalso SubsetList.isEmpty topValues) then
                              SubsetResult.Err (CheckFailure (path, src,
                                "namespace imports do not yet support named top-level declarations outside the dependency's structure", pos))
                            else case Env.structureAt (exports, [name]) of

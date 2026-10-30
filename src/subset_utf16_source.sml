@@ -1,4 +1,5 @@
 (* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./subset_unicode.sml" import * as SubsetUnicode;
 from "./subset_list.sml" import * as SubsetList;
 from "./subset_result.sml" import * as SubsetResult;
@@ -11,6 +12,8 @@ from "./subset_utf8.sml" import * as SubsetUtf8;
 (* Lossless UTF-16 units, including lone surrogates. Strict codecs remain separate.
    Tree/Source constructors are implementation representations; use the checked builders. *)
 structure SubsetUtf16Source = struct
+  open SubsetOptionValue
+
   datatype error = InvalidUnit of int | InvalidIndex | UnicodeError of SubsetUnicode.error
   datatype tree = Empty | Unit of int | Branch of int * tree * tree
   datatype source = Source of tree * int * int

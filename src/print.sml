@@ -1,4 +1,5 @@
 (* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./syntax.sml" import * as Syntax;
 from "./subset_string.sml" import * as SubsetString;
 from "./subset_list.sml" import * as SubsetList;
@@ -8,6 +9,7 @@ from "./sml_list.sml" import * as SmlList;
 
 (* Prints abstract syntax as S-expressions, for tests and debugging. *)
 structure Print = struct
+  open SubsetOptionValue
 
   open Syntax
 

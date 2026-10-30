@@ -1,4 +1,5 @@
 (* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./subset_result.sml" import * as SubsetResult;
 from "./subset_list.sml" import * as SubsetList;
 from "./subset_string.sml" import * as SubsetString;
@@ -10,6 +11,7 @@ from "./subset_won_syntax.sml" import * as SubsetWonSyntax;
 (* Strict WON grammar and cursor mechanics. *)
 
 structure SubsetWonParser = struct
+  open SubsetOptionValue
 
   type cursor = {input : char list, offset : int}
   val makeCursor = fn (input, offset) => {input = input, offset = offset} : cursor

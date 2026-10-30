@@ -1,4 +1,5 @@
 (* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./subset_result.sml" import * as SubsetResult;
 from "./subset_list.sml" import * as SubsetList;
 from "./subset_string.sml" import * as SubsetString;
@@ -9,6 +10,7 @@ from "./subset_utf8.sml" import * as SubsetUtf8;
 (* Shared byte-string and canonical-token helpers; not the public WON API. *)
 
 structure SubsetWonSyntax = struct
+  open SubsetOptionValue
 
   val native = fn xs => SubsetResult.getOr (SubsetString.toNative xs, "")
 

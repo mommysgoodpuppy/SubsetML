@@ -1,4 +1,6 @@
 (* @subsetml
+from "./subset_bool.sml" import * as SubsetBool;
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./syntax.sml" import * as Syntax;
 from "./compiler_text.sml" import * as CompilerText;
 from "./subset_list.sml" import * as SubsetList;
@@ -8,6 +10,8 @@ from "./wm_lexer.sml" import * as WmLexer;
 
 (* Comment metadata, using Workman's namespace import spelling. *)
 structure ModuleImports = struct
+  open SubsetOptionValue
+
   datatype dependency = Import of string * string * Syntax.pos
   datatype result = Imports of dependency list | Error of string * Syntax.pos
 
@@ -37,7 +41,7 @@ structure ModuleImports = struct
     (prefix (path, "./") orelse prefix (path, "../"))
     andalso CompilerText.isSuffix (path, ".sml")
     andalso SubsetList.all (CompilerText.characters path, fn c =>
-      SubsetChar.isPrint c andalso not (SubsetChar.contains ([#"\\", #"%", #"?", #"#"], c)))
+      SubsetChar.isPrint c andalso SubsetBool.not (SubsetChar.contains ([#"\\", #"%", #"?", #"#"], c)))
 
   val declarations = fn (body, base) =>
     case WmLexer.lex body of

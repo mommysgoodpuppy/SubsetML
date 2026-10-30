@@ -1,10 +1,13 @@
 (* @subsetml
+from "./subset_list.sml" import * as SubsetList;
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./types.sml" import * as Types;
 from "./sml_list.sml" import * as SmlList;
 *)
 
 (* Static environments (Definition §4.2): structures, types and values, newest binding first. *)
 structure Env = struct
+  open SubsetOptionValue
 
   open Types
 
@@ -24,7 +27,7 @@ structure Env = struct
   val empty = Env ([], [], [])
 
   (* `plus (a, b)`: b's bindings shadow a's. *)
-  val plus = fn (Env (s1, t1, v1), Env (s2, t2, v2)) => Env (s2 @ s1, t2 @ t1, v2 @ v1)
+  val plus = fn (Env (s1, t1, v1), Env (s2, t2, v2)) => Env (SubsetList.append (s2, s1), SubsetList.append (t2, t1), SubsetList.append (v2, v1))
 
   val assoc = fn (key, entries) =>
     case SmlList.find (fn (k, _) => k = key) entries of

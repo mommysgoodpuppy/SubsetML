@@ -1,4 +1,7 @@
 /* @subsetml
+from "./subset_bool.sml" import * as SubsetBool;
+from "./subset_list.sml" import * as SubsetList;
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./syntax.sml" import * as Syntax;
 from "./sml_list.sml" import * as SmlList;
 from "./compiler_text.sml" import * as CompilerText;
@@ -21,10 +24,13 @@ from "./wm_parse.sml" import * as WmParse;
    becomes one Workman module: `structure FooBar` in foo_bar.sml becomes foo_bar.wm, and the
    file's other top-level declarations join the module. */
 
+from "./subset_option_value.wm" import * as SubsetOptionValue;
 from "./syntax.wm" import * as Syntax;
 from "./sml_list.wm" import * as SmlList;
+from "./subset_list.wm" import * as SubsetList;
 from "./compiler_text.wm" import * as CompilerText;
 from "./subset_char.wm" import * as SubsetChar;
+from "./subset_bool.wm" import * as SubsetBool;
 from "./unify.wm" import * as Unify;
 from "./types.wm" import * as Types;
 from "./doc.wm" import * as Doc;
@@ -37,6 +43,8 @@ from "./env.wm" import * as Env;
 from "./wm_lexer.wm" import * as WmLexer;
 from "./sml_print.wm" import * as SmlPrint;
 from "./wm_parse.wm" import * as WmParse;
+
+from "./subset_option_value.wm" import *;
 
 from "./syntax.wm" import *;
 
@@ -52,9 +60,9 @@ let concatMap = (f, xs) => { SmlList.concat(SmlList.map(f)(xs)) };
 
 let rec tyQuals = match {
   TyVar(_) => { [] },
-  TyCon(args, (Var(qs), _)) => { List.append(head(qs), concatMap(tyQuals, args)) },
+  TyCon(args, (Var(qs), _)) => { SubsetList.append(head(qs), concatMap(tyQuals, args)) },
   TyTuple(ts) => { concatMap(tyQuals, ts) },
-  TyArrow(a, b) => { List.append(tyQuals(a), tyQuals(b)) },
+  TyArrow(a, b) => { SubsetList.append(tyQuals(a), tyQuals(b)) },
   TyRecord(fields) => { concatMap((_, t) => { tyQuals(t) }, fields) }
 };
 
@@ -66,8 +74,8 @@ let rec patQuals = match {
   PRecord(_, fields) => { concatMap((_, p) => { patQuals(p) }, fields) },
   PTuple(ps) => { concatMap(patQuals, ps) },
   PList(ps) => { concatMap(patQuals, ps) },
-  PApp(_, (Var(qs), _), p) => { List.append(head(qs), patQuals(p)) },
-  PTyped(p, t) => { List.append(patQuals(p), tyQuals(t)) }
+  PApp(_, (Var(qs), _), p) => { SubsetList.append(head(qs), patQuals(p)) },
+  PTyped(p, t) => { SubsetList.append(patQuals(p), tyQuals(t)) }
 };
 
 let rec expQuals = match {
@@ -76,31 +84,29 @@ let rec expQuals = match {
   ERecord(_, fields) => { concatMap((_, e) => { expQuals(e) }, fields) },
   ESelect(_, _) => { [] },
   ECopy(_, source, target, t) => {
-    List.append(expQuals(source), List.append(expQuals(target), tyQuals(t)))
+    SubsetList.concat([expQuals(source), expQuals(target), tyQuals(t)])
   },
   ETuple(es) => { concatMap(expQuals, es) },
   EList(es) => { concatMap(expQuals, es) },
   ESeq(es) => { concatMap(expQuals, es) },
   ELet(ds, es) => {
-    List.append(concatMap(decQuals, ds), concatMap(expQuals, es))
+    SubsetList.append(concatMap(decQuals, ds), concatMap(expQuals, es))
   },
-  EApp(f, a) => { List.append(expQuals(f), expQuals(a)) },
-  ETyped(e, t) => { List.append(expQuals(e), tyQuals(t)) },
-  EAndalso(a, b) => { List.append(expQuals(a), expQuals(b)) },
-  EOrelse(a, b) => { List.append(expQuals(a), expQuals(b)) },
-  EIf(c, a, b) => {
-    List.append(expQuals(c), List.append(expQuals(a), expQuals(b)))
-  },
-  ECase(e, rules) => { List.append(expQuals(e), ruleQuals(rules)) },
+  EApp(f, a) => { SubsetList.append(expQuals(f), expQuals(a)) },
+  ETyped(e, t) => { SubsetList.append(expQuals(e), tyQuals(t)) },
+  EAndalso(a, b) => { SubsetList.append(expQuals(a), expQuals(b)) },
+  EOrelse(a, b) => { SubsetList.append(expQuals(a), expQuals(b)) },
+  EIf(c, a, b) => { SubsetList.concat([expQuals(c), expQuals(a), expQuals(b)]) },
+  ECase(e, rules) => { SubsetList.append(expQuals(e), ruleQuals(rules)) },
   EFn(rules) => { ruleQuals(rules) }
 }
 
 and ruleQuals = (rules) => {
-  concatMap((p, e) => { List.append(patQuals(p), expQuals(e)) }, rules)
+  concatMap((p, e) => { SubsetList.append(patQuals(p), expQuals(e)) }, rules)
 }
 
 and decQuals = match {
-  DVal(_, _, plain, recs) => { ruleQuals(List.append(plain, recs)) },
+  DVal(_, _, plain, recs) => { ruleQuals(SubsetList.append(plain, recs)) },
   DType(_, binds) => { concatMap((_, _, t) => { tyQuals(t) }, binds) },
   DDatatype(_, binds) => {
     concatMap(
@@ -244,28 +250,30 @@ let rec expNames = (pos, e) => {
     EId(q, (_, Var(x))) => { [(q, x)] },
     ERecord(q, fields) => { concatMap((l, x) => { [(q, l), ..expNames(q, x)] }, fields) },
     ESelect(q, l) => { [(q, l)] },
-    ECopy(_, source, target, _) => { List.append(go(source), go(target)) },
+    ECopy(_, source, target, _) => { SubsetList.append(go(source), go(target)) },
     ETuple(es) => { concatMap(go, es) },
     EList(es) => { concatMap(go, es) },
     ESeq(es) => { concatMap(go, es) },
-    ELet(ds, es) => { List.append(concatMap(decNames, ds), concatMap(go, es)) },
-    EApp(f, a) => { List.append(go(f), go(a)) },
+    ELet(ds, es) => {
+      SubsetList.append(concatMap(decNames, ds), concatMap(go, es))
+    },
+    EApp(f, a) => { SubsetList.append(go(f), go(a)) },
     ETyped(x, _) => { go(x) },
-    EAndalso(a, b) => { List.append(go(a), go(b)) },
-    EOrelse(a, b) => { List.append(go(a), go(b)) },
-    EIf(c, a, b) => { List.append(go(c), List.append(go(a), go(b))) },
-    ECase(x, rules) => { List.append(go(x), ruleNames(pos, rules)) },
+    EAndalso(a, b) => { SubsetList.append(go(a), go(b)) },
+    EOrelse(a, b) => { SubsetList.append(go(a), go(b)) },
+    EIf(c, a, b) => { SubsetList.concat([go(c), go(a), go(b)]) },
+    ECase(x, rules) => { SubsetList.append(go(x), ruleNames(pos, rules)) },
     EFn(rules) => { ruleNames(pos, rules) },
     EScon(_, _) => { [] }
   }
 }
 
 and ruleNames = (pos, rules) => {
-  concatMap((p, e) => { List.append(patNames(pos, p), expNames(pos, e)) }, rules)
+  concatMap((p, e) => { SubsetList.append(patNames(pos, p), expNames(pos, e)) }, rules)
 }
 
 and decNames = match {
-  DVal(pos, _, plain, recs) => { ruleNames(pos, List.append(plain, recs)) },
+  DVal(pos, _, plain, recs) => { ruleNames(pos, SubsetList.append(plain, recs)) },
   DType(pos, binds) => { SmlList.map((_, tycon, _) => { (pos, tycon) })(binds) },
   DDatatype(pos, binds) => {
     concatMap(
@@ -297,7 +305,7 @@ let conventionWarnings = (decs, exps) => {
     DDatatype(pos, binds) => {
       concatMap(
         (_, tycon, cons) => {
-          List.append(
+          SubsetList.append(
             if (isUpper(tycon)) { [(pos, "type `" ++ tycon ++ "` should start lowercase")] } else { [] },
             concatMap(
               (cp, c, _) => {
@@ -312,10 +320,10 @@ let conventionWarnings = (decs, exps) => {
     },
     _ => { [] }
   };
-  List.append(
+  SubsetList.append(
     concatMap(
       keyword,
-      List.append(concatMap(decNames, decs), concatMap((e) => { expNames((0: I32), e) }, exps))
+      SubsetList.append(concatMap(decNames, decs), concatMap((e) => { expNames((0: I32), e) }, exps))
     ),
     concatMap(casing, decs)
   )
@@ -323,7 +331,7 @@ let conventionWarnings = (decs, exps) => {
 
 let distinct = (xs) => {
   SmlList.foldl((x, acc) => {
-    if (SmlList.exists((y) => { y == x })(acc)) { acc } else { List.append(acc, [x]) }
+    if (SmlList.exists((y) => { y == x })(acc)) { acc } else { SubsetList.append(acc, [x]) }
   })([])(xs)
 };
 
@@ -424,7 +432,7 @@ let parts = (phrases) => {
 let declarationGaps = (structures, prog) => {
   let rec expressions = (es) => { concatMap(expression, es) }
   and rules = (rs) => {
-    List.append(
+    SubsetList.append(
       expressions(SmlList.map((_, e) => { e })(rs)),
       concatMap((p, _) => { patterns(p) }, rs)
     )
@@ -438,13 +446,15 @@ let declarationGaps = (structures, prog) => {
       ETuple(es) => { expressions(es) },
       EList(es) => { expressions(es) },
       ESeq(es) => { expressions(es) },
-      ELet(ds, es) => { List.append(concatMap(declaration, ds), expressions(es)) },
+      ELet(ds, es) => {
+        SubsetList.append(concatMap(declaration, ds), expressions(es))
+      },
       EApp(a, b) => { expressions([a, b]) },
       ETyped(e, _) => { expression(e) },
       EAndalso(a, b) => { expressions([a, b]) },
       EOrelse(a, b) => { expressions([a, b]) },
       EIf(a, b, c) => { expressions([a, b, c]) },
-      ECase(e, rs) => { List.append(expression(e), rules(rs)) },
+      ECase(e, rs) => { SubsetList.append(expression(e), rules(rs)) },
       EFn(rs) => { rules(rs) },
       ECopy(_, a, b, _) => { expressions([a, b]) }
     }
@@ -462,11 +472,11 @@ let declarationGaps = (structures, prog) => {
   and declaration = (d) => {
     match(d) {
       DVal(_, variables, plain, recs) => {
-        List.append(
-          if (!SmlList.null(variables)) { ["explicit val type variables"] } else {
-            if (if (!SmlList.null(plain)) { !SmlList.null(recs) } else { false }) { ["mixed plain/recursive val bindings"] } else { [] }
+        SubsetList.append(
+          if (SubsetBool.not(SmlList.null(variables))) { ["explicit val type variables"] } else {
+            if (if (SubsetBool.not(SmlList.null(plain))) { SubsetBool.not(SmlList.null(recs)) } else { false }) { ["mixed plain/recursive val bindings"] } else { [] }
           },
-          rules(List.append(plain, recs))
+          rules(SubsetList.append(plain, recs))
         )
       },
       DType(_, binds) => {
@@ -552,7 +562,7 @@ let wmNumbers = (st) => {
 let toWm = (structures, path, src, prog, comments) => {
   let (self, phrases) = module(prog);
   let (decs, exps) = parts(phrases);
-  let used = distinct(List.append(concatMap(decQuals, decs), concatMap(expQuals, exps)));
+  let used = distinct(SubsetList.append(concatMap(decQuals, decs), concatMap(expQuals, exps)));
   let start = match(prog) {
     [TopDecs([SStructure(p, _), .._]), .._] => { p },
     _ => { (0: I32) }
@@ -577,7 +587,7 @@ let toWm = (structures, path, src, prog, comments) => {
       }
     }
   };
-  let gaps = List.append(
+  let gaps = SubsetList.append(
     declarationGaps(structures, phrases),
     if (defaulted) { [defaultedMessage] } else { [] }
   );
@@ -589,7 +599,7 @@ let toWm = (structures, path, src, prog, comments) => {
     _ => { Doc.stack([Doc.stack(imports), Doc.text(""), doc]) }
   };
   let expected = WmPrint.fileName(self);
-  if (!SmlList.null(gaps)) {
+  if (SubsetBool.not(SmlList.null(gaps))) {
     TranslateError(path ++ ": unsupported WM translation: " ++ SubsetString.concatWith(gaps, ", ") ++ "; embedded SML declarations are not supported")
   } else {
     if (if (self != "") { expected != baseName(path) ++ ".wm" } else { false }) {
@@ -762,7 +772,7 @@ let portableValues = (env, prog, st) => {
             [] => { None },
             [(Var(n), (Var(body), _)), ..rest] => {
               if (SmlList.exists((x) => { x == n })(seen)) { imported(rest, seen) } else {
-                match(find(body, List.append(path, [n]))) {
+                match(find(body, SubsetList.append(path, [n]))) {
                   Some(id) => { Some(id) },
                   None => { imported(rest, [n, ..seen]) }
                 }
@@ -935,7 +945,7 @@ let portableValues = (env, prog, st) => {
               Unify.Ok(
                 (
                   Env.plus(delta, Env.withStructure(n, body, false)),
-                  List.append(output, [(n, ds)])
+                  SubsetList.append(output, [(n, ds)])
                 ),
                 st
               )
@@ -1021,7 +1031,7 @@ let recover = (modules, target) => {
         })(modules);
         let rec walk = match {
           ([], Var(done), Var(acc)) => {
-            Unify.Ok(([name, ..done], List.append(acc, [item])), Unify.initial)
+            Unify.Ok(([name, ..done], SubsetList.append(acc, [item])), Unify.initial)
           },
           ([m, ..rest], Var(done), Var(acc)) => {
             Unify.bind(order(m, [name, ..visiting], done, acc))((done, acc) => (_) => { walk(rest, done, acc) })
@@ -1046,7 +1056,7 @@ let recover = (modules, target) => {
             env,
             rest,
             st,
-            List.append(acc, [(path, src, realEquality(st, prog), comments)])
+            SubsetList.append(acc, [(path, src, realEquality(st, prog), comments)])
           )
         })
       })
@@ -1112,7 +1122,7 @@ let recoverProjectWithRuntime = (runtime, modules) => {
           },
           _ => { false }
         };
-        if (if (selected) { !valid } else { false }) {
+        if (if (selected) { SubsetBool.not(valid) } else { false }) {
           Unify.Err("panic runtime must export panic : string -> 'a", (0: I32))
         } else { Unify.Ok(body, Unify.initial) }
       }

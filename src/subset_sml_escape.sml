@@ -1,4 +1,5 @@
 (* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./subset_list.sml" import * as SubsetList;
 from "./subset_result.sml" import * as SubsetResult;
 from "./subset_string.sml" import * as SubsetString;
@@ -6,6 +7,8 @@ from "./subset_string.sml" import * as SubsetString;
 
 (* Portable SML literal contents for byte characters; quotation marks are supplied by callers. *)
 structure SubsetSmlEscape = struct
+  open SubsetOptionValue
+
   datatype error = NonByte of int
   val spellings = [
     (#"\000", "\\^@"), (#"\001", "\\^A"), (#"\002", "\\^B"), (#"\003", "\\^C"),

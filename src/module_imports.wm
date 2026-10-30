@@ -1,4 +1,6 @@
 /* @subsetml
+from "./subset_bool.sml" import * as SubsetBool;
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./syntax.sml" import * as Syntax;
 from "./compiler_text.sml" import * as CompilerText;
 from "./subset_list.sml" import * as SubsetList;
@@ -8,11 +10,15 @@ from "./wm_lexer.sml" import * as WmLexer;
 
 // Comment metadata, using Workman's namespace import spelling.
 
+from "./subset_option_value.wm" import * as SubsetOptionValue;
 from "./syntax.wm" import * as Syntax;
 from "./compiler_text.wm" import * as CompilerText;
 from "./subset_list.wm" import * as SubsetList;
 from "./subset_char.wm" import * as SubsetChar;
+from "./subset_bool.wm" import * as SubsetBool;
 from "./wm_lexer.wm" import * as WmLexer;
+
+from "./subset_option_value.wm" import *;
 
 type Dependency = | Import<String, String, Syntax.Pos>;
 type Result = Imports<List<Dependency>> | Error<String, Syntax.Pos>;
@@ -44,7 +50,9 @@ let validPath = (path) => {
     SubsetList.all(
       CompilerText.characters(path),
       (c) => {
-        if (SubsetChar.isPrint(c)) { !SubsetChar.contains(['\\', '%', '?', '#'], c) } else { false }
+        if (SubsetChar.isPrint(c)) {
+          SubsetBool.not(SubsetChar.contains(['\\', '%', '?', '#'], c))
+        } else { false }
       }
     )
   } else { false }

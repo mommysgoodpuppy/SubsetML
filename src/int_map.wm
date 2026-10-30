@@ -1,9 +1,14 @@
 /* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./subset_natural.sml" import * as SubsetNatural;
 */
 
 /* Persistent binary trie over nonnegative signed integers. Each child stores
    the remaining key bits, so insertion never constructs a 2^31 scale. */
+
+from "./subset_option_value.wm" import * as SubsetOptionValue;
+
+from "./subset_option_value.wm" import *;
 
 type Map<a> = Empty | Leaf<I32, a> | Branch<Map<a>, Map<a>>;
 let empty = Empty;

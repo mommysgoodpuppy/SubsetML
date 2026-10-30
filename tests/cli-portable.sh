@@ -1,5 +1,9 @@
 #!/bin/sh
 set -eu
+# The generated compiler must match the source under test, including new CLI profiles.
+if command -v wm >/dev/null 2>&1; then
+  make wm
+fi
 python <<'PY'
 from pathlib import Path
 import shutil, subprocess, tempfile
@@ -37,13 +41,17 @@ end
         assert rejected.returncode == 1 and b'expected' in rejected.stderr, rejected.stderr.decode(errors='replace')
     bad = root / 'bad.sml'
     bad.write_text('val rejected = "a" < "b"\n')
-    for action in ['check', 'parse', 'fmt', 'roundtrip']:
+    for action in ['check', 'check-portable', 'parse', 'fmt', 'roundtrip']:
         expected = run(native, [action, source])
         assert expected.returncode == 0, expected.stderr.decode(errors='replace')
         if workman:
             actual = run(workman, [action, source])
             assert (actual.returncode, actual.stdout, actual.stderr) == (0, expected.stdout, expected.stderr), (action, actual.stderr.decode(errors='replace'))
     for command in [native] + ([workman] if workman else []):
+        host_basis = root / 'host-basis.sml'
+        host_basis.write_text('val rejected = List.map\n')
+        failed = run(command, ['check-portable', host_basis])
+        assert failed.returncode == 1 and b'List.map' in failed.stderr and not failed.stdout, failed
         for path in [bad, root / 'missing.sml']:
             failed = run(command, ['check', path])
             assert failed.returncode == 1 and failed.stderr and not failed.stdout, (path, failed)

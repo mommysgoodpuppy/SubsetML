@@ -1,3 +1,29 @@
+(* Normalize only at the test boundary when comparing our source datatype with
+   the host SML Basis's distinct option datatype. *)
+structure HostList = List
+structure HostOption = Option
+fun fromHost NONE = SubsetOptionValue.NONE
+  | fromHost (SOME value) = SubsetOptionValue.SOME value
+fun toHost SubsetOptionValue.NONE = NONE
+  | toHost (SubsetOptionValue.SOME value) = SOME value
+structure List = struct
+  open HostList
+  fun find predicate values = fromHost (HostList.find predicate values)
+  fun mapPartial transform values = HostList.mapPartial (fn x => toHost (transform x)) values
+end
+structure Option = struct
+  fun getOpt (value, fallback) = HostOption.getOpt (toHost value, fallback)
+  fun isSome value = HostOption.isSome (toHost value)
+  fun map transform value = fromHost (HostOption.map transform (toHost value))
+  fun mapPartial transform value = fromHost (HostOption.mapPartial (fn x => toHost (transform x)) (toHost value))
+  fun join value = fromHost (HostOption.join (HostOption.map toHost (toHost value)))
+  fun filter predicate value = fromHost (HostOption.filter predicate value)
+  fun compose (f, g) value = fromHost (HostOption.compose (f, fn x => toHost (g x)) value)
+  fun composePartial (f, g) value = fromHost (HostOption.composePartial
+    (fn x => toHost (f x), fn x => toHost (g x)) value)
+end
+open SubsetOptionValue
+
 (* Full-SML test harness: refs observe callback order; library sources remain SubsetML. *)
 fun assert (name, yes) = if yes then () else (print ("FAIL " ^ name ^ "\n"); OS.Process.exit OS.Process.failure)
 fun observed run f xs =

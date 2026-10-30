@@ -1,4 +1,6 @@
 /* @subsetml
+from "./subset_bool.sml" import * as SubsetBool;
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./syntax.sml" import * as Syntax;
 from "./subset_list.sml" import * as SubsetList;
 from "./compiler_text.sml" import * as CompilerText;
@@ -9,11 +11,15 @@ from "./elab.sml" import * as Elab;
 /* Shared target spelling and lexical binding resolution. Module keys are supplied by the
    canonical project planner. A binding has its own allocation even when source names repeat. */
 
+from "./subset_option_value.wm" import * as SubsetOptionValue;
 from "./syntax.wm" import * as Syntax;
 from "./subset_list.wm" import * as SubsetList;
 from "./compiler_text.wm" import * as CompilerText;
+from "./subset_bool.wm" import * as SubsetBool;
 from "./subset_char.wm" import * as SubsetChar;
 from "./elab.wm" import * as Elab;
+
+from "./subset_option_value.wm" import *;
 
 type Binding = | Binding<String, String, Bool>;
 type Scope = | Scope<List<Binding>, List<Binding>>;
@@ -107,7 +113,7 @@ let rec avoid = (used, hint) => {
 /* Filesystem stems are hints, not SML identifiers. Normalize separators and prefix
    empty/digit-leading names; the project allocator still resolves spelling collisions. */
 let moduleHint = (stem) => {
-  let pieces = CompilerText.fields(stem, (c) => { !SubsetChar.isAlphaNum(c) });
+  let pieces = CompilerText.fields(stem, (c) => { SubsetBool.not(SubsetChar.isAlphaNum(c)) });
   let capitalize = (text) => {
     match(CompilerText.characters(text)) {
       [] => { "" },
@@ -125,7 +131,7 @@ let moduleHint = (stem) => {
 
 let empty = Scope([], []);
 let plus = match {
-  (Scope(av, at), Scope(bv, bt)) => { Scope(List.append(bv, av), List.append(bt, at)) }
+  (Scope(av, at), Scope(bv, bt)) => { Scope(SubsetList.append(bv, av), SubsetList.append(bt, at)) }
 };
 let lookup = (bindings, name) => {
   SubsetList.find(
@@ -148,7 +154,7 @@ let fresh = match {
     Var(constructor)
   ) => {
     let unsafe = if (member(keywords, name)) { true } else {
-      if (if (space == "value") { !constructor } else { false }) { member(Elab.omittedConstructors, name) } else { false }
+      if (if (space == "value") { SubsetBool.not(constructor) } else { false }) { member(Elab.omittedConstructors, name) } else { false }
     };
     let target = if (unsafe) { prefix ++ space ++ CompilerText.natural(next) ++ "_" ++ name } else { name };
     let symbol = Symbol(next, owner, pos, space, name, target);
@@ -215,7 +221,7 @@ let diagnostic = match {
     };
     let rec replace = (text, prefix, replacement) => {
       if (begins(text, prefix)) {
-        List.append(replacement, replace(skip(text, prefix), prefix, replacement))
+        SubsetList.append(replacement, replace(skip(text, prefix), prefix, replacement))
       } else {
         match(text) {
           [] => { [] },
@@ -464,8 +470,8 @@ let moduleWithRuntime = (runtime, owner, imports, prog, initial) => {
         let (rest, more, moreAliases, next) = checkList(rest, next);
         (
           [p, ..rest],
-          List.append(guards, more),
-          List.append(aliases, moreAliases),
+          SubsetList.append(guards, more),
+          SubsetList.append(aliases, moreAliases),
           next
         )
       }
@@ -480,7 +486,7 @@ let moduleWithRuntime = (runtime, owner, imports, prog, initial) => {
   /* Continuations live outside branch binders. Their bodies are not duplicated, and
      constructing a thunk does not execute later branches or evaluate their pins. */
   let rec matchRules = (subject, rs, supply) => {
-    if (!SubsetList.exists(rs, (p, _) => { guarded(p) })) { (Syntax.ECase(subject, rs), supply) } else {
+    if (SubsetBool.not(SubsetList.exists(rs, (p, _) => { guarded(p) }))) { (Syntax.ECase(subject, rs), supply) } else {
       match(rs) {
         [] => { (Syntax.ECase(subject, []), supply) },
         [(Var(pat), Var(body)), ..rest] => {
@@ -650,7 +656,7 @@ let moduleWithRuntime = (runtime, owner, imports, prog, initial) => {
       Syntax.DVal(p, vs, plain, recs) => {
         let (plainPs, plainDelta, next) = patterns(env, SubsetList.map(plain, (pat, _) => { pat }), supply);
         let (recPs, recDelta, next) = patterns(env, SubsetList.map(recs, (pat, _) => { pat }), next);
-        let next = if (SubsetList.exists(List.append(plainPs, recPs), guarded)) {
+        let next = if (SubsetList.exists(SubsetList.append(plainPs, recPs), guarded)) {
           let Supply(prefix, count, symbols) = next;
           Supply(
             prefix,
@@ -858,7 +864,7 @@ let projectWithRuntime = (runtime, prefix, modules) => {
         let dependencies = if (runtimeUsed(next, name)) {
           match(runtime) {
             Some(runtimeName) => {
-              if (member(dependencies, runtimeName)) { dependencies } else { List.append(dependencies, [runtimeName]) }
+              if (member(dependencies, runtimeName)) { dependencies } else { SubsetList.append(dependencies, [runtimeName]) }
             },
             None => { dependencies }
           }

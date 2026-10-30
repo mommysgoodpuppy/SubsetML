@@ -65,7 +65,7 @@ let value = readA(A.value) + readB(B.value);
 
  # "basis/x.wm" names the generated Basis module subset_x.wm in the --basis directory.
  basis = root / 'basis'; basis.mkdir()
- subprocess.run([compiler, 'wm', basis, 'src/subset_result.sml'], check=True)
+ subprocess.run([compiler, 'wm', basis, 'src/subset_option_value.sml', 'src/subset_result.sml'], check=True)
  entry.write_text('from "basis/result.wm" import * as R;\nlet value = R.getOr(R.map(R.Ok(1), (x) => { x + 1 }), 0);\n')
  subprocess.run([compiler, 'sml-entry', out, '--basis', basis, entry], check=True)
  driver.write_text('val _ = if Entry.value = 2 then () else OS.Process.exit OS.Process.failure\n')

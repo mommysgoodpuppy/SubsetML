@@ -1,4 +1,6 @@
 /* @subsetml
+from "./subset_bool.sml" import * as SubsetBool;
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./syntax.sml" import * as Syntax;
 from "./wm_lexer.sml" import * as WmLexer;
 from "./subset_string.sml" import * as SubsetString;
@@ -18,6 +20,7 @@ from "./sml_option.sml" import * as SmlOption;
    the reverse profile (`%`, receiver pipes, JSON, FFI imports, ...) are reported as errors.
    Numeric and pinned match patterns survive internally until binding resolution lowers them. */
 
+from "./subset_option_value.wm" import * as SubsetOptionValue;
 from "./syntax.wm" import * as Syntax;
 from "./wm_lexer.wm" import * as WmLexer;
 from "./subset_string.wm" import * as SubsetString;
@@ -26,8 +29,11 @@ from "./compiler_text.wm" import * as CompilerText;
 from "./subset_char.wm" import * as SubsetChar;
 from "./wm_print.wm" import * as WmPrint;
 from "./backend_names.wm" import * as BackendNames;
+from "./subset_bool.wm" import * as SubsetBool;
 from "./subset_list.wm" import * as SubsetList;
 from "./sml_option.wm" import * as SmlOption;
+
+from "./subset_option_value.wm" import *;
 
 from "./syntax.wm" import *;
 from "./wm_lexer.wm" import *;
@@ -118,8 +124,8 @@ let decapitalize = (s) => {
 };
 
 let valueName = match {
-  ([], "None") => { ([], "NONE") },
-  ([], "Some") => { ([], "SOME") },
+  (Var(qs), "None") => { (qs, "NONE") },
+  (Var(qs), "Some") => { (qs, "SOME") },
   Var(id) => {
     match(SmlList.find((_, wm) => { wm == id })(WmPrint.numNames)) {
       Some(entry) => {
@@ -129,6 +135,11 @@ let valueName = match {
       None => { id }
     }
   }
+};
+
+let constructorName = (name) => {
+  let (_, target) = valueName([], name);
+  target
 };
 
 let tyConName = match {
@@ -290,7 +301,7 @@ let listItems = (item, ts) => {
 
 let rec parsePat = (inMatch, binds, ts) => {
   let child = (b) => (ts) => {
-    parseAnnotated(inMatch, if (b) { true } else { !inMatch }, ts)
+    parseAnnotated(inMatch, if (b) { true } else { SubsetBool.not(inMatch) }, ts)
   };
   match(peek(ts)) {
     (WKey("_"), _) => { Done(PWild, advance(ts)) },
@@ -485,9 +496,9 @@ let rec blockExp = (items, terminated) => {
   let (ds, rest) = decs(items, []);
   let (es, after) = exps(rest, []);
   let body = match(after, terminated) {
-    ([], true) => { List.append(es, [ETuple([])]) },
+    ([], true) => { SubsetList.append(es, [ETuple([])]) },
     ([], false) => { es },
-    (_, _) => { List.append(es, [blockExp(after, terminated)]) }
+    (_, _) => { SubsetList.append(es, [blockExp(after, terminated)]) }
   };
   match(ds, body) {
     ([], [single]) => { single },
@@ -591,7 +602,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
       TyVar(name) => { [name] },
       TyCon(args, _) => { SmlList.concat(SmlList.map(variablesIn)(args)) },
       TyTuple(args) => { SmlList.concat(SmlList.map(variablesIn)(args)) },
-      TyArrow(a, b) => { List.append(variablesIn(a), variablesIn(b)) },
+      TyArrow(a, b) => { SubsetList.append(variablesIn(a), variablesIn(b)) },
       TyRecord(fields) => {
         SmlList.concat(SmlList.map((_, t) => { variablesIn(t) })(fields))
       }
@@ -767,7 +778,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
         (WKey("}"), _) => { Done((SmlList.rev(acc), true), advance(ts)) },
         _ => {
           if (startsDecl(ts)) {
-            bind(parseDecl(ts))((ds) => (ts) => { items(List.append(SmlList.map(IDec)(ds), acc), ts) })
+            bind(parseDecl(ts))((ds) => (ts) => { items(SubsetList.append(SmlList.map(IDec)(ds), acc), ts) })
           } else {
             bind(parseExp(ts))((e) => (ts) => {
               if (isKey(";", ts)) { items([IExp(e), ..acc], advance(ts)) } else {
@@ -912,7 +923,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
     /* Direct self tail calls, not `bind` continuations, so a long application chain
        runs in constant stack on the Workman backend too. */
     let rec calls = (callee, insertion, ts) => {
-      if (if (isKey("(", ts)) { !lambdaAhead(ts) } else { false }) {
+      if (if (isKey("(", ts)) { SubsetBool.not(lambdaAhead(ts)) } else { false }) {
         match(delimited("(", parseExp, ",", ")", ts)) {
           Done(args, rest) => { calls(apply(callee, args), Some(callee, args), rest) },
           Fail(message, offset) => { Fail(message, offset) }
@@ -1032,7 +1043,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
         _ => { expected("a record field or spread", ts) }
       }
     };
-    if (!SubsetList.isEmpty(selections)) { Fail("expected a nominal record type name", p) } else {
+    if (SubsetBool.not(SubsetList.isEmpty(selections))) { Fail("expected a nominal record type name", p) } else {
       match(candidate) {
         None => {
           Fail(
@@ -1058,7 +1069,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
                   },
                   TyCon(args, (Var(qs), Var(n))) => {
                     let builtin = SmlList.exists((b) => { b == n })(["real", "string", "char", "bool", "unit", "list", "option"]);
-                    let qs = if (if (if (SubsetList.isEmpty(qs)) { !builtin } else { false }) { sourceOwner != owner } else { false }) { [sourceOwner] } else { qs };
+                    let qs = if (if (if (SubsetList.isEmpty(qs)) { SubsetBool.not(builtin) } else { false }) { sourceOwner != owner } else { false }) { [sourceOwner] } else { qs };
                     TyCon(SmlList.map(fieldType)(args), (qs, n))
                   },
                   TyTuple(types) => { TyTuple(SmlList.map(fieldType)(types)) },
@@ -1086,7 +1097,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
                     [] => { Some([]) },
                     [Spread(_), .._] => { None },
                     [Field(label, value), ..rest] => {
-                      if (!pure(value)) { None } else {
+                      if (SubsetBool.not(pure(value))) { None } else {
                         match(SmlList.find((l, _) => { l == label })(fields), direct(rest)) {
                           (Some(entry), Some(tail)) => {
                             let (_, t) = entry;
@@ -1143,7 +1154,9 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
               let rec finish = (remaining, index, bindings, values, explicit) => {
                 match(remaining) {
                   [] => {
-                    match(SmlList.find((label, _) => { !SmlList.exists((l, _) => { l == label })(values) })(fields)) {
+                    match(SmlList.find((label, _) => {
+                      SubsetBool.not(SmlList.exists((l, _) => { l == label })(values))
+                    })(fields)) {
                       Some(pair) => {
                         let (label, _) = pair;
                         Fail("missing record field " ++ label, p)
@@ -1343,7 +1356,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
                             )
                           ]
                         ),
-                        ..List.append(
+                        ..SubsetList.append(
                           match(fieldPrefix) {
                             None => { [] },
                             Some(prefix) => {
@@ -1429,15 +1442,15 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
     let constructor = (ts) => {
       match(peek(ts)) {
         (WName([c]), Var(cp)) => {
-          if (!isUpperName(c)) { expected("a constructor", ts) } else {
+          if (SubsetBool.not(isUpperName(c))) { expected("a constructor", ts) } else {
             if (isKey("<", advance(ts))) {
               bind(delimited("<", parseType, ",", ">", advance(ts)))((args) => (ts) => {
                 match(args) {
-                  [single] => { Done((cp, c, Some(single)), ts) },
-                  _ => { Done((cp, c, Some(TyTuple(args))), ts) }
+                  [single] => { Done((cp, constructorName(c), Some(single)), ts) },
+                  _ => { Done((cp, constructorName(c), Some(TyTuple(args))), ts) }
                 }
               })
-            } else { Done((cp, c, None), advance(ts)) }
+            } else { Done((cp, constructorName(c), None), advance(ts)) }
           }
         },
         _ => { expected("a constructor", ts) }
@@ -1480,7 +1493,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
     };
     bind(bindings(ts))((bs) => (ts) => {
       bind(expect(";", ts))((_) => (ts) => {
-        match(SmlList.all((_, _, alias, _) => { SmlOption.isSome(alias) })(bs), SmlList.all((_, _, alias, _) => { !SmlOption.isSome(alias) })(bs)) {
+        match(SmlList.all((_, _, alias, _) => { SmlOption.isSome(alias) })(bs), SmlList.all((_, _, alias, _) => { SubsetBool.not(SmlOption.isSome(alias)) })(bs)) {
           (true, _) => {
             Done(
               [
@@ -1552,7 +1565,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
         }
       };
       match(items([], [], ts)) {
-        Done((Var(decs), Var(exps)), _) => { Module(List.append(aliases, decs), exps, comments) },
+        Done((Var(decs), Var(exps)), _) => { Module(SubsetList.append(aliases, decs), exps, comments) },
         Fail(message, pos) => { ParseError(message, pos) }
       }
     }
@@ -1587,7 +1600,7 @@ let recordLayoutsTokens = (owner, src, lexed) => {
                   owner,
                   src,
                   Tokens(
-                    List.append(SubsetList.filter(tokens, (_, p) => { p <= stop }), [(WEOF, stop + (1: I32))]),
+                    SubsetList.append(SubsetList.filter(tokens, (_, p) => { p <= stop }), [(WEOF, stop + (1: I32))]),
                     []
                   )
                 )) {

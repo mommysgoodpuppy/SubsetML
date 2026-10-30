@@ -1,24 +1,28 @@
 # Sources in dependency order; also the input to the self-check.
 TEXT_HOST = src/subset_text_host.sml
 
-CUSTOM_BASIS = src/subset_bool.sml src/subset_result.sml src/subset_host.sml src/subset_option.sml src/subset_list.sml src/subset_list_pair.sml src/subset_order.sml src/subset_char.sml src/subset_bytes.sml src/subset_unicode.sml src/subset_utf8.sml src/subset_utf16.sml src/subset_string.sml src/subset_text.sml src/subset_natural.sml src/subset_source.sml src/subset_utf16_source.sml src/subset_sml_escape.sml src/subset_io.sml src/subset_process.sml
+CUSTOM_BASIS = src/subset_option_value.sml src/subset_bool.sml src/subset_result.sml src/subset_host.sml src/subset_option.sml src/subset_list.sml src/subset_list_pair.sml src/subset_order.sml src/subset_char.sml src/subset_bytes.sml src/subset_unicode.sml src/subset_utf8.sml src/subset_utf16.sml src/subset_string.sml src/subset_text.sml src/subset_natural.sml src/subset_source.sml src/subset_utf16_source.sml src/subset_sml_escape.sml src/subset_io.sml src/subset_process.sml
 
 SRCS = $(TEXT_HOST) $(CUSTOM_BASIS) src/sml_list.sml src/sml_list_pair.sml src/sml_option.sml src/syntax.sml src/compiler_text.sml src/lexer.sml src/parser.sml src/print.sml src/int_map.sml src/types.sml \
        src/unify.sml src/env.sml src/elab.sml src/basis.sml src/doc.sml \
        src/sml_print.sml src/wm_print.sml src/wm_lexer.sml \
        src/backend_names.sml src/wm_parse.sml src/normalize.sml src/translate.sml src/module_imports.sml src/module_project.sml src/wm_project.sml src/native_int.sml src/sml_target.sml src/main.sml
 
-bin/subsetml: $(SRCS) src/subsetml.mlb lib/num.sml lib/subset_text_host.sml lib/subset_host.sml
+bin/subsetml: $(SRCS) src/subsetml.mlb lib/subset_text_host.sml lib/subset_host.sml
 	mkdir -p bin
 	mlton -output $@ src/subsetml.mlb
 
 # The implementation must itself be SubsetML.
 selfcheck: bin/subsetml
-	bin/subsetml check $(SRCS)
+	bin/subsetml check-portable $$(python3 scripts/basis-sources.py)
+	python3 tests/basis/dependencies.py
+	python3 tests/portable_profile.py
+	bin/subsetml check-portable $(SRCS)
+	bin/subsetml check-portable src/main.sml
 
 # Run the generated compiler through its explicit entry-file import graph.
 wm-selfcheck: wm
-	wm run src/main.wm -- check src/main.sml
+	wm run src/main.wm -- check-portable src/main.sml
 
 test: bin/subsetml selfcheck
 	sh tests/run.sh
@@ -72,9 +76,10 @@ bootstrap-check: bin/subsetml
 	bin/subsetml wm build/bootstrap/wm $(SRCS)
 	bin/subsetml sml build/bootstrap/sml build/bootstrap/wm/*.wm
 	cp src/subsetml.mlb build/bootstrap/sml/
-	cp lib/num.sml lib/subset_text_host.sml lib/subset_host.sml build/bootstrap/lib/
+	cp lib/subset_text_host.sml lib/subset_host.sml build/bootstrap/lib/
 	mlton -output build/bootstrap/subsetml build/bootstrap/sml/subsetml.mlb
 	build/bootstrap/subsetml roundtrip $(SRCS)
+	build/bootstrap/subsetml check-portable src/main.sml
 
 integer-check: bin/subsetml
 	sh tests/integer.sh

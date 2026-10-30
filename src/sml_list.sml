@@ -1,7 +1,12 @@
+(* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
+*)
+
 (* Portable list algorithms for the custom SubsetML Basis.
    Current signatures follow their SML origins; API migration is pending (docs/basis.md).
    This module needs no host List functions or numeric primitives. *)
 structure SmlList = struct
+  open SubsetOptionValue
 
   val null = fn [] => true | x :: xs => false
 

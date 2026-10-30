@@ -1,4 +1,5 @@
 /* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./subset_io.sml" import * as SubsetIo;
 from "./compiler_text.sml" import * as CompilerText;
 from "./subset_result.sml" import * as SubsetResult;
@@ -25,6 +26,7 @@ from "./sml_target.sml" import * as SmlTarget;
 
 /* Command-line driver.
 
+     subsetml check-portable ENTRY.sml  check without the SML Basis compatibility environment
      subsetml check ENTRY.sml       check the entry file's explicit import graph
      subsetml check FILE1 FILE2 ... legacy sequential source-list checking
      subsetml parse FILE...         print the abstract syntax of each file
@@ -36,6 +38,7 @@ from "./sml_target.sml" import * as SmlTarget;
      subsetml sml OUTDIR --panic-runtime R.wm FILE.wm... select the native panic provider
      subsetml roundtrip FILE...     check that SML -> Workman -> SML preserves each file's syntax */
 
+from "./subset_option_value.wm" import * as SubsetOptionValue;
 from "./subset_io.wm" import * as SubsetIo;
 from "./compiler_text.wm" import * as CompilerText;
 from "./subset_result.wm" import * as SubsetResult;
@@ -54,10 +57,12 @@ from "./unify.wm" import * as Unify;
 from "./module_project.wm" import * as ModuleProject;
 from "./print.wm" import * as Print;
 from "./normalize.wm" import * as Normalize;
-from "./basis.wm" import * as Basis;
 from "./elab.wm" import * as Elab;
+from "./basis.wm" import * as Basis;
 from "./native_int.wm" import * as NativeInt;
 from "./sml_target.wm" import * as SmlTarget;
+
+from "./subset_option_value.wm" import *;
 
 let eprint = (text) => {
   match(SubsetIo.writeStderr(CompilerText.characters(text))) {
@@ -156,7 +161,7 @@ let sourceErrorText = match {
 
 let usage = () => {
   (
-    eprint("usage: subsetml (check | parse | fmt | roundtrip) FILE...\n       subsetml native OUTDIR FILE.sml...\n       subsetml sml-target (mlton | mlworks) OUTDIR [--adapter CHECKER.sml NATIVE.sml]... FILE.sml...\n       subsetml wm OUTDIR FILE...\n       subsetml sml OUTDIR [--panic-runtime R.wm] FILE.wm...\n       subsetml sml-entry OUTDIR [--basis DIR] [--panic-runtime R.wm] [--native-adapter CHECKER.wm NATIVE.sml STRUCTURE]... ENTRY.wm\n");
+    eprint("usage: subsetml (check-portable | check | parse | fmt | roundtrip) FILE...\n       subsetml native OUTDIR FILE.sml...\n       subsetml sml-target (mlton | mlworks) OUTDIR [--adapter CHECKER.sml NATIVE.sml]... FILE.sml...\n       subsetml wm OUTDIR FILE...\n       subsetml sml OUTDIR [--panic-runtime R.wm] FILE.wm...\n       subsetml sml-entry OUTDIR [--basis DIR] [--panic-runtime R.wm] [--native-adapter CHECKER.wm NATIVE.sml STRUCTURE]... ENTRY.wm\n");
     SubsetProcess.exit(false)
   )
 };
@@ -359,7 +364,9 @@ let fromWmLoaded = (outDir, basis, runtimePath, entryPath, adapterSpecs, sources
                                       Some(entry) => {
                                         SubsetResult.map(
                                           WmProject.mlb(units, ordered, renamed, entry, adapters),
-                                          (text) => { List.append(results, [(outDir ++ "/project.mlb", text)]) }
+                                          (text) => {
+                                            SubsetList.append(results, [(outDir ++ "/project.mlb", text)])
+                                          }
                                         )
                                       }
                                     }
@@ -454,7 +461,7 @@ let roundTrip = (parsed) => {
   let show = (prog) => {
     let (_, phrases) = Translate.module(prog);
     let (ds, es) = Translate.parts(phrases);
-    List.append(
+    SubsetList.append(
       SmlList.map(Print.dec)(Normalize.decs(ds)),
       SmlList.map((e) => { Print.exp(Normalize.exp(e)) })(es)
     )
@@ -479,8 +486,8 @@ let roundTrip = (parsed) => {
 
 /* Elaborates the files in order, each extending the environment, and reports the first
    error. */
-let typeCheck = (parsed) => {
-  match(Basis.initial) {
+let typeCheckWith = (initial, parsed) => {
+  match(initial) {
     Unify.Err(msg, _) => {
       (eprint("internal error in the basis: " ++ msg ++ "\n"); false)
     },
@@ -499,9 +506,11 @@ let typeCheck = (parsed) => {
   }
 };
 
+let typeCheck = (parsed) => { typeCheckWith(Basis.initial, parsed) };
+
 /* An entry file has only its explicit import environment; legacy source lists remain
    available for bootstrap checking and ordinary SML compilation-unit order. */
-let checkProject = (path) => {
+let checkProjectWith = (initial, path) => {
   let source = (file) => {
     SubsetResult.map(
       load(file),
@@ -513,7 +522,7 @@ let checkProject = (path) => {
   let checked = SubsetResult.andThen(
     ModuleProject.discover(path, source),
     (graph) => {
-      match(Basis.initial) {
+      match(initial) {
         Unify.Err(message, _) => {
           SubsetResult.Err(ModuleProject.CheckFailure(path, "", "internal error in the basis: " ++ message, (0: I32)))
         },
@@ -539,7 +548,11 @@ let main = () => {
     SubsetResult.Err(error) => { fatal(SubsetIo.errorText(error)) }
   };
   match(args) {
-    ["check", file] => { checkProject(file) },
+    ["check-portable", file] => { checkProjectWith(Basis.portableInitial, file) },
+    ["check-portable", ..files] => {
+      withParsed(files, (parsed) => { typeCheckWith(Basis.portableInitial, parsed) })
+    },
+    ["check", file] => { checkProjectWith(Basis.initial, file) },
     ["check", ..files] => { withParsed(files, typeCheck) },
     ["parse-only", ..files] => { withParsed(files, (_) => { true }) },
     ["parse", ..files] => {

@@ -1,4 +1,6 @@
 (* @subsetml
+from "./subset_bool.sml" import * as SubsetBool;
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./types.sml" import * as Types;
 from "./syntax.sml" import * as Syntax;
 from "./int_map.sml" import * as IntMap;
@@ -17,6 +19,7 @@ from "./subset_list.sml" import * as SubsetList;
    variable's level is the outermost declaration it escapes to. At the end of the declaration,
    variables still above level n are free in no enclosing context and may be generalized. *)
 structure Unify = struct
+  open SubsetOptionValue
 
   open Types
 
@@ -105,7 +108,7 @@ structure Unify = struct
     let
       val rec go = fn (t, acc) =>
         case prune (st, t) of
-          TVar v => if SmlList.exists (fn w => (w = v)) acc then acc else acc @ [v]
+          TVar v => if SmlList.exists (fn w => (w = v)) acc then acc else SubsetList.append (acc, [v])
         | TCon (_, ts) => SmlList.foldl go acc ts
         | TArrow (a, b) => go (b, go (a, acc))
         | TRecord fields => SmlList.foldl (fn ((_, a), acc) => go (a, acc)) acc fields
@@ -124,8 +127,8 @@ structure Unify = struct
   val showAll = fn (st, ts) =>
     let
       val ts' = SmlList.map (fn t => resolve (st, t)) ts
-      val vars = SmlList.foldl (fn (t, acc) => acc @ SmlList.filter (fn v => not (SmlList.exists (fn w => (w = v)) acc))
-                                                               (freeVars (st, t))) [] ts'
+      val vars = SmlList.foldl (fn (t, acc) => SubsetList.append (acc,
+        SmlList.filter (fn v => SubsetBool.not (SmlList.exists (fn w => (w = v)) acc)) (freeVars (st, t)))) [] ts'
       val rec indexOf = fn
           (_, [], _) => 0
         | (v, w :: rest, i) => if (v = w) then i else indexOf (v, rest, i + 1)
@@ -133,7 +136,7 @@ structure Unify = struct
       val rec rigids = fn
           TRigid name => [name]
         | TCon (_, ts) => SmlList.concat (SmlList.map rigids ts)
-        | TArrow (a, b) => rigids a @ rigids b
+        | TArrow (a, b) => SubsetList.append (rigids a, rigids b)
         | TRecord fields => SmlList.concat (SmlList.map (fn (_, a) => rigids a) fields)
         | _ => []
       val taken = SmlList.concat (SmlList.map rigids ts')
@@ -278,7 +281,7 @@ structure Unify = struct
   val instantiate = fn (st, level, (kinds, body)) =>
     let
       val (args, st') =
-        SmlList.foldl (fn (k, (acc, st)) => let val (t, st') = fresh (st, k, level) in (acc @ [t], st') end)
+        SmlList.foldl (fn (k, (acc, st)) => let val (t, st') = fresh (st, k, level) in (SubsetList.append (acc, [t]), st') end)
           ([], st) kinds
     in
       (substGen (args, body), st')
@@ -311,7 +314,7 @@ structure Unify = struct
         | TRecord fields => TRecord (SmlList.map (fn (l, a) => (l, go a)) fields)
         | TGen _ => t
     in
-      (kinds @ SmlList.map (fn _ => KPlain) rigid, go t')
+      (SubsetList.append (kinds, SmlList.map (fn _ => KPlain) rigid), go t')
     end
 
 end

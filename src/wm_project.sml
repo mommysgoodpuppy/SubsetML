@@ -1,4 +1,6 @@
 (* @subsetml
+from "./subset_bool.sml" import * as SubsetBool;
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./module_project.sml" import * as ModuleProject;
 from "./syntax.sml" import * as Syntax;
 from "./wm_lexer.sml" import * as WmLexer;
@@ -20,6 +22,8 @@ from "./lexer.sml" import * as Lexer;
 (* Source-list reverse translation shares the source loader's canonical identities.
    Backend names are chosen separately; they are never filesystem identities. *)
 structure WmProject = struct
+  open SubsetOptionValue
+
   datatype input = Input of ModuleProject.resolved * string * string
   datatype projectUnit = Unit of input * string * string
   datatype edge = Edge of string * Syntax.pos * string * ModuleProject.moduleId
@@ -72,7 +76,7 @@ structure WmProject = struct
               | (WmLexer.WKey ";", _) :: tail => SOME tail | _ => NONE
           in case remaining of
             NONE => failure (path, src, "reverse discovery requires header namespace imports", pos)
-          | SOME tail => if not (validSpecifier specifier) then
+          | SOME tail => if SubsetBool.not (validSpecifier specifier) then
               failure (path, src, "imports require explicit relative .wm paths or basis/ modules in the local source profile", pos)
             else SubsetResult.map (scan tail, fn paths => (specifier, pos) :: paths) end
       | (WmLexer.WKey "from", pos) :: _ =>
@@ -164,7 +168,7 @@ structure WmProject = struct
     let
       val Unit (Input (resolved, path, src), _, _) = unit
       val dependency = fn (specifier, pos) =>
-        if not (validSpecifier specifier) then
+        if SubsetBool.not (validSpecifier specifier) then
           failure (path, src, "imports require explicit relative .wm paths or basis/ modules in the local source profile", pos)
         else case resolve (basis, resolved, specifier) of
           SubsetResult.Err error => failure (path, src, "cannot resolve import \"" ^ specifier ^ "\": " ^ SubsetIo.errorText error, pos)
@@ -179,7 +183,7 @@ structure WmProject = struct
           (WmLexer.WKey "import", _) :: (WmLexer.WKey "*", _) ::
           (WmLexer.WKey "as", _) :: (WmLexer.WName [alias], _) ::
           (WmLexer.WKey ";", _) :: rest =>
-            if not (CompilerText.firstIs (alias, SubsetChar.isUpper)) then
+            if SubsetBool.not (CompilerText.firstIs (alias, SubsetChar.isUpper)) then
               failure (path, src, "namespace aliases must start with an uppercase letter in the initial translation profile", pos)
             else (if SubsetList.exists (aliases, fn (a, _) => a = alias) then
               failure (path, src, "duplicate namespace alias " ^ alias, pos)
@@ -206,7 +210,7 @@ structure WmProject = struct
                 | (WmLexer.WName (head :: tail), pos) :: rest =>
                     (case SubsetList.find (aliases, fn (alias, _) => alias = head) of
                        NONE =>
-                         if not (SubsetList.isEmpty tail) andalso SubsetList.exists (units, fn u => name u = head) then
+                         if SubsetBool.not (SubsetList.isEmpty tail) andalso SubsetList.exists (units, fn u => name u = head) then
                            failure (path, src, "namespace " ^ head ^ " is not explicitly imported under that name", pos)
                          else rewrite (rest, (WmLexer.WName (head :: tail), pos) :: acc)
                      | SOME (_, target) =>
@@ -214,7 +218,7 @@ structure WmProject = struct
                          else rewrite (rest, (WmLexer.WName (target :: tail), pos) :: acc))
                 | token :: rest => rewrite (rest, token :: acc)
             in SubsetResult.map (rewrite (tokens, []), fn body =>
-              (SubsetList.reverse edges, SubsetList.reverse opens @ body)) end
+              (SubsetList.reverse edges, SubsetList.append (SubsetList.reverse opens, body))) end
     in
       case WmLexer.lex src of
         WmLexer.LexError (message, pos) => failure (path, src, message, pos)
@@ -237,7 +241,7 @@ structure WmProject = struct
               | Edge (specifier, pos, _, target) :: rest =>
                   if SubsetList.exists (unit :: active, fn u => ModuleProject.same (identity u, target)) then
                     failure (pathOf unit, textOf unit, "import cycle: " ^
-                      SubsetString.concatWith (SubsetList.map (SubsetList.reverse (unit :: active), pathOf) @ [specifier], " -> "), pos)
+                      SubsetString.concatWith (SubsetList.append (SubsetList.map (SubsetList.reverse (unit :: active), pathOf), [specifier]), " -> "), pos)
                   else (case SubsetList.find (sources, fn s => ModuleProject.same (identity (sourceUnit s), target)) of
                     NONE => failure (pathOf unit, textOf unit, "internal error: missing resolved dependency", pos)
                   | SOME child => SubsetResult.andThen (visit (child, unit :: active, completed), fn done => walk (rest, done)))
@@ -271,12 +275,12 @@ structure WmProject = struct
     let val rec resolve = fn (remaining, seen) => case remaining of
         [] => SubsetResult.Ok (SubsetList.reverse seen)
       | (checker, native, exported) :: rest =>
-          if not (structureIdentifier exported) then
+          if SubsetBool.not (structureIdentifier exported) then
             failure (checker, "", "native adapter export must be an SML structure identifier", 0)
           else SubsetResult.andThen (case ModuleProject.identify checker of
                 SubsetResult.Err error => failure (checker, "", SubsetIo.errorText error, 0)
               | SubsetResult.Ok (ModuleProject.Resolved (id, _)) =>
-                  if not (SubsetList.exists (units, fn unit => ModuleProject.same (identity unit, id))) then
+                  if SubsetBool.not (SubsetList.exists (units, fn unit => ModuleProject.same (identity unit, id))) then
                     failure (checker, "", "native adapter checker is not in the entry graph", 0)
                   else (if SubsetList.exists (seen, fn Adapter (key, _, _) => ModuleProject.same (id, key)) then
                     failure (checker, "", "duplicate native adapter selection", 0)
@@ -315,7 +319,7 @@ structure WmProject = struct
                           let val rec aliases = fn edges => case edges of
                               [] => SubsetResult.Ok ("", "")
                             | Edge (_, pos, alias, target) :: rest =>
-                                if not (structureIdentifier alias) then
+                                if SubsetBool.not (structureIdentifier alias) then
                                   failure (pathOf unit, textOf unit, "native adapter import alias must be an SML structure identifier", pos)
                                 else (case SubsetList.find (units, fn child => ModuleProject.same (identity child, target)) of
                                   NONE => failure (pathOf unit, "", "missing native adapter dependency", 0)

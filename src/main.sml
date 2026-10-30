@@ -1,4 +1,5 @@
 (* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./subset_io.sml" import * as SubsetIo;
 from "./compiler_text.sml" import * as CompilerText;
 from "./subset_result.sml" import * as SubsetResult;
@@ -25,6 +26,7 @@ from "./sml_target.sml" import * as SmlTarget;
 
 (* Command-line driver.
 
+     subsetml check-portable ENTRY.sml  check without the SML Basis compatibility environment
      subsetml check ENTRY.sml       check the entry file's explicit import graph
      subsetml check FILE1 FILE2 ... legacy sequential source-list checking
      subsetml parse FILE...         print the abstract syntax of each file
@@ -36,6 +38,7 @@ from "./sml_target.sml" import * as SmlTarget;
      subsetml sml OUTDIR --panic-runtime R.wm FILE.wm... select the native panic provider
      subsetml roundtrip FILE...     check that SML -> Workman -> SML preserves each file's syntax *)
 structure Main = struct
+  open SubsetOptionValue
 
   val eprint = fn text =>
     case SubsetIo.writeStderr (CompilerText.characters text) of
@@ -115,7 +118,7 @@ structure Main = struct
     | ParseFailure (path, src, msg, pos) => errorLineKind (path, src, "parse error", msg, pos)
 
   val usage = fn () =>
-    (eprint "usage: subsetml (check | parse | fmt | roundtrip) FILE...\n       subsetml native OUTDIR FILE.sml...\n       subsetml sml-target (mlton | mlworks) OUTDIR [--adapter CHECKER.sml NATIVE.sml]... FILE.sml...\n       subsetml wm OUTDIR FILE...\n       subsetml sml OUTDIR [--panic-runtime R.wm] FILE.wm...\n       subsetml sml-entry OUTDIR [--basis DIR] [--panic-runtime R.wm] [--native-adapter CHECKER.wm NATIVE.sml STRUCTURE]... ENTRY.wm\n";
+    (eprint "usage: subsetml (check-portable | check | parse | fmt | roundtrip) FILE...\n       subsetml native OUTDIR FILE.sml...\n       subsetml sml-target (mlton | mlworks) OUTDIR [--adapter CHECKER.sml NATIVE.sml]... FILE.sml...\n       subsetml wm OUTDIR FILE...\n       subsetml sml OUTDIR [--panic-runtime R.wm] FILE.wm...\n       subsetml sml-entry OUTDIR [--basis DIR] [--panic-runtime R.wm] [--native-adapter CHECKER.wm NATIVE.sml STRUCTURE]... ENTRY.wm\n";
      SubsetProcess.exit false)
 
   val finish = fn ok => SubsetProcess.exit ok
@@ -219,7 +222,7 @@ structure Main = struct
                             (case SubsetList.find (units, fn unit => ModuleProject.same (WmProject.identity unit, id)) of
                               NONE => WmProject.failure (path, "", "missing build entry", 0)
                             | SOME entry => SubsetResult.map (WmProject.mlb (units, ordered, renamed, entry, adapters),
-                                fn text => results @ [(outDir ^ "/project.mlb", text)])))) end)) end)) end
+                                fn text => SubsetList.append (results, [(outDir ^ "/project.mlb", text)]))))) end)) end)) end
     in
       case SubsetResult.andThen (WmProject.plan sources, fn units =>
         SubsetResult.andThen (WmProject.adapters (units, adapterSpecs), fn adapters => translate (units, adapters))) of
@@ -255,7 +258,7 @@ structure Main = struct
       val show = fn prog =>
         let val (_, phrases) = Translate.module prog
             val (ds, es) = Translate.parts phrases
-        in SmlList.map Print.dec (Normalize.decs ds) @ SmlList.map (fn e => Print.exp (Normalize.exp e)) es end
+        in SubsetList.append (SmlList.map Print.dec (Normalize.decs ds), SmlList.map (fn e => Print.exp (Normalize.exp e)) es) end
       val check = fn (path, _, prog, _) =>
         case SmlList.find (fn (p, _, _, _) => p = path) modules of
           NONE => false
@@ -271,8 +274,8 @@ structure Main = struct
 
   (* Elaborates the files in order, each extending the environment, and reports the first
      error. *)
-  val typeCheck = fn parsed =>
-    case Basis.initial of
+  val typeCheckWith = fn (initial, parsed) =>
+    case initial of
       Unify.Err (msg, _) => (eprint ("internal error in the basis: " ^ msg ^ "\n"); false)
     | Unify.Ok (basis, _) =>
         let
@@ -286,14 +289,16 @@ structure Main = struct
           go (basis, parsed, Unify.initial)
         end
 
+  val typeCheck = fn parsed => typeCheckWith (Basis.initial, parsed)
+
   (* An entry file has only its explicit import environment; legacy source lists remain
      available for bootstrap checking and ordinary SML compilation-unit order. *)
-  val checkProject = fn path =>
+  val checkProjectWith = fn (initial, path) =>
     let
       val source = fn file => SubsetResult.map (load file,
         fn Parsed (path, src, prog, comments) => ModuleProject.Source (path, src, prog, comments))
       val checked = SubsetResult.andThen (ModuleProject.discover (path, source), fn graph =>
-        case Basis.initial of
+        case initial of
           Unify.Err (message, _) => SubsetResult.Err
             (ModuleProject.CheckFailure (path, "", "internal error in the basis: " ^ message, 0))
         | Unify.Ok (basis, _) => ModuleProject.check (graph, basis))
@@ -314,7 +319,9 @@ structure Main = struct
         SubsetResult.Ok values => values
       | SubsetResult.Err error => fatal (SubsetIo.errorText error)
     in case args of
-      "check" :: [file] => checkProject file
+      "check-portable" :: [file] => checkProjectWith (Basis.portableInitial, file)
+    | "check-portable" :: files => withParsed (files, fn parsed => typeCheckWith (Basis.portableInitial, parsed))
+    | "check" :: [file] => checkProjectWith (Basis.initial, file)
     | "check" :: files => withParsed (files, typeCheck)
     | "parse-only" :: files => withParsed (files, fn _ => true)
     | "parse" :: files =>

@@ -4,6 +4,14 @@ Status: draft 0.3 (2026-10-17); signed 32-bit integer expansion.
 
 ## 1. Principle
 
+Portable authored source uses the SubsetML Basis rather than the SML Basis
+Library. `check-portable` enforces that library-availability policy through a
+restricted initial environment; its allowed primitive operations are audited in
+[runtime-dependencies.md](runtime-dependencies.md). The legacy `check` profile
+retains SML-shaped bootstrap compatibility bindings. The distinction is library
+availability, not a change to the semantics of accepted language constructs.
+
+
 SubsetML's language is Standard ML as given by *The Definition of Standard ML (Revised)*
 (1997), with parts removed. Its syntax and language semantics make no additions or changes.
 This document specifies the language. The separately specified

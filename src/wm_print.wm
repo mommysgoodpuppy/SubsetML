@@ -1,4 +1,6 @@
 /* @subsetml
+from "./subset_bool.sml" import * as SubsetBool;
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./syntax.sml" import * as Syntax;
 from "./doc.sml" import * as Doc;
 from "./compiler_text.sml" import * as CompilerText;
@@ -18,6 +20,7 @@ from "./subset_process.sml" import * as SubsetProcess;
    Translate rejects unsupported declaration forms before printing; no embedded SML
    declarations are emitted. Expression compatibility forms retain their own mappings. */
 
+from "./subset_option_value.wm" import * as SubsetOptionValue;
 from "./syntax.wm" import * as Syntax;
 from "./doc.wm" import * as Doc;
 from "./compiler_text.wm" import * as CompilerText;
@@ -25,9 +28,12 @@ from "./subset_char.wm" import * as SubsetChar;
 from "./subset_string.wm" import * as SubsetString;
 from "./subset_list.wm" import * as SubsetList;
 from "./sml_list.wm" import * as SmlList;
+from "./subset_bool.wm" import * as SubsetBool;
 from "./subset_result.wm" import * as SubsetResult;
 from "./parser.wm" import * as Parser;
 from "./subset_process.wm" import * as SubsetProcess;
+
+from "./subset_option_value.wm" import *;
 
 from "./syntax.wm" import *;
 from "./doc.wm" import *;
@@ -66,23 +72,21 @@ let tyConName = match {
 };
 
 // Numeric adapters retain SML argument order. Keep this table shared with the reader.
-let numNames = List.append(
+let numNames = SubsetList.concat([
   SmlList.concat(SmlList.map((q, names) => { SmlList.map((x) => { ((["Num", q], x), ([q], x)) })(names) })([
     ("String", ["size", "sub", "substring", "extract"]),
     ("List", ["length", "nth", "take", "drop", "tabulate"]),
     ("Char", ["ord", "chr"]),
     ("CharVector", ["tabulate"])
   ])),
-  List.append(
-    SmlList.map((x) => { ((["Num"], x), (["Number"], x)) })(["div", "mod", "toString", "fromString"]),
-    SmlList.map((x) => { (([], x), (["I32"], x)) })(["div", "mod"])
-  )
-);
+  SmlList.map((x) => { ((["Num"], x), (["Number"], x)) })(["div", "mod", "toString", "fromString"]),
+  SmlList.map((x) => { (([], x), (["I32"], x)) })(["div", "mod"])
+]);
 
 // Basis constructors spelled differently in Workman.
 let valueName = match {
-  ([], "NONE") => { "None" },
-  ([], "SOME") => { "Some" },
+  (Var(qs), "NONE") => { dotted(qs, "None") },
+  (Var(qs), "SOME") => { dotted(qs, "Some") },
   Var(id) => {
     match(SmlList.find((sml, _) => { sml == id })(numNames)) {
       Some(entry) => {
@@ -97,7 +101,7 @@ let valueName = match {
 /* Workman tells constructors from variables by case; SubsetML code follows the same
    convention, with the Definition's lowercase constructors as exceptions. */
 let isConName = (qs, s) => {
-  if (if (if (if (!SmlList.null(qs)) { true } else { startsUpper(s) }) { true } else { s == "true" }) { true } else { s == "false" }) { true } else { s == "nil" }
+  if (if (if (if (SubsetBool.not(SmlList.null(qs))) { true } else { startsUpper(s) }) { true } else { s == "true" }) { true } else { s == "false" }) { true } else { s == "nil" }
 };
 
 // `'a` is written `a`: Workman type variables are lowercase type names.
@@ -214,7 +218,9 @@ let typeParams = match {
    written `Var(x)`. */
 
 let rec pat = (inMatch, binds, p) => {
-  let child = (b, q) => { pat(inMatch, if (b) { true } else { !inMatch }, q) };
+  let child = (b, q) => {
+    pat(inMatch, if (b) { true } else { SubsetBool.not(inMatch) }, q)
+  };
   match(p) {
     PWild => { text("_") },
     PScon(pos, c) => { atom(pos, scon(c)) },
@@ -233,7 +239,7 @@ let rec pat = (inMatch, binds, p) => {
     PApp(pos, ([], "::"), PTuple([h, t])) => {
       let rec spine = match {
         (PApp(_, ([], "::"), PTuple([h, t])), Var(acc)) => { spine(t, [h, ..acc]) },
-        (PList(items), Var(acc)) => { (List.append(SmlList.rev(acc), items), None) },
+        (PList(items), Var(acc)) => { (SubsetList.append(SmlList.rev(acc), items), None) },
         (PId(_, ([], "nil")), Var(acc)) => { (SmlList.rev(acc), None) },
         (Var(tail), Var(acc)) => { (SmlList.rev(acc), Some(tail)) }
       };
@@ -243,7 +249,7 @@ let rec pat = (inMatch, binds, p) => {
         None => { [] },
         Some(q) => { [cat(text(".."), child(true, q))] }
       };
-      cat(atom(pos, ""), group("[", ",", "]", List.append(itemDocs, tailDocs)))
+      cat(atom(pos, ""), group("[", ",", "]", SubsetList.append(itemDocs, tailDocs)))
     },
     PApp(pos, id, PTuple([args, ..more])) => {
       cats([
@@ -257,7 +263,7 @@ let rec pat = (inMatch, binds, p) => {
     PRecord(pos, fields) => {
       let field = match {
         (Var(l), PId(_, ([], Var(x)))) => {
-          if (if (x == l) { !isConName([], x) } else { false }) { text(l) } else {
+          if (if (x == l) { SubsetBool.not(isConName([], x)) } else { false }) { text(l) } else {
             cats([text(l ++ " = "), child(false, PId((0: I32), ([], x)))])
           }
         },
@@ -274,7 +280,7 @@ let rec pat = (inMatch, binds, p) => {
 // Patterns Workman accepts as lambda parameters: no constructors or constants.
 let rec paramOk = match {
   PWild => { true },
-  PId(_, id) => { !isConName(id) },
+  PId(_, id) => { SubsetBool.not(isConName(id)) },
   PTuple(ps) => { SmlList.all(paramOk)(ps) },
   PList(ps) => { SmlList.all(paramOk)(ps) },
   PRecord(_, fields) => { SmlList.all((_, q) => { paramOk(q) })(fields) },
@@ -323,7 +329,7 @@ let parenAt = (need: I32, (level, d)) => {
 
 // An expression usable as `e.lab`: a variable or a chain of such selections.
 let rec selectable = match {
-  EId(_, id) => { !isConName(id) },
+  EId(_, id) => { SubsetBool.not(isConName(id)) },
   EApp(ESelect(_, l), e) => { if (startsAlpha(l)) { selectable(e) } else { false } },
   _ => { false }
 };
@@ -380,7 +386,7 @@ let rec expL = match {
   EApp(EId(p, ([], "::")), ETuple([h, t])) => {
     let rec spine = match {
       (EApp(EId(_, ([], "::")), ETuple([h, t])), Var(acc)) => { spine(t, [h, ..acc]) },
-      (EList(items), Var(acc)) => { (List.append(SmlList.rev(acc), items), None) },
+      (EList(items), Var(acc)) => { (SubsetList.append(SmlList.rev(acc), items), None) },
       (EId(_, ([], "nil")), Var(acc)) => { (SmlList.rev(acc), None) },
       (Var(tail), Var(acc)) => { (SmlList.rev(acc), Some(tail)) }
     };
@@ -393,7 +399,7 @@ let rec expL = match {
       (10: I32),
       cat(
         atom(p, ""),
-        group("[", ",", "]", List.append(SmlList.map(exp)(items), tailDocs))
+        group("[", ",", "]", SubsetList.append(SmlList.map(exp)(items), tailDocs))
       )
     )
   },
@@ -555,7 +561,7 @@ and block = (ds, es) => {
       ]
     }
   };
-  let items = List.append(SmlList.map((d) => { dec([], d) })(ds), exps((0: I32), es));
+  let items = SubsetList.append(SmlList.map((d) => { dec([], d) })(ds), exps((0: I32), es));
   match(items) {
     [single] => {
       if (if (SmlList.null(ds)) {
@@ -626,11 +632,18 @@ and dec = (structures, d) => {
     },
     DDatatype(p, binds) => {
       let con = match {
-        (Var(cp), Var(c), None) => { atom(cp, c) },
+        (Var(cp), Var(c), None) => { atom(cp, valueName([], c)) },
         (Var(cp), Var(c), Some(TyTuple(ts))) => {
-          cats([atom(cp, c), text("<"), join(", ", SmlList.map(ty)(ts)), text(">")])
+          cats([
+            atom(cp, valueName([], c)),
+            text("<"),
+            join(", ", SmlList.map(ty)(ts)),
+            text(">")
+          ])
         },
-        (Var(cp), Var(c), Some(t)) => { cats([atom(cp, c), text("<"), ty(t), text(">")]) }
+        (Var(cp), Var(c), Some(t)) => {
+          cats([atom(cp, valueName([], c)), text("<"), ty(t), text(">")])
+        }
       };
       let bind = (vs, tycon, cons) => {
         let head = text(capitalize(tycon) ++ typeParams(vs) ++ " =");
@@ -669,7 +682,7 @@ and fileName = (name) => {
   let rec go = match {
     ([], _) => { [] },
     ([c, ..rest], Var(first)) => {
-      if (if (SubsetChar.isUpper(c)) { !first } else { false }) { ['_', SubsetChar.toLower(c), ..go(rest, false)] } else { [SubsetChar.toLower(c), ..go(rest, false)] }
+      if (if (SubsetChar.isUpper(c)) { SubsetBool.not(first) } else { false }) { ['_', SubsetChar.toLower(c), ..go(rest, false)] } else { [SubsetChar.toLower(c), ..go(rest, false)] }
     }
   };
   CompilerText.stringOf(go(CompilerText.characters(name), true)) ++ ".wm"

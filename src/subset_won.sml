@@ -1,4 +1,5 @@
 (* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./subset_won_value.sml" import * as SubsetWonValue;
 from "./subset_won_parser.sml" import * as SubsetWonParser;
 from "./subset_won_syntax.sml" import * as SubsetWonSyntax;
@@ -12,6 +13,7 @@ from "./subset_text.sml" import * as SubsetText;
 (* Public portable WON encoding and decoding API. *)
 
 structure SubsetWon = struct
+  open SubsetOptionValue
 
   type value = SubsetWonValue.value
   type error = SubsetWonValue.error

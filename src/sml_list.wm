@@ -1,6 +1,14 @@
+/* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
+*/
+
 /* Portable list algorithms for the custom SubsetML Basis.
    Current signatures follow their SML origins; API migration is pending (docs/basis.md).
    This module needs no host List functions or numeric primitives. */
+
+from "./subset_option_value.wm" import * as SubsetOptionValue;
+
+from "./subset_option_value.wm" import *;
 
 let null = match {
   [] => { true },

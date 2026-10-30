@@ -1,4 +1,5 @@
 (* @subsetml
+from "../../src/subset_option_value.sml" import * as SubsetOptionValue;
 from "../../src/subset_utf16_source.sml" import * as SubsetUtf16Source;
 from "../../src/subset_utf16.sml" import * as SubsetUtf16;
 from "../../src/subset_unicode.sml" import * as SubsetUnicode;
@@ -6,6 +7,8 @@ from "../../src/subset_result.sml" import * as SubsetResult;
 from "../../src/subset_list.sml" import * as SubsetList;
 *)
 structure Utf16Source = struct
+  open SubsetOptionValue
+
   val same = fn (left, right) =>
     let val rec go = fn
         ([], []) => true

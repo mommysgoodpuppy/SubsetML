@@ -1,10 +1,12 @@
 (* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./subset_result.sml" import * as SubsetResult;
 *)
 
 (* Custom Basis lists. No host library calls, references or exceptions.
    Adapted from the existing portable SmlList algorithms; callbacks take data first. *)
 structure SubsetList = struct
+  open SubsetOptionValue
 
   datatype error = EmptyList | InvalidCount | InvalidIndex | OutOfBounds
 

@@ -1,4 +1,6 @@
 (* @subsetml
+from "./subset_bool.sml" import * as SubsetBool;
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./syntax.sml" import * as Syntax;
 from "./types.sml" import * as Types;
 from "./unify.sml" import * as Unify;
@@ -19,6 +21,7 @@ from "./subset_result.sml" import * as SubsetResult;
    sides of `val` one level deeper than their context, so that the type variables left above
    the context's level at the end can be generalized (Unify). *)
 structure Elab = struct
+  open SubsetOptionValue
 
   open Syntax
   open Types
@@ -40,7 +43,7 @@ structure Elab = struct
 
   val memberInt = fn (x, xs) => SmlList.exists (fn y => (y = x)) xs
 
-  val longName = fn (qs, x) => SubsetString.concatWith ((qs @ [x]), ".")
+  val longName = fn (qs, x) => SubsetString.concatWith ((SubsetList.append (qs, [x])), ".")
 
   (* Folds a res-returning step over a list. *)
   val rec foldRes = fn (f, acc, xs, st) =>
@@ -49,7 +52,7 @@ structure Elab = struct
     | x :: rest => bind (f (acc, x, st)) (fn acc' => fn st' => foldRes (f, acc', rest, st'))
 
   val mapRes = fn (f, xs, st) =>
-    bind (foldRes (fn (acc, x, st) => bind (f (x, st)) (fn y => fn st => Ok (acc @ [y], st)), [], xs, st))
+    bind (foldRes (fn (acc, x, st) => bind (f (x, st)) (fn y => fn st => Ok (SubsetList.append (acc, [y]), st)), [], xs, st))
       (fn ys => fn st => Ok (ys, st))
 
   (* The first source position inside a phrase, if any. *)
@@ -144,7 +147,7 @@ structure Elab = struct
       TyVar v => [v]
     | TyCon (args, _) => concatMap (tyVarsOf, args)
     | TyTuple ts => concatMap (tyVarsOf, ts)
-    | TyArrow (a, b) => tyVarsOf a @ tyVarsOf b
+    | TyArrow (a, b) => SubsetList.append (tyVarsOf a, tyVarsOf b)
     | TyRecord fields => concatMap (fn (_, a) => tyVarsOf a, fields)
 
   val rec patTyVars = fn p =>
@@ -153,7 +156,7 @@ structure Elab = struct
     | PTuple ps => concatMap (patTyVars, ps)
     | PList ps => concatMap (patTyVars, ps)
     | PApp (_, _, q) => patTyVars q
-    | PTyped (q, t) => patTyVars q @ tyVarsOf t
+    | PTyped (q, t) => SubsetList.append (patTyVars q, tyVarsOf t)
     | _ => []
 
   val rec expTyVars = fn e =>
@@ -163,17 +166,17 @@ structure Elab = struct
     | EList es => concatMap (expTyVars, es)
     | ESeq es => concatMap (expTyVars, es)
     | ELet (_, es) => concatMap (expTyVars, es)
-    | EApp (f, a) => expTyVars f @ expTyVars a
-    | ETyped (x, t) => expTyVars x @ tyVarsOf t
-    | EAndalso (a, b) => expTyVars a @ expTyVars b
-    | EOrelse (a, b) => expTyVars a @ expTyVars b
-    | EIf (c, a, b) => expTyVars c @ expTyVars a @ expTyVars b
-    | ECase (x, rules) => expTyVars x @ concatMap (fn (p, y) => patTyVars p @ expTyVars y, rules)
-    | EFn rules => concatMap (fn (p, y) => patTyVars p @ expTyVars y, rules)
+    | EApp (f, a) => SubsetList.append (expTyVars f, expTyVars a)
+    | ETyped (x, t) => SubsetList.append (expTyVars x, tyVarsOf t)
+    | EAndalso (a, b) => SubsetList.append (expTyVars a, expTyVars b)
+    | EOrelse (a, b) => SubsetList.append (expTyVars a, expTyVars b)
+    | EIf (c, a, b) => SubsetList.concat [expTyVars c, expTyVars a, expTyVars b]
+    | ECase (x, rules) => SubsetList.append (expTyVars x, concatMap (fn (p, y) => SubsetList.append (patTyVars p, expTyVars y), rules))
+    | EFn rules => concatMap (fn (p, y) => SubsetList.append (patTyVars p, expTyVars y), rules)
     | ECopy (_, source, _, _) => expTyVars source
     | _ => []
 
-  val distinct = fn xs => SmlList.foldl (fn (x, acc) => if member (x, acc) then acc else acc @ [x]) [] xs
+  val distinct = fn xs => SmlList.foldl (fn (x, acc) => if member (x, acc) then acc else SubsetList.append (acc, [x])) [] xs
 
   (* --------------------------------------------------------------------------------------- *)
   (* SubsetML restrictions *)
@@ -214,7 +217,7 @@ structure Elab = struct
   val mergeVars = fn (pos, a, b, st) =>
     case SmlList.find (fn (x, _) => SmlList.exists (fn (y, _) => x = y) a) b of
       SOME entry => let val (x, _) = entry in Err ("variable " ^ x ^ " is bound twice in a pattern", pos) end
-    | NONE => Ok (a @ b, st)
+    | NONE => Ok (SubsetList.append (a, b), st)
 
   val constructorScheme = fn entry =>
     case entry of NONE => NONE | SOME value =>
@@ -246,7 +249,7 @@ structure Elab = struct
           bind (checkRecordLabels (env, q, SmlList.map (fn (l, _) => l) fields, st)) (fn _ => fn st =>
             bind (foldRes (fn ((fs, vars), (l, f), st) =>
                              bind (pat (ctx, f, st)) (fn (t, vs) => fn st =>
-                               bind (mergeVars (q, vars, vs, st)) (fn vars' => fn st => Ok ((fs @ [(l, t)], vars'), st))),
+                               bind (mergeVars (q, vars, vs, st)) (fn vars' => fn st => Ok ((SubsetList.append (fs, [(l, t)]), vars'), st))),
                            ([], []), fields, st)) (fn (fs, vars) => fn st =>
               Ok ((TRecord (sortFields fs), vars), st)))
       | PTuple ps =>
@@ -282,7 +285,7 @@ structure Elab = struct
     foldRes (fn ((ts, vars), p, st) =>
                bind (pat (ctx, p, st)) (fn (t, vs) => fn st =>
                  bind (mergeVars (at (pos, patPos p), vars, vs, st)) (fn vars' => fn st =>
-                   Ok ((ts @ [t], vars'), st))),
+                   Ok ((SubsetList.append (ts, [t]), vars'), st))),
              ([], []), ps, st)
 
   (* --------------------------------------------------------------------------------------- *)
@@ -471,12 +474,12 @@ structure Elab = struct
   (* `val`: Definition §4.10 rules 15-16 and the closure of §4.8. *)
   and valDec = fn ((env, level, scoped), pos, tyvars, plain, recs, st) =>
     let
-      val bindings = plain @ recs
+      val bindings = SubsetList.append (plain, recs)
       val implicit =
-        SmlList.filter (fn v => not (member (v, scoped)))
-          (distinct (concatMap (fn (p, e) => patTyVars p @ expTyVars e, bindings)))
-      val explicit = distinct (tyvars @ implicit)
-      val inner = (env, level + 1, scoped @ explicit)
+        SmlList.filter (fn v => SubsetBool.not (member (v, scoped)))
+          (distinct (concatMap (fn (p, e) => SubsetList.append (patTyVars p, expTyVars e), bindings)))
+      val explicit = distinct (SubsetList.append (tyvars, implicit))
+      val inner = (env, level + 1, SubsetList.append (scoped, explicit))
       (* A binding's pattern, its type and variables, checked against its expression's type. *)
       val plainBinding = fn ((p, e), st) =>
         bind (exp (inner, e, st)) (fn te => fn st =>
@@ -503,7 +506,7 @@ structure Elab = struct
           bind (mapRes (recPattern, recs, st)) (fn recVars => fn st =>
             let
               val recEnv = withValues (SmlList.map (fn (v, t) => (v, (([], t), SValue))) (SmlList.concat recVars))
-              val recInner = (plus (env, recEnv), level + 1, scoped @ explicit)
+              val recInner = (plus (env, recEnv), level + 1, SubsetList.append (scoped, explicit))
             in
               bind (foldRes (fn (_, ((_, e), vars), st) =>
                                case vars of
@@ -513,7 +516,7 @@ structure Elab = struct
                                | _ => Ok ((), st),
                              (), SmlListPair.zip (recs, recVars), st)) (fn _ => fn st =>
                 let
-                  val results = plainResults @ SmlList.map (fn vars => (vars, true)) recVars
+                  val results = SubsetList.append (plainResults, SmlList.map (fn vars => (vars, true)) recVars)
                 in
                   closeValBindings (level, explicit, pos, results, st)
                 end)
@@ -533,7 +536,7 @@ structure Elab = struct
             bind (foldRes (fn (acc, (vars, generalizable), st) =>
                              foldRes (fn (acc, (x, t), st) =>
                                         bind (closeBinding (level, explicit, generalizable, pos, x, t, st))
-                                          (fn entry => fn st => Ok (acc @ [entry], st)),
+                                          (fn entry => fn st => Ok (SubsetList.append (acc, [entry]), st)),
                                       acc, vars, st),
                            [], results, st))
               (fn entries => fn st => Ok (withValues (SmlList.map (fn (x, s) => (x, (s, SValue))) entries), st)))
@@ -561,7 +564,7 @@ structure Elab = struct
               let val receiverLevel = case lookup (st, v) of Free (_, level) => level | Bound _ => l
                   val escaped = SmlList.exists (fn w => case lookup (st, w) of
                     Free (_, fieldLevel) => fieldLevel > receiverLevel | Bound _ => false) (freeVars (st, f))
-              in Ok ((pending @ [sel], progress orelse escaped), adjust (st, receiverLevel, f)) end
+              in Ok ((SubsetList.append (pending, [sel]), progress orelse escaped), adjust (st, receiverLevel, f)) end
           | _ => Err ("`#" ^ lab ^ "` is applied to a non-record: " ^ show (st, r), q)
         end
       val rec loop = fn st =>
@@ -610,7 +613,7 @@ structure Elab = struct
     case t of
       TRigid v => [v]
     | TCon (_, ts) => concatMap (rigidNames, ts)
-    | TArrow (a, b) => rigidNames a @ rigidNames b
+    | TArrow (a, b) => SubsetList.append (rigidNames a, rigidNames b)
     | TRecord fields => concatMap (fn (_, a) => rigidNames a, fields)
     | _ => []
 
@@ -629,7 +632,7 @@ structure Elab = struct
                                bind (case t of
                                        TyRecord _ => recordDeclared (pos, body, st)
                                      | _ => Ok ((), st)) (fn _ => fn st =>
-                                 Ok (acc @ [(name, TyStr (SubsetList.length params, body, []))], st)))),
+                                 Ok (SubsetList.append (acc, [(name, TyStr (SubsetList.length params, body, []))]), st)))),
                          [], binds, st))
             (fn tys => fn st => Ok (withTypes tys, st))
     end
@@ -668,7 +671,7 @@ structure Elab = struct
       val dupIn = fn xs => SmlList.find (fn n => SubsetList.length (SmlList.filter (fn m => m = n) xs) > 1) xs
       (* Fresh type names, first assuming every one admits equality. *)
       val (stamps, st1) =
-        SmlList.foldl (fn (_, (acc, st)) => let val (s, st') = freshStamp st in (acc @ [s], st') end) ([], st) binds
+        SmlList.foldl (fn (_, (acc, st)) => let val (s, st') = freshStamp st in (SubsetList.append (acc, [s]), st') end) ([], st) binds
       val nameFor = fn (eqs, (params, name, _), s) => (s, name, SubsetList.length params, memberInt (s, eqs))
       val tyFor = fn tn => let val SubsetResult.Ok args = SubsetList.tabulate (arityOf tn, TGen) in TCon (tn, args) end
       (* The constructors' argument types, with the group's names given the equality flags. *)

@@ -1,4 +1,6 @@
 (* @subsetml
+from "./subset_bool.sml" import * as SubsetBool;
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./compiler_text.sml" import * as CompilerText;
 from "./subset_result.sml" import * as SubsetResult;
 from "./module_project.sml" import * as ModuleProject;
@@ -12,6 +14,8 @@ from "./sml_list.sml" import * as SmlList;
 (* SML source-list targets. Build descriptions and native adapters are distinct
    from portable source semantics; the complete plan precedes all file writes. *)
 structure SmlTarget = struct
+  open SubsetOptionValue
+
   val quote = fn text => "\"" ^ CompilerText.escapeSmlString text ^ "\""
   val error = fn text => SubsetResult.Err text
   val identify = fn path => SubsetResult.mapErr (ModuleProject.identify path,
@@ -36,7 +40,7 @@ structure SmlTarget = struct
               fn ModuleProject.Resolved (id, _) =>
                 if SubsetList.exists (selected, fn (key, _) => ModuleProject.same (key, id))
                 then error ("duplicate native adapter: " ^ checker)
-                else (if not (SubsetList.exists (identities, fn (_, key) => ModuleProject.same (key, id)))
+                else (if SubsetBool.not (SubsetList.exists (identities, fn (_, key) => ModuleProject.same (key, id)))
                 then error ("native adapter checker is not in the source list: " ^ checker)
                 else SubsetResult.andThen (read native, fn text => select (rest, identities, (id, text) :: selected))))
         val names = SmlList.map (fn (path, _) => NativeInt.basename path) outputs
@@ -65,6 +69,6 @@ structure SmlTarget = struct
                       text ^ (if text = "" then "" else ", ") ^ quote name) ^ "])\nend;\n" ^
                     "structure CommandLine = struct\n  val name = CommandLine.name\n" ^
                     "  fun arguments () = !SubsetTarget.arguments\nend;\n")]
-            in SubsetResult.Ok (("prelude.sml", prelude) :: adapted @ build) end))
+            in SubsetResult.Ok (("prelude.sml", prelude) :: SubsetList.append (adapted, build)) end))
       end
 end

@@ -1,5 +1,7 @@
 (* WON conformance probe: the same SubsetML source runs natively and as generated Workman. *)
 structure WonProbe = struct
+  open SubsetOptionValue
+
 
   (* Text values are UTF-8 bytes; these fixtures spell them as byte strings. *)
   val text = fn s => SubsetWonValue.Text (SubsetResult.getOr (SubsetString.fromNative s, []))
