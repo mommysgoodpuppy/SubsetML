@@ -65,7 +65,17 @@ structure CustomBasis = struct
     andalso SubsetChar.isHexDigit #"F"
     andalso not (SubsetChar.isHexDigit #"G")
   val nonAscii = SubsetChar.compareAscii (#"\255", #"a") = SubsetResult.Err SubsetChar.NonAscii
-  val checked = nonAscii andalso charOk andalso resultOk andalso optionOk andalso listOk andalso pairOk
+  val helpersOk = SubsetBool.not false andalso not (SubsetBool.not true)
+    andalso SubsetList.map ([true, false], SubsetBool.not) = [false, true]
+    andalso SubsetString.size "" = SubsetResult.Ok 0
+    andalso SubsetString.size "a\000\255" = SubsetResult.Ok 3
+    andalso SubsetString.str #"\000" = SubsetResult.Ok "\000"
+    andalso SubsetString.str #"\255" = SubsetResult.Ok "\255"
+    andalso SubsetList.all (SubsetChar.byteChars, fn c =>
+      case SubsetString.str c of
+        SubsetResult.Err error => false
+      | SubsetResult.Ok value => SubsetString.fromNative value = SubsetResult.Ok [c])
+  val checked = helpersOk andalso nonAscii andalso charOk andalso resultOk andalso optionOk andalso listOk andalso pairOk
     andalso stopped = SubsetResult.Err "stopped"
     andalso unmapped = SubsetResult.Err SubsetListPair.UnequalLengths
     andalso pairStopped = SubsetResult.Err (SubsetListPair.CallbackError "stopped")

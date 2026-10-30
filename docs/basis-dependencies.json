@@ -1,6 +1,11 @@
 {
   "status": "source Basis and compiler core implemented; native and Workman entry-file checking with explicit imports and eight host entry points",
   "modules": {
+    "SubsetBool": {
+      "source": "src/subset_bool.sml",
+      "sourceDependencies": [],
+      "primitives": []
+    },
     "SubsetResult": {
       "source": "src/subset_result.sml",
       "sourceDependencies": [],

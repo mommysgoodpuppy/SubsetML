@@ -50,4 +50,8 @@ structure SubsetString = struct
               SubsetResult.Err error => SubsetResult.Err (NonByte offset)
             | SubsetResult.Ok code => go (rest, offset + 1, code :: codes)
     in go (bytes, 0, []) end
+
+  (* Checked byte-string helpers share the extraction/reconstruction boundaries. *)
+  val size = fn value => SubsetResult.map (fromNative value, SubsetList.length)
+  val str = fn c => toNative [c]
 end

@@ -1,6 +1,7 @@
 $(SML_LIB)/basis/basis.mlb
 ../lib/num.sml
 ../lib/subset_text_host.sml
+subset_bool.sml
 subset_result.sml
 ../lib/subset_host.sml
 subset_option.sml

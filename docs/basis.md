@@ -36,6 +36,9 @@ representation is insufficient and review that boundary explicitly.
 
 ## Implemented custom APIs
 
+`SubsetBool.not` is a first-class boolean negation function (`bool -> bool`),
+implemented with a conditional and no host primitives.
+
 The custom modules use a `Subset` prefix to distinguish them from the bootstrap host library
 and the earlier `Sml` ports. They are ordinary program modules, not checker-provided magic.
 Load them before a program when checking or building SML. The translator generates their
@@ -396,6 +399,12 @@ strings, like `^`, and do not inspect or validate foreign text. They need no add
 Allocation exhaustion remains a
 runtime failure; these Results describe invalid data, not available memory.
 
+`SubsetString.size value` validates the complete byte string through `fromNative`, then
+returns its `int` byte count in `Ok`; a non-byte native element returns `NonByte offset`.
+It takes linear time. `SubsetString.str c` delegates to `toNative [c]`, preserving NUL
+and all high bytes and rejecting a foreign non-byte character with `NonByte 0`.
+Neither helper adds a host primitive.
+
 `SubsetSource.fromBytes bytes` validates and builds an immutable balanced byte index;
 `fromNative string` performs checked conversion once, then builds the same index. The former
 returns `SubsetBytes` errors, the latter `SubsetString` errors. `length source` is constant time;
@@ -538,6 +547,7 @@ custom module declares its source dependencies and explicit primitive calls. The
 | Module | Source dependencies | Explicit host primitive calls |
 |---|---|---|
 | `SubsetResult` | none | none |
+| `SubsetBool` | none | none |
 | `SubsetOption` | SubsetResult | none |
 | `SubsetList` | SubsetResult | none |
 | `SubsetListPair` | SubsetResult, SubsetList | none |
