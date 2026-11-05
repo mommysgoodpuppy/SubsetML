@@ -11,6 +11,9 @@ structure ProcessOs = struct
     | SubsetResult.Err _ => false
   val checked =
     SubsetProcess.isSuccess SubsetProcess.success andalso
+    SubsetProcess.isSuccess (SubsetProcess.Status 0) andalso
+    not (SubsetProcess.isSuccess (SubsetProcess.Status 3)) andalso
+    not (SubsetOs.Process.isSuccess (SubsetOs.Process.Status 3)) andalso
     SubsetOs.Process.isSuccess SubsetOs.Process.success andalso
     not (SubsetProcess.isSuccess SubsetProcess.failure) andalso
     succeeds "printf ran" andalso

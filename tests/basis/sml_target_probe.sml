@@ -11,7 +11,7 @@ structure SmlTargetProbe = struct
   val integerOK = plus (2147483647, ~2147483647) = 0
   val _ = if argumentsOK andalso integerOK then
       (case SubsetHost.writeStdout "SML_TARGET_LOADER_OK\n" of
-        SubsetResult.Ok () => SubsetHost.exit SubsetHost.success
-      | SubsetResult.Err _ => SubsetHost.exit SubsetHost.failure)
-    else SubsetHost.exit SubsetHost.failure
+        SubsetResult.Ok () => SubsetHost.exit 0
+      | SubsetResult.Err _ => SubsetHost.exit 1)
+    else SubsetHost.exit 1
 end

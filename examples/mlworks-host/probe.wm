@@ -59,10 +59,10 @@ let main = (root, bytes) => {
     })
   });
   match(result) {
-    R.Ok(_) => { Host.exit(Host.success) },
+    R.Ok(_) => { Host.exit(0) },
     R.Err(message) => {
       let _ = Host.writeStderr(message ++ "\n");
-      Host.exit(Host.failure)
+      Host.exit(1)
     }
   }
 };

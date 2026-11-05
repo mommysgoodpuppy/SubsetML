@@ -264,7 +264,7 @@ the executable name, or a `SubsetIo.error`. It does not decode argument text.
 
 | Operation | Contract |
 |---|---|
-| `status`, `success`, `failure` | The host's termination status. `success` is the only successful value; other failure values exist. |
+| `Status code`, `success`, `failure` | An exit code, with `success` and `failure` as `Status 0` and `Status 1`. The SML Basis keeps its status abstract; here a program can use exit codes on purpose. Only `Status 0` is successful. |
 | `isSuccess status` | Whether the status denotes success. |
 | `system command` | Run a validated byte-string command through the host's default shell, sharing this process's standard streams. `Ok` the status, including for a command that fails, or `Err` a `SubsetIo.error` if it could not run. |
 | `getEnv name` | `SOME` the value of an environment variable, otherwise `NONE`. |
@@ -693,7 +693,7 @@ custom module declares its source dependencies and explicit primitive calls. The
 | `SubsetUtf16Source` | SubsetOptionValue, SubsetResult, SubsetList, SubsetUnicode, SubsetUtf8, SubsetUtf16, SubsetChar | SubsetTextHost.codes |
 | `SubsetSmlEscape` | SubsetOptionValue, SubsetList, SubsetResult, SubsetString | none directly; native-string entry uses extraction through SubsetString |
 | `SubsetIo` | SubsetList, SubsetResult, SubsetString | SubsetHost.canonicalPath, readFile, writeFile, writeStdout, writeStderr |
-| `SubsetProcess` | SubsetIo, SubsetList, SubsetResult | SubsetHost.arguments, exit, failure, getEnv, isSuccess, success, system, terminate |
+| `SubsetProcess` | SubsetIo, SubsetList, SubsetResult | SubsetHost.arguments, exit, getEnv, system, terminate |
 | `SubsetOs` | SubsetPath, SubsetProcess | none directly |
 
 This does not mean a backend needs no runtime. It needs ordinary language support for datatype

@@ -82,10 +82,6 @@ is too slow without evidence. Domain validation and typed errors stay in source.
 | `SubsetHost.writeStdout` | External output requires a host side effect. Does not require implementing SML TextIO. |
 | `SubsetHost.writeStderr` | External diagnostic output requires a host side effect; separate from stdout so callers choose the channel. |
 | `SubsetHost.arguments` | Obtain process invocation arguments. Not available through pure source computation. |
-| `SubsetHost.status` | The host's process status. The adapters hold an exit code: MLton's `OS.Process.system` returns a raw wait status that its own `exit` rejects, so the SML adapters recover the code with `Unix.fromStatus` and leave through `Unix.exit` for codes other than 0 and 1. A child killed by a signal becomes `failure` there and 128 plus the signal number on JS. |
-| `SubsetHost.success` | The status of successful termination. See `SubsetHost.status`. |
-| `SubsetHost.failure` | A status of failed termination. See `SubsetHost.status`. |
-| `SubsetHost.isSuccess` | Whether a status denotes success. A source comparison would need the adapters' representation to be public. |
 | `SubsetHost.system` | Run a command through the host's shell. Not available through pure source computation. The compiler doesn't use it. |
 | `SubsetHost.getEnv` | Read an environment variable. Not available through pure source computation. The compiler doesn't use it. |
 | `SubsetHost.terminate` | Terminate the process without exit actions, following `OS.Process`. Equivalent to `exit` until `atExit` exists. |

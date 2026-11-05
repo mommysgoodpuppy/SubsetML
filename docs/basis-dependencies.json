@@ -223,11 +223,7 @@
       "primitives": [
         "SubsetHost.arguments",
         "SubsetHost.exit",
-        "SubsetHost.failure",
         "SubsetHost.getEnv",
-        "SubsetHost.isSuccess",
-        "SubsetHost.status",
-        "SubsetHost.success",
         "SubsetHost.system",
         "SubsetHost.terminate"
       ]
@@ -356,10 +352,6 @@
         "arguments",
         "exit",
         "terminate",
-        "status",
-        "success",
-        "failure",
-        "isSuccess",
         "system",
         "getEnv"
       ]

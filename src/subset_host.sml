@@ -18,13 +18,9 @@ structure SubsetHost = struct
     (SubsetResult.Err "host adapter not staged" : (unit, string) SubsetResult.result)
   val arguments = fn () =>
     (SubsetResult.Err "host adapter not staged" : (string list, string) SubsetResult.result)
-  datatype status = Status of int
-  val success = Status 0
-  val failure = Status 1
-  val isSuccess = fn Status code => code = 0
   val system = fn (command : string) =>
-    (SubsetResult.Err "host adapter not staged" : (status, string) SubsetResult.result)
+    (SubsetResult.Err "host adapter not staged" : (int, string) SubsetResult.result)
   val getEnv = fn (name : string) => (SubsetOptionValue.NONE : string SubsetOptionValue.option)
-  val exit = fn (status : status) => ()
-  val terminate = fn (status : status) => ()
+  val exit = fn (code : int) => ()
+  val terminate = fn (code : int) => ()
 end

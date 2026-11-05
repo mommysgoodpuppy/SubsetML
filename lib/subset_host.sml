@@ -33,10 +33,6 @@ structure SubsetHost = struct
     then raise Fail "NUL in command" else value
   (* An exit code, not OS.Process.status: MLton's system returns a raw wait status, which its own
      exit rejects, so the code has to be recovered here to survive the trip from system to exit. *)
-  type status = int
-  val success = 0
-  val failure = 1
-  fun isSuccess status = status = 0
   fun exitCode status = case Unix.fromStatus status of
       Unix.W_EXITED => 0
     | Unix.W_EXITSTATUS code => Word8.toInt code
