@@ -55,7 +55,7 @@ imports. Namespace values are not first-class.
 
 A plain `from "./file.wm" import *;` also lowers to `open`, although in Workman it is private.
 SubsetML omits `local`, so the SML side exposes more than the Workman side does. See
-`markdown/issues/plain-import-star-exposes-names-in-sml.md`.
+`markdown/issues/private-imports.md`.
 Record modules export hygienic field-type aliases for generated reconstruction checks. This
 lets an imported record retain fields mentioning private dependencies without requiring its
 consumers to import those dependencies or exposing their namespaces.
