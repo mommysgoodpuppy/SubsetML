@@ -81,6 +81,8 @@ structure WmProject = struct
             else SubsetResult.map (scan tail, fn paths => (specifier, pos) :: paths) end
       | (WmLexer.WKey "from", pos) :: _ =>
           failure (path, src, "reverse discovery requires header namespace imports", pos)
+      | (WmLexer.WName ["export"], _) :: (WmLexer.WKey "from", pos) :: rest =>
+          scan ((WmLexer.WKey "from", pos) :: rest)
       | _ => SubsetResult.Ok []
     in scan tokens end
 
@@ -195,11 +197,28 @@ structure WmProject = struct
           (WmLexer.WKey "import", _) :: (WmLexer.WKey "*", _) ::
           (WmLexer.WKey ";", _) :: rest =>
             SubsetResult.andThen (dependency (specifier, pos), fn child =>
-              if SubsetList.exists (aliases, fn (_, target) => target = name child) then
-                imports (rest, edges, aliases, (WmLexer.WOpen [[name child]], pos) :: opens)
-              else failure (path, src, "open imports currently require a preceding namespace import of the same module", pos))
+              let
+                val opened = (WmLexer.WOpen [[name child]], pos) :: opens
+                val known = SubsetList.exists (edges, fn Edge (_, _, _, target) =>
+                  ModuleProject.same (target, identity child))
+              in
+                if known then imports (rest, edges, aliases, opened)
+                (* No alias: an open alone doesn't make the module's name usable as a qualifier. *)
+                else imports (rest, Edge (specifier, pos, name child, identity child) :: edges, aliases, opened)
+              end)
         | (WmLexer.WKey "from", pos) :: _ =>
             failure (path, src, "reverse translation currently requires header namespace imports: from \"./file.wm\" import * as Name;", pos)
+        (* `open` already adds to the module's public environment, so this needs nothing further. *)
+        | (WmLexer.WName ["export"], _) :: (WmLexer.WKey "from", pos) ::
+          (WmLexer.WScon (Syntax.SString specifier), specifierPos) ::
+          (WmLexer.WKey "import", importPos) :: (WmLexer.WKey "*", starPos) ::
+          (WmLexer.WKey ";", endPos) :: rest =>
+            imports ((WmLexer.WKey "from", pos) ::
+              (WmLexer.WScon (Syntax.SString specifier), specifierPos) ::
+              (WmLexer.WKey "import", importPos) :: (WmLexer.WKey "*", starPos) ::
+              (WmLexer.WKey ";", endPos) :: rest, edges, aliases, opens)
+        | (WmLexer.WName ["export"], _) :: (WmLexer.WKey "from", pos) :: _ =>
+            failure (path, src, "only `export from \"./file.wm\" import *;` has an SML counterpart: SubsetML has no nested structures", pos)
         | _ =>
             let
               val rec rewrite = fn (tokens, acc) =>

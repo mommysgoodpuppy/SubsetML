@@ -22,10 +22,10 @@ from "./compiler_text.wm" import * as CompilerText;
 from "./sml_list.wm" import * as SmlList;
 from "./parser.wm" import * as Parser;
 
-from "./subset_option_value.wm" import *;
+export from "./subset_option_value.wm" import *;
 
-from "./syntax.wm" import *;
-from "./doc.wm" import *;
+export from "./syntax.wm" import *;
+export from "./doc.wm" import *;
 
 let longid = (qs, s) => { SubsetString.concatWith(SubsetList.append(qs, [s]), ".") };
 

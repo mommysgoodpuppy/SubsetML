@@ -8,7 +8,7 @@ from "./subset_option_value.sml" import * as SubsetOptionValue;
 
 from "./subset_option_value.wm" import * as SubsetOptionValue;
 
-from "./subset_option_value.wm" import *;
+export from "./subset_option_value.wm" import *;
 
 let getOpt = (opt, fallback) => {
   match(opt) {

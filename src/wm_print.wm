@@ -34,10 +34,10 @@ from "./subset_result.wm" import * as SubsetResult;
 from "./parser.wm" import * as Parser;
 from "./subset_process.wm" import * as SubsetProcess;
 
-from "./subset_option_value.wm" import *;
+export from "./subset_option_value.wm" import *;
 
-from "./syntax.wm" import *;
-from "./doc.wm" import *;
+export from "./syntax.wm" import *;
+export from "./doc.wm" import *;
 
 // ---------------------------------------------------------------------------------------
 // Names
@@ -666,7 +666,7 @@ and dec = (structures, d) => {
       if (SmlList.all((id) => { SmlList.exists((s) => { [s] == id })(structures) })(ids)) {
         stack(SmlList.map((id) => {
           let SubsetResult.Ok(name) = SubsetList.last(id);
-          atom(p, "from \"./" ++ fileName(dotted([], name)) ++ "\" import *;")
+          atom(p, "export from \"./" ++ fileName(dotted([], name)) ++ "\" import *;")
         })(ids))
       } else { unsupportedDeclaration() }
     }

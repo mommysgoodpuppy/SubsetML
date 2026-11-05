@@ -25,7 +25,7 @@ compatibility forms listed below remain supported.
 |---|---|
 | `structure FooBar = struct decs end` in `foo_bar.sml` | the declarations of `foo_bar.wm` |
 | other top-level declarations in the same file | more declarations of the same module; `FooBar.x` becomes `x` |
-| `open FooBar` (a program structure) | `from "./foo_bar.wm" import *;` |
+| `open FooBar` (a program structure) | `export from "./foo_bar.wm" import *;` |
 | a qualified use `FooBar.x` | `FooBar.x`, plus `from "./foo_bar.wm" import * as FooBar;` at the top |
 | comments `(* … *)` | `// …` for one line, `/* … */` for several |
 
@@ -44,9 +44,17 @@ No output is written until resolution, translation and strict checking all succe
 
 This initial reverse-translation profile accepts header `from "./file.wm" import * as Name;`
 imports with uppercase aliases and the same local path restrictions as the SML loader. For
-compiler round trips, header open imports are supported after a namespace import of that same
-module; they lower to ordered SML `open` declarations. Open-only, named, non-local and later
-imports are diagnosed explicitly. Namespace values are not first-class.
+compiler round trips, header `export from "./file.wm" import *;` imports lower to ordered SML
+`open` declarations, with or without a namespace import of the same module, and SML `open` prints
+back as that form. As in SML, the opened bindings become part of the importing module. A namespace
+import stays private: it only resolves qualified names, and emits no SML structure binding.
+Other `export from` clauses need nested structures, which SubsetML doesn't have, so they are
+diagnosed explicitly, as are named, non-local and later imports. Namespace values are not
+first-class.
+
+A plain `from "./file.wm" import *;` also lowers to `open`, although in Workman it is private.
+SubsetML omits `local`, so the SML side exposes more than the Workman side does. See
+`markdown/issues/plain-import-star-exposes-names-in-sml.md`.
 Record modules export hygienic field-type aliases for generated reconstruction checks. This
 lets an imported record retain fields mentioning private dependencies without requiring its
 consumers to import those dependencies or exposing their namespaces.

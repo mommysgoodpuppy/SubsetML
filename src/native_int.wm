@@ -28,9 +28,9 @@ from "./translate.wm" import * as Translate;
 from "./subset_list.wm" import * as SubsetList;
 from "./basis.wm" import * as Basis;
 
-from "./subset_option_value.wm" import *;
+export from "./subset_option_value.wm" import *;
 
-from "./syntax.wm" import *;
+export from "./syntax.wm" import *;
 
 let basename = (path) => {
   match(SmlList.rev(CompilerText.fields(path, (c) => { c == '/' }))) {

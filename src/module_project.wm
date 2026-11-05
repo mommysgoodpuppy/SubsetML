@@ -31,7 +31,7 @@ from "./env.wm" import * as Env;
 from "./elab.wm" import * as Elab;
 from "./unify.wm" import * as Unify;
 
-from "./subset_option_value.wm" import *;
+export from "./subset_option_value.wm" import *;
 
 // The canonical key is constructed only at the resolver boundary.
 type ModuleId = | ModuleId<String>;

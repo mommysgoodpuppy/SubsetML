@@ -42,7 +42,7 @@ from "./env.wm" import * as Env;
 from "./subset_string.wm" import * as SubsetString;
 from "./lexer.wm" import * as Lexer;
 
-from "./subset_option_value.wm" import *;
+export from "./subset_option_value.wm" import *;
 
 type Input = | Input<ModuleProject.Resolved, String, String>;
 type ProjectUnit = | Unit<Input, String, String>;
@@ -155,6 +155,7 @@ let headerPaths = (path, src, tokens) => {
       [(WmLexer.WKey("from"), Var(pos)), .._] => {
         failure(path, src, "reverse discovery requires header namespace imports", pos)
       },
+      [(WmLexer.WName(["export"]), _), (WmLexer.WKey("from"), Var(pos)), ..rest] => { scan([(WmLexer.WKey("from"), pos), ..rest]) },
       _ => { SubsetResult.Ok([]) }
     }
   };
@@ -391,14 +392,20 @@ let prepare = (basis, units, unit) => {
         SubsetResult.andThen(
           dependency(specifier, pos),
           (child) => {
-            if (SubsetList.exists(aliases, (_, target) => { target == name(child) })) {
-              imports(rest, edges, aliases, [(WmLexer.WOpen([[name(child)]]), pos), ..opens])
-            } else {
-              failure(
-                path,
-                src,
-                "open imports currently require a preceding namespace import of the same module",
-                pos
+            let opened = [(WmLexer.WOpen([[name(child)]]), pos), ..opens];
+            let known = SubsetList.exists(
+              edges,
+              match {
+                Edge(_, _, _, target) => { ModuleProject.same(target, identity(child)) }
+              }
+            );
+            if (known) { imports(rest, edges, aliases, opened) } else {
+              // No alias: an open alone doesn't make the module's name usable as a qualifier.
+              imports(
+                rest,
+                [Edge(specifier, pos, name(child), identity(child)), ..edges],
+                aliases,
+                opened
               )
             }
           }
@@ -409,6 +416,38 @@ let prepare = (basis, units, unit) => {
           path,
           src,
           "reverse translation currently requires header namespace imports: from \"./file.wm\" import * as Name;",
+          pos
+        )
+      },
+      // `open` already adds to the module's public environment, so this needs nothing further.
+      [
+        (WmLexer.WName(["export"]), _),
+        (WmLexer.WKey("from"), Var(pos)),
+        (WmLexer.WScon(Syntax.SString(specifier)), Var(specifierPos)),
+        (WmLexer.WKey("import"), Var(importPos)),
+        (WmLexer.WKey("*"), Var(starPos)),
+        (WmLexer.WKey(";"), Var(endPos)),
+        ..rest
+      ] => {
+        imports(
+          [
+            (WmLexer.WKey("from"), pos),
+            (WmLexer.WScon(Syntax.SString(specifier)), specifierPos),
+            (WmLexer.WKey("import"), importPos),
+            (WmLexer.WKey("*"), starPos),
+            (WmLexer.WKey(";"), endPos),
+            ..rest
+          ],
+          edges,
+          aliases,
+          opens
+        )
+      },
+      [(WmLexer.WName(["export"]), _), (WmLexer.WKey("from"), Var(pos)), .._] => {
+        failure(
+          path,
+          src,
+          "only `export from \"./file.wm\" import *;` has an SML counterpart: SubsetML has no nested structures",
           pos
         )
       },

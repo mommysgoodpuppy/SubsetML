@@ -32,7 +32,7 @@ structure WmPrinter = struct
     andalso WmPrint.commentStyle [] = []
     andalso WmPrint.commentStyle ["a", "b", "c"] = ["/*a", "b", "c*/"]
     andalso render (WmPrint.topdec (["A"], Syntax.TopDecs [Syntax.SDec (Syntax.DOpen (0, [["A"]]))]))
-      = "from \"./a.wm\" import *;\n"
+      = "export from \"./a.wm\" import *;\n"
     andalso render (WmPrint.topdec ([], Syntax.TopExp (0,
       Syntax.EApp (Syntax.EId (0, ([], "+")), Syntax.ETuple [Syntax.EScon (0, Syntax.SReal "1"),
         Syntax.EScon (0, Syntax.SReal "2")])))) = "1 + 2;\n"

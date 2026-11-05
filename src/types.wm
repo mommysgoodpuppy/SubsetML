@@ -17,7 +17,7 @@ from "./subset_char.wm" import * as SubsetChar;
 from "./sml_list.wm" import * as SmlList;
 from "./subset_result.wm" import * as SubsetResult;
 
-from "./subset_option_value.wm" import *;
+export from "./subset_option_value.wm" import *;
 
 /* A type name (Definition §4.1): its stamp, its printed name, its arity, and whether it
    admits equality, given type arguments that do. */

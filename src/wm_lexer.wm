@@ -25,9 +25,9 @@ from "./subset_string.wm" import * as SubsetString;
 from "./compiler_text.wm" import * as CompilerText;
 from "./lexer.wm" import * as Lexer;
 
-from "./subset_option_value.wm" import *;
+export from "./subset_option_value.wm" import *;
 
-from "./syntax.wm" import *;
+export from "./syntax.wm" import *;
 
 /* Every translated file starts with this line. Reverse translation drops it, so a file can
    round trip without the SML side gaining a comment that describes the WM side. */

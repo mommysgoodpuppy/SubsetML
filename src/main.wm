@@ -63,7 +63,7 @@ from "./basis.wm" import * as Basis;
 from "./native_int.wm" import * as NativeInt;
 from "./sml_target.wm" import * as SmlTarget;
 
-from "./subset_option_value.wm" import *;
+export from "./subset_option_value.wm" import *;
 
 let eprint = (text) => {
   match(SubsetIo.writeStderr(CompilerText.characters(text))) {

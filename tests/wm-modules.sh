@@ -84,7 +84,6 @@ let leaked = Records.make(1);' 'not explicitly imported' "$tmp/records.wm"
 reject 'from "./records.wm" import * as Records;
 let a = 1;
 from "./middle.wm" import * as Middle;' 'precede ordinary declarations' "$tmp/records.wm" "$tmp/middle.wm"
-reject 'from "./records.wm" import *;' 'preceding namespace import' "$tmp/records.wm"
 reject 'from "./records.wm" import {make};' 'header namespace imports' "$tmp/records.wm"
 reject 'from "./records.wm" import * as Records;' 'not in the supplied source list'
 reject 'from "./records.wm" import * as Alias;
@@ -96,4 +95,34 @@ cat > "$tmp/cycle.wm" <<'WM'
 from "./bad.wm" import * as Bad;
 WM
 reject 'from "./cycle.wm" import * as Cycle;' 'import cycle' "$tmp/cycle.wm"
+# `export from ... import *` translates to SML open, whose bindings are part of the opening module.
+mkdir "$tmp/open" "$tmp/open-out" "$tmp/open-back"
+printf 'type Thing = | Thing<I32>;\nlet value = 7;\n' > "$tmp/open/base.wm"
+printf 'export from "./base.wm" import *;\nlet own = value + 1;\n' > "$tmp/open/middle.wm"
+printf 'export from "./middle.wm" import *;\n' > "$tmp/open/forward.wm"
+cat > "$tmp/open/user.wm" <<'WM'
+from "./forward.wm" import * as Forward;
+let total = Forward.value + Forward.own;
+let thing = Forward.Thing(1);
+WM
+"$compiler" sml "$tmp/open-out" "$tmp/open/base.wm" "$tmp/open/middle.wm" "$tmp/open/forward.wm" "$tmp/open/user.wm"
+grep -q 'open Base' "$tmp/open-out/middle.sml"
+grep -q 'open Middle' "$tmp/open-out/forward.sml"
+"$compiler" check "$tmp/open-out/base.sml" "$tmp/open-out/middle.sml" "$tmp/open-out/forward.sml" "$tmp/open-out/user.sml"
+# And SML open prints back as the same form.
+"$compiler" wm "$tmp/open-back" "$tmp/open-out/base.sml" "$tmp/open-out/middle.sml"
+grep -q 'export from "./base.wm" import \*;' "$tmp/open-back/middle.wm"
+if command -v wm >/dev/null 2>&1; then wm check "$tmp/open/user.wm" >/dev/null; fi
+# Clauses that would need a nested structure are diagnosed.
+reject 'export from "./records.wm" import * as Records;' 'no nested structures' "$tmp/records.wm"
+reject 'export from "./records.wm" import {make};' 'no nested structures' "$tmp/records.wm"
+# An open alone doesn't make the module's own name usable as a qualifier, in either language.
+cat > "$tmp/open/qualified.wm" <<'WM'
+from "./base.wm" import *;
+let wrong = Base.value;
+WM
+if "$compiler" sml "$tmp/reject" "$tmp/open/base.wm" "$tmp/open/qualified.wm" > "$tmp/open-error" 2>&1; then
+  echo 'FAIL: an open made its module name usable as a qualifier'
+  exit 1
+fi
 echo 'WM module identities and aliases: ok'

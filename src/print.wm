@@ -17,9 +17,9 @@ from "./subset_list.wm" import * as SubsetList;
 from "./compiler_text.wm" import * as CompilerText;
 from "./sml_list.wm" import * as SmlList;
 
-from "./subset_option_value.wm" import *;
+export from "./subset_option_value.wm" import *;
 
-from "./syntax.wm" import *;
+export from "./syntax.wm" import *;
 
 let node = (name, parts) => { "(" ++ SubsetString.concatWith([name, ..parts], " ") ++ ")" };
 

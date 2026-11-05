@@ -26,7 +26,7 @@ from "./subset_list.wm" import * as SubsetList;
 from "./subset_bool.wm" import * as SubsetBool;
 from "./sml_list.wm" import * as SmlList;
 
-from "./subset_option_value.wm" import *;
+export from "./subset_option_value.wm" import *;
 
 let quote = (text) => { "\"" ++ CompilerText.escapeSmlString(text) ++ "\"" };
 let error = (text) => { SubsetResult.Err(text) };

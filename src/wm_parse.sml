@@ -362,6 +362,12 @@ structure WmParse = struct
     isKey ("let", ts) orelse isKey ("type", ts) orelse isKey ("record", ts)
     orelse (case peek ts of (WOpen _, _) => true | _ => false)
 
+  (* `export` is contextual: it's an ordinary name unless an import follows it. *)
+  val startsExport = fn ts =>
+    case peek ts of
+      (WName ["export"], _) => isKey ("from", advance ts)
+    | _ => false
+
   datatype item =
       IDec of dec
     | IExp of exp
@@ -948,6 +954,20 @@ structure WmParse = struct
                      Done ([DOpen (p, [[structureName file]])], ts))
                end
            | _ => Fail ("only `from \"./file.wm\" import *` imports have a SubsetML counterpart", p))
+      | (WName ["export"], _) =>
+          let val clause = advance ts in
+            case (peek clause, peek (advance clause), peek (advance (advance clause)),
+                  peek (advance (advance (advance clause)))) of
+              ((WKey "from", _), (WScon (SString file), _), (WKey "import", _), (WKey "*", _)) =>
+                let val rest = advance (advance (advance (advance clause))) in
+                  if isKey ("as", rest) then
+                    Fail ("only `export from \"./file.wm\" import *` has a SubsetML counterpart: nested structures aren't supported", p)
+                  else
+                    bind (expect (";", rest)) (fn _ => fn ts =>
+                      Done ([DOpen (p, [[structureName file]])], ts))
+                end
+            | _ => Fail ("only `export from \"./file.wm\" import *` has a SubsetML counterpart: nested structures aren't supported", p)
+          end
       | _ => expected ("a declaration", ts)
     end
 
@@ -1023,7 +1043,7 @@ structure WmParse = struct
             case peek ts of
               (WEOF, _) => Done ((SmlList.rev decs, SmlList.rev exps), ts)
             | _ =>
-                if startsDecl ts orelse isKey ("from", ts)
+                if startsDecl ts orelse isKey ("from", ts) orelse startsExport ts
                 then bind (parseDecl ts) (fn ds => fn ts => items (SmlList.revAppend (ds, decs), exps, ts))
                 else
                   bind (parseExp ts) (fn e => fn ts =>

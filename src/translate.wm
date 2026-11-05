@@ -45,9 +45,9 @@ from "./env.wm" import * as Env;
 from "./sml_print.wm" import * as SmlPrint;
 from "./wm_parse.wm" import * as WmParse;
 
-from "./subset_option_value.wm" import *;
+export from "./subset_option_value.wm" import *;
 
-from "./syntax.wm" import *;
+export from "./syntax.wm" import *;
 
 // ---------------------------------------------------------------------------------------
 // The structures a phrase refers to: the first qualifier of each long identifier.
@@ -1182,6 +1182,7 @@ let fromWmNamed = (name, src, decs, exps, comments) => {
      between an import and the first declaration stay inside the structure. */
   let first = match(WmLexer.lex(src)) {
     WmLexer.Tokens([(WmLexer.WKey("from"), Var(p)), .._], _) => { Some(p) },
+    WmLexer.Tokens([(WmLexer.WName(["export"]), Var(p)), (WmLexer.WKey("from"), _), .._], _) => { Some(p) },
     _ => {
       match(decs) {
         [d, .._] => { Some(decPos(d)) },

@@ -14,7 +14,7 @@ from "./sml_list.sml" import * as SmlList;
 from "./syntax.wm" import * as Syntax;
 from "./sml_list.wm" import * as SmlList;
 
-from "./syntax.wm" import *;
+export from "./syntax.wm" import *;
 
 let rec pat = (p) => {
   match(p) {

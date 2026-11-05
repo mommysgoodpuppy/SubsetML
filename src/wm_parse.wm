@@ -34,10 +34,10 @@ from "./subset_bool.wm" import * as SubsetBool;
 from "./subset_list.wm" import * as SubsetList;
 from "./sml_option.wm" import * as SmlOption;
 
-from "./subset_option_value.wm" import *;
+export from "./subset_option_value.wm" import *;
 
-from "./syntax.wm" import *;
-from "./wm_lexer.wm" import *;
+export from "./syntax.wm" import *;
+export from "./wm_lexer.wm" import *;
 
 type Toks = List<(Token, Pos)>;
 
@@ -479,6 +479,14 @@ let startsDecl = (ts) => {
       (WOpen(_), _) => { true },
       _ => { false }
     }
+  }
+};
+
+// `export` is contextual: it's an ordinary name unless an import follows it.
+let startsExport = (ts) => {
+  match(peek(ts)) {
+    (WName(["export"]), _) => { isKey("from", advance(ts)) },
+    _ => { false }
   }
 };
 
@@ -1399,6 +1407,33 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
           }
         }
       },
+      (WName(["export"]), _) => {
+        let clause = advance(ts);
+        match(peek(clause), peek(advance(clause)), peek(advance(advance(clause))), peek(advance(advance(advance(clause))))) {
+          (
+            (WKey("from"), _),
+            (WScon(SString(file)), _),
+            (WKey("import"), _),
+            (WKey("*"), _)
+          ) => {
+            let rest = advance(advance(advance(advance(clause))));
+            if (isKey("as", rest)) {
+              Fail(
+                "only `export from \"./file.wm\" import *` has a SubsetML counterpart: nested structures aren't supported",
+                p
+              )
+            } else {
+              bind(expect(";", rest))((_) => (ts) => { Done([DOpen(p, [[structureName(file)]])], ts) })
+            }
+          },
+          _ => {
+            Fail(
+              "only `export from \"./file.wm\" import *` has a SubsetML counterpart: nested structures aren't supported",
+              p
+            )
+          }
+        }
+      },
       _ => { expected("a declaration", ts) }
     }
   }
@@ -1537,7 +1572,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
         match(peek(ts)) {
           (WEOF, _) => { Done((SmlList.rev(decs), SmlList.rev(exps)), ts) },
           _ => {
-            if (if (startsDecl(ts)) { true } else { isKey("from", ts) }) {
+            if (if (if (startsDecl(ts)) { true } else { isKey("from", ts) }) { true } else { startsExport(ts) }) {
               bind(parseDecl(ts))((ds) => (ts) => { items(SmlList.revAppend(ds, decs), exps, ts) })
             } else {
               bind(parseExp(ts))((e) => (ts) => {

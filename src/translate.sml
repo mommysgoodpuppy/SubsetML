@@ -707,6 +707,7 @@ structure Translate = struct
       val first =
         case WmLexer.lex src of
           WmLexer.Tokens ((WmLexer.WKey "from", p) :: _, _) => SOME p
+        | WmLexer.Tokens ((WmLexer.WName ["export"], p) :: (WmLexer.WKey "from", _) :: _, _) => SOME p
         | _ => (case decs of d :: _ => SOME (decPos d) | [] => NONE)
       val structureLine =
         case first of

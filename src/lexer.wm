@@ -21,9 +21,9 @@ from "./subset_source.wm" import * as SubsetSource;
 from "./subset_string.wm" import * as SubsetString;
 from "./compiler_text.wm" import * as CompilerText;
 
-from "./subset_option_value.wm" import *;
+export from "./subset_option_value.wm" import *;
 
-from "./syntax.wm" import *;
+export from "./syntax.wm" import *;
 
 type Token =
   | TKey<String> // reserved word or reserved punctuation

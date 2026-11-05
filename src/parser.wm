@@ -31,10 +31,10 @@ from "./sml_list.wm" import * as SmlList;
 from "./subset_order.wm" import * as SubsetOrder;
 from "./subset_bool.wm" import * as SubsetBool;
 
-from "./subset_option_value.wm" import *;
+export from "./subset_option_value.wm" import *;
 
-from "./syntax.wm" import *;
-from "./lexer.wm" import *;
+export from "./syntax.wm" import *;
+export from "./lexer.wm" import *;
 
 type Toks = List<(Token, Pos)>;
 

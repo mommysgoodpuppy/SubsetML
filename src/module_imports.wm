@@ -19,7 +19,7 @@ from "./subset_char.wm" import * as SubsetChar;
 from "./wm_lexer.wm" import * as WmLexer;
 from "./subset_bool.wm" import * as SubsetBool;
 
-from "./subset_option_value.wm" import *;
+export from "./subset_option_value.wm" import *;
 
 type Dependency = | Import<String, String, Syntax.Pos>;
 type Result = Imports<List<Dependency>> | Error<String, Syntax.Pos>;

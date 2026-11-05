@@ -33,9 +33,9 @@ from "./subset_source.wm" import * as SubsetSource;
 from "./subset_bool.wm" import * as SubsetBool;
 from "./subset_string.wm" import * as SubsetString;
 
-from "./subset_option_value.wm" import *;
+export from "./subset_option_value.wm" import *;
 
-from "./syntax.wm" import *;
+export from "./syntax.wm" import *;
 
 type Line = (I32, String, Option<Pos>);
 

@@ -29,10 +29,10 @@ from "./parser.wm" import * as Parser;
 from "./elab.wm" import * as Elab;
 from "./sml_list.wm" import * as SmlList;
 
-from "./subset_option_value.wm" import *;
+export from "./subset_option_value.wm" import *;
 
-from "./types.wm" import *;
-from "./env.wm" import *;
+export from "./types.wm" import *;
+export from "./env.wm" import *;
 
 // ---------------------------------------------------------------------------------------
 // Types

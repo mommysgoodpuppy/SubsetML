@@ -35,12 +35,12 @@ from "./sml_list_pair.wm" import * as SmlListPair;
 from "./subset_bool.wm" import * as SubsetBool;
 from "./subset_result.wm" import * as SubsetResult;
 
-from "./subset_option_value.wm" import *;
+export from "./subset_option_value.wm" import *;
 
-from "./syntax.wm" import *;
-from "./types.wm" import *;
-from "./unify.wm" import *;
-from "./env.wm" import *;
+export from "./syntax.wm" import *;
+export from "./types.wm" import *;
+export from "./unify.wm" import *;
+export from "./env.wm" import *;
 
 // The context: environment, level, and the explicit type variables in scope.
 type Context = (Env, I32, List<String>);

@@ -32,9 +32,9 @@ from "./compiler_text.wm" import * as CompilerText;
 from "./subset_bool.wm" import * as SubsetBool;
 from "./subset_string.wm" import * as SubsetString;
 
-from "./subset_option_value.wm" import *;
+export from "./subset_option_value.wm" import *;
 
-from "./types.wm" import *;
+export from "./types.wm" import *;
 
 type Var = Free<Kind, I32> | Bound<Ty>; // kind, level
 

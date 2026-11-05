@@ -448,7 +448,7 @@ structure WmPrint = struct
         if SmlList.all (fn id => SmlList.exists (fn s => [s] = id) structures) ids
         then stack (SmlList.map (fn id =>
           let val SubsetResult.Ok name = SubsetList.last id in
-            atom (p, "from \"./" ^ fileName (dotted ([], name)) ^ "\" import *;")
+            atom (p, "export from \"./" ^ fileName (dotted ([], name)) ^ "\" import *;")
           end) ids)
         else unsupportedDeclaration ()
 

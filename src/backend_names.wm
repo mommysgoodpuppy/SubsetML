@@ -20,7 +20,7 @@ from "./subset_bool.wm" import * as SubsetBool;
 from "./subset_char.wm" import * as SubsetChar;
 from "./elab.wm" import * as Elab;
 
-from "./subset_option_value.wm" import *;
+export from "./subset_option_value.wm" import *;
 
 type Binding = | Binding<String, String, Bool>;
 type Scope = | Scope<List<Binding>, List<Binding>>;
