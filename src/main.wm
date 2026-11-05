@@ -68,10 +68,12 @@ from "./subset_option_value.wm" import *;
 let eprint = (text) => {
   match(SubsetIo.writeStderr(CompilerText.characters(text))) {
     SubsetResult.Ok(result) => { result },
-    SubsetResult.Err(error) => { SubsetProcess.exit(false) }
+    SubsetResult.Err(error) => { SubsetProcess.exit(SubsetProcess.failure) }
   }
 };
-let fatal = (message) => { (eprint(message ++ "\n"); SubsetProcess.exit(false)) };
+let fatal = (message) => {
+  (eprint(message ++ "\n"); SubsetProcess.exit(SubsetProcess.failure))
+};
 let readFile = (path) => {
   match(SubsetIo.readFile(path)) {
     SubsetResult.Ok(bytes) => { CompilerText.stringOf(bytes) },
@@ -163,11 +165,13 @@ let sourceErrorText = match {
 let usage = () => {
   (
     eprint("usage: subsetml (check-portable | check | parse | fmt | roundtrip) FILE...\n       subsetml native OUTDIR FILE.sml...\n       subsetml sml-target (mlton | mlworks) OUTDIR [--adapter CHECKER.sml NATIVE.sml]... FILE.sml...\n       subsetml wm OUTDIR FILE...\n       subsetml sml OUTDIR [--panic-runtime R.wm] FILE.wm...\n       subsetml sml-entry OUTDIR [--basis DIR] [--panic-runtime R.wm] [--native-adapter CHECKER.wm NATIVE.sml STRUCTURE]... ENTRY.wm\n");
-    SubsetProcess.exit(false)
+    SubsetProcess.exit(SubsetProcess.failure)
   )
 };
 
-let finish = (ok) => { SubsetProcess.exit(ok) };
+let finish = (ok) => {
+  SubsetProcess.exit(if (ok) { SubsetProcess.success } else { SubsetProcess.failure })
+};
 
 // Runs `f` on every file once all of them have parsed.
 let withParsed = (files, f) => {

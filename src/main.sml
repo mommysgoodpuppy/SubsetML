@@ -43,8 +43,8 @@ structure Main = struct
   val eprint = fn text =>
     case SubsetIo.writeStderr (CompilerText.characters text) of
       SubsetResult.Ok result => result
-    | SubsetResult.Err error => SubsetProcess.exit false
-  val fatal = fn message => (eprint (message ^ "\n"); SubsetProcess.exit false)
+    | SubsetResult.Err error => SubsetProcess.exit SubsetProcess.failure
+  val fatal = fn message => (eprint (message ^ "\n"); SubsetProcess.exit SubsetProcess.failure)
   val readFile = fn path =>
     case SubsetIo.readFile path of
       SubsetResult.Ok bytes => CompilerText.stringOf bytes
@@ -119,9 +119,9 @@ structure Main = struct
 
   val usage = fn () =>
     (eprint "usage: subsetml (check-portable | check | parse | fmt | roundtrip) FILE...\n       subsetml native OUTDIR FILE.sml...\n       subsetml sml-target (mlton | mlworks) OUTDIR [--adapter CHECKER.sml NATIVE.sml]... FILE.sml...\n       subsetml wm OUTDIR FILE...\n       subsetml sml OUTDIR [--panic-runtime R.wm] FILE.wm...\n       subsetml sml-entry OUTDIR [--basis DIR] [--panic-runtime R.wm] [--native-adapter CHECKER.wm NATIVE.sml STRUCTURE]... ENTRY.wm\n";
-     SubsetProcess.exit false)
+     SubsetProcess.exit SubsetProcess.failure)
 
-  val finish = fn ok => SubsetProcess.exit ok
+  val finish = fn ok => SubsetProcess.exit (if ok then SubsetProcess.success else SubsetProcess.failure)
 
   (* Runs `f` on every file once all of them have parsed. *)
   val withParsed = fn (files, f) =>

@@ -13,8 +13,8 @@ structure IoPortable = struct
       val checked = read andalso absent andalso invalid andalso written
       val out = success (SubsetIo.writeStdout SubsetChar.byteChars)
       val err = success (SubsetIo.writeStderr SubsetChar.byteChars)
-    in SubsetProcess.exit (checked andalso out andalso err) end
+    in SubsetProcess.exit (if checked andalso out andalso err then SubsetProcess.success else SubsetProcess.failure) end
   val _ = case SubsetProcess.arguments () of
     SubsetResult.Ok [input, output, missing] => run (input, output, missing)
-  | other => SubsetProcess.exit false
+  | other => SubsetProcess.exit SubsetProcess.failure
 end

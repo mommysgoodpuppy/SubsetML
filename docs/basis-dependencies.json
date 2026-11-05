@@ -222,7 +222,14 @@
       ],
       "primitives": [
         "SubsetHost.arguments",
-        "SubsetHost.exit"
+        "SubsetHost.exit",
+        "SubsetHost.failure",
+        "SubsetHost.getEnv",
+        "SubsetHost.isSuccess",
+        "SubsetHost.status",
+        "SubsetHost.success",
+        "SubsetHost.system",
+        "SubsetHost.terminate"
       ]
     },
     "SubsetWonValue": {
@@ -339,7 +346,14 @@
         "writeStdout",
         "writeStderr",
         "arguments",
-        "exit"
+        "exit",
+        "terminate",
+        "status",
+        "success",
+        "failure",
+        "isSuccess",
+        "system",
+        "getEnv"
       ]
     }
   }

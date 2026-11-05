@@ -1,3 +1,4 @@
+from "basis/option_value.wm" import * as SubsetOptionValue;
 from "basis/result.wm" import * as SubsetResult;
 
 /* Type declarations expressed as checked stubs. Select the native adapter;
@@ -21,7 +22,18 @@ let writeStderr = (data: String) => {
 let arguments = () => {
   (SubsetResult.Err("native adapter required"): SubsetResult.Result<List<String>, String>)
 };
-let exit = (success: Bool) => { void };
+type Status = | Status<I32>;
+let success = Status(0);
+let failure = Status(1);
+let isSuccess = (status: Status) => { match(status) { Status(code) => { code == 0 } } };
+let system = (command: String) => {
+  (SubsetResult.Err("native adapter required"): SubsetResult.Result<Status, String>)
+};
+let getEnv = (name: String) => {
+  (SubsetOptionValue.None: SubsetOptionValue.Option<String>)
+};
+let exit = (status: Status) => { void };
+let terminate = (status: Status) => { void };
 let makeDir = (name: String) => {
   (SubsetResult.Err("native adapter required"): SubsetResult.Result<Void, String>)
 };

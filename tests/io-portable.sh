@@ -40,9 +40,9 @@ let _ = match(Process.arguments()) {
       R.Err(Io.NonByte(offset)) => { offset == 0 },
       _ => { false }
     };
-    Process.exit(checked)
+    Process.exit(if (checked) { Process.success } else { Process.failure })
   },
-  _ => { Process.exit(false) }
+  _ => { Process.exit(Process.failure) }
 };
 WM
   wm run "$tmp/wm/foreign_io.wm" -- "$tmp/input-å.bin" "$tmp/workman.bin" "$tmp/missing.bin" > "$tmp/foreign.out" 2> "$tmp/foreign.err"

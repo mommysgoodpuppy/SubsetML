@@ -1,4 +1,5 @@
 (* @subsetml
+from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./subset_result.sml" import * as SubsetResult;
 *)
 
@@ -17,5 +18,13 @@ structure SubsetHost = struct
     (SubsetResult.Err "host adapter not staged" : (unit, string) SubsetResult.result)
   val arguments = fn () =>
     (SubsetResult.Err "host adapter not staged" : (string list, string) SubsetResult.result)
-  val exit = fn (success : bool) => ()
+  datatype status = Status of int
+  val success = Status 0
+  val failure = Status 1
+  val isSuccess = fn Status code => code = 0
+  val system = fn (command : string) =>
+    (SubsetResult.Err "host adapter not staged" : (status, string) SubsetResult.result)
+  val getEnv = fn (name : string) => (SubsetOptionValue.NONE : string SubsetOptionValue.option)
+  val exit = fn (status : status) => ()
+  val terminate = fn (status : status) => ()
 end

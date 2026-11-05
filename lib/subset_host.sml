@@ -28,5 +28,30 @@ structure SubsetHost = struct
   fun writeStdout data = protect (fn () => writeAll (stdout, data))
   fun writeStderr data = protect (fn () => writeAll (stderr, data))
   fun arguments () = protect CommandLine.arguments
-  fun exit success : unit = OS.Process.exit (if success then OS.Process.success else OS.Process.failure)
+  fun withoutNul value =
+    if List.exists (fn c => c = #"\000") (String.explode value)
+    then raise Fail "NUL in command" else value
+  (* An exit code, not OS.Process.status: MLton's system returns a raw wait status, which its own
+     exit rejects, so the code has to be recovered here to survive the trip from system to exit. *)
+  type status = int
+  val success = 0
+  val failure = 1
+  fun isSuccess status = status = 0
+  fun exitCode status = case Unix.fromStatus status of
+      Unix.W_EXITED => 0
+    | Unix.W_EXITSTATUS code => Word8.toInt code
+    | Unix.W_SIGNALED _ => 1
+    | Unix.W_STOPPED _ => 1
+  fun system command = protect (fn () => exitCode (OS.Process.system (withoutNul command)))
+  fun getEnv name = case OS.Process.getEnv name of
+      Option.NONE => SubsetOptionValue.NONE
+    | Option.SOME value => SubsetOptionValue.SOME value
+  fun exit status : unit =
+    if status = 0 then OS.Process.exit OS.Process.success
+    else if status = 1 then OS.Process.exit OS.Process.failure
+    else Unix.exit (Word8.fromInt status)
+  fun terminate status : unit =
+    if status = 0 then OS.Process.terminate OS.Process.success
+    else if status = 1 then OS.Process.terminate OS.Process.failure
+    else Unix.exit (Word8.fromInt status)
 end

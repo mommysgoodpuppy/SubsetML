@@ -56,6 +56,7 @@ test: bin/subsetml selfcheck
 	sh tests/kernel-portable.sh
 	sh tests/io-portable.sh
 	sh tests/process-panic.sh
+	sh tests/process-os.sh
 	sh tests/panic-lowering.sh
 	sh tests/cli-portable.sh
 	sh tests/module-loading.sh

@@ -260,13 +260,25 @@ zero-progress writes as errors. These operations are synchronous in the current 
 
 `SubsetProcess.arguments ()` returns `Ok` a list of validated argument byte strings, excluding
 the executable name, or a `SubsetIo.error`. It does not decode argument text.
-`SubsetProcess.exit success` terminates with success/failure (0/1 in the current adapters) and
-never returns. `SubsetProcess.panic : string -> 'a` attempts to write its byte-string message
+`SubsetProcess` follows the SML Basis `OS.Process`, with `Result` in place of exceptions:
+
+| Operation | Contract |
+|---|---|
+| `status`, `success`, `failure` | The host's termination status. `success` is the only successful value; other failure values exist. |
+| `isSuccess status` | Whether the status denotes success. |
+| `system command` | Run a validated byte-string command through the host's default shell, sharing this process's standard streams. `Ok` the status, including for a command that fails, or `Err` a `SubsetIo.error` if it could not run. |
+| `getEnv name` | `SOME` the value of an environment variable, otherwise `NONE`. |
+| `exit status`, `terminate status` | End the process and never return. A status from `system` keeps its exit code where the host can express it. |
+
+`atExit` needs host state and `sleep` needs a Time type, so they aren't provided yet. `Unix` is optional
+in the SML Basis and exposes stream handles, so it stays outside this profile. On the JS adapter a command and
+environment text cross the boundary as UTF-8. A child killed by a signal reports `failure` on the SML adapters and 128 plus the signal number on JS.
+
+`SubsetProcess.panic : string -> 'a` attempts to write its byte-string message
 followed by one newline to stderr, then exits unsuccessfully. It evaluates its argument once
 and never returns, including when message validation or stderr output fails. It does not add
 an implicit prefix, Unicode encoding, exception handler or recoverable Result. This is for
-terminal invariant failures; ordinary operational errors still use Result. Arbitrary status
-codes and stream handles are outside this initial profile.
+terminal invariant failures; ordinary operational errors still use Result.
 
 The native adapter uses binary file I/O and raw POSIX output. The Workman adapter uses a
 Latin-1 carrier string only inside the FFI boundary, with Node binary file/output calls. It
@@ -677,7 +689,7 @@ custom module declares its source dependencies and explicit primitive calls. The
 | `SubsetUtf16Source` | SubsetOptionValue, SubsetResult, SubsetList, SubsetUnicode, SubsetUtf8, SubsetUtf16, SubsetChar | SubsetTextHost.codes |
 | `SubsetSmlEscape` | SubsetOptionValue, SubsetList, SubsetResult, SubsetString | none directly; native-string entry uses extraction through SubsetString |
 | `SubsetIo` | SubsetList, SubsetResult, SubsetString | SubsetHost.canonicalPath, readFile, writeFile, writeStdout, writeStderr |
-| `SubsetProcess` | SubsetIo, SubsetList, SubsetResult | SubsetHost.arguments, exit |
+| `SubsetProcess` | SubsetIo, SubsetList, SubsetResult | SubsetHost.arguments, exit, failure, getEnv, isSuccess, success, system, terminate |
 
 This does not mean a backend needs no runtime. It needs ordinary language support for datatype
 values, lists, tuples, booleans, unit, functions, pattern matching, recursion, character literals and character equality. Options are source-defined datatypes.
