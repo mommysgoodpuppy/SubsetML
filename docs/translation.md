@@ -277,9 +277,9 @@ is an ordinary included module, so generated imports use the normal translation 
 `lib/subset_text_host.sml`. Shared source performs byte validation, construction and indexing.
 Reverse-translation checks use the generated stub before staging the target adapter.
 
-SML `andalso` and `orelse` translate to `if` branches: Workman's `&&` and `||` are
-eager operators. In the reverse direction, those eager operators become a case on both
-operands, preserving their evaluation. Round-trip normalization treats the source short-circuit
+SML `andalso` and `orelse` translate to `if` branches, and Workman's `&&` and `||` translate
+back to `andalso` and `orelse`. Both languages evaluate the right operand only when the left
+one doesn't decide the result. Round-trip normalization treats the source short-circuit
 forms and their conditional expansions as equivalent.
 
 The Workman printer's own text operations use the portable byte layer. One-character strings

@@ -607,12 +607,8 @@ structure WmParse = struct
                     else
                       bind (parseBinary (level + 1, advance ts)) (fn r => fn ts =>
                         more (case opr of
-                                "&&" => ECase (ETuple [l, r],
-                                  [(PTuple [PId (p, ([], "true")), PId (p, ([], "true"))], EId (p, ([], "true"))),
-                                   (PWild, EId (p, ([], "false")))])
-                              | "||" => ECase (ETuple [l, r],
-                                  [(PTuple [PId (p, ([], "false")), PId (p, ([], "false"))], EId (p, ([], "false"))),
-                                   (PWild, EId (p, ([], "true")))])
+                                "&&" => EAndalso (l, r)
+                              | "||" => EOrelse (l, r)
                               | _ =>
                                   case (opr, l) of
                                     ("==", ETyped (x, TyCon ([], ([], "real")))) =>

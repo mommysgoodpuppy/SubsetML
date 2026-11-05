@@ -55,20 +55,20 @@ for source in "$tmp/short_circuit.sml" "$tmp/sml/short_circuit.sml"; do
   mlton -output "$tmp/boolean" "$tmp/boolean.mlb"
   [ "$("$tmp/boolean")" = CD ]
 done
-cat > "$tmp/wm/eager_boolean.wm" <<'WM'
+cat > "$tmp/wm/lazy_boolean.wm" <<'WM'
 let mark = (label) => { print(label); true };
 let a = false && mark("A");
 let b = true || mark("B");
 WM
-$bin sml "$tmp/sml" "$tmp/wm/eager_boolean.wm"
-printf '$(SML_LIB)/basis/basis.mlb\n%s\n' "$tmp/sml/eager_boolean.sml" > "$tmp/boolean.mlb"
+$bin sml "$tmp/sml" "$tmp/wm/lazy_boolean.wm"
+printf '$(SML_LIB)/basis/basis.mlb\n%s\n' "$tmp/sml/lazy_boolean.sml" > "$tmp/boolean.mlb"
 mlton -output "$tmp/boolean" "$tmp/boolean.mlb"
-[ "$("$tmp/boolean")" = AB ]
+[ -z "$("$tmp/boolean")" ]
 if command -v wm >/dev/null 2>&1; then
   wm run "$tmp/wm/short_circuit.wm" > "$tmp/boolean.out"
   [ "$(tr -d '\n\r' < "$tmp/boolean.out")" = CD ]
-  wm run "$tmp/wm/eager_boolean.wm" > "$tmp/boolean.out"
-  [ "$(tr -d '\n\r' < "$tmp/boolean.out")" = AB ]
+  wm run "$tmp/wm/lazy_boolean.wm" > "$tmp/boolean.out"
+  [ -z "$(tr -d '\n\r' < "$tmp/boolean.out")" ]
 fi
 echo 'boolean evaluation order: ok'
 
