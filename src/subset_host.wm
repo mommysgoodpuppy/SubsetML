@@ -1,3 +1,4 @@
+// Copied from lib/subset_host.wm by `make wm`. Do not edit: change the file in lib/.
 // CLI and canonical filesystem identity. Representation adaptation stays at this boundary.
 // The JS calls never throw: each fallible one returns (succeeded, value or message).
 from "./subset_result.wm" import * as SubsetResult;

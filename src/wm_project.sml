@@ -225,7 +225,9 @@ structure WmProject = struct
       | WmLexer.Tokens (tokens, comments) =>
           SubsetResult.map (imports (tokens, [], [], []), fn (edges, body) =>
             Source (unit, edges, WmLexer.Tokens (body,
-              SubsetList.filter (comments, fn (_, body, _) => case ModuleImports.marked body of NONE => true | SOME _ => false))))
+              SubsetList.filter (comments, fn (_, body, _) =>
+                (case ModuleImports.marked body of NONE => true | SOME _ => false) andalso
+                SubsetBool.not (ModuleImports.isGeneratedHeader body)))))
     end
 
   val order = fn sources =>

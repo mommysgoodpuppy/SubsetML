@@ -35,6 +35,10 @@ structure ModuleImports = struct
       else NONE
     end
 
+  val isGeneratedHeader = fn body =>
+    prefix (CompilerText.stringOf (SubsetList.dropWhile (CompilerText.characters body, SubsetChar.isSpace)),
+            WmLexer.generatedMarker)
+
   (* Supported specifiers are explicit POSIX relative paths in the common local profile.
      URL escaping/query syntax and non-ASCII specifiers are rejected, not approximated. *)
   val validPath = fn path =>

@@ -382,7 +382,8 @@ structure Translate = struct
         TranslateError (path ^ ": structure " ^ self ^ " must be in a file named "
                         ^ CompilerText.slice (expected, 0, CompilerText.size expected - 3) ^ ".sml")
       else
-        Output (baseName path ^ ".wm", Doc.render (src, comments, WmPrint.commentStyle, body),
+        Output (baseName path ^ ".wm",
+                WmLexer.generatedHeader (baseName path) ^ Doc.render (src, comments, WmPrint.commentStyle, body),
                 conventionWarnings (decs, exps)))
     end
 

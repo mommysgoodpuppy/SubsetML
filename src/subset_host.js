@@ -1,3 +1,4 @@
+// Copied from lib/subset_host.js by `make wm`. Do not edit: change the file in lib/.
 // Deno/Node adapter. Latin-1 strings carry raw bytes across the FFI boundary.
 // Nothing throws: a fallible call returns [true, value] or [false, message].
 import { readFileSync, writeFileSync, writeSync, realpathSync } from "node:fs";
