@@ -274,6 +274,10 @@ the executable name, or a `SubsetIo.error`. It does not decode argument text.
 in the SML Basis and exposes stream handles, so it stays outside this profile. On the JS adapter a command and
 environment text cross the boundary as UTF-8. A child killed by a signal reports `failure` on the SML adapters and 128 plus the signal number on JS.
 
+`SubsetOs` is the Basis `OS` structure. `SubsetOs.Process` is an alias of `SubsetProcess`, and
+`SubsetOs.Path` of `SubsetPath`.
+Workman imports it as `from "basis/os.wm" import * as OS;` and writes `OS.Process.system(...)`.
+
 `SubsetProcess.panic : string -> 'a` attempts to write its byte-string message
 followed by one newline to stderr, then exits unsuccessfully. It evaluates its argument once
 and never returns, including when message validation or stderr output fails. It does not add
@@ -690,6 +694,7 @@ custom module declares its source dependencies and explicit primitive calls. The
 | `SubsetSmlEscape` | SubsetOptionValue, SubsetList, SubsetResult, SubsetString | none directly; native-string entry uses extraction through SubsetString |
 | `SubsetIo` | SubsetList, SubsetResult, SubsetString | SubsetHost.canonicalPath, readFile, writeFile, writeStdout, writeStderr |
 | `SubsetProcess` | SubsetIo, SubsetList, SubsetResult | SubsetHost.arguments, exit, failure, getEnv, isSuccess, success, system, terminate |
+| `SubsetOs` | SubsetPath, SubsetProcess | none directly |
 
 This does not mean a backend needs no runtime. It needs ordinary language support for datatype
 values, lists, tuples, booleans, unit, functions, pattern matching, recursion, character literals and character equality. Options are source-defined datatypes.

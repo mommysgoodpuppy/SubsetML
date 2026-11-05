@@ -12,7 +12,8 @@ for name, module in modules.items():
     syntax = re.sub(r'"(?:[^"\\]|\\.)*"', '', syntax)
     qualified = set(re.findall(r"\b[A-Z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_']+|\.[!%&$#+/:<=>?@\\~`^|*\-]+)+", syntax))
     opened = set(re.findall(r'\(open ([A-Z][A-Za-z0-9_]*)', syntax))
-    roots = ({ref.split('.')[0] for ref in qualified} | opened) - {name}
+    aliased = set(re.findall(r'\(alias [A-Za-z0-9_]+ ([A-Z][A-Za-z0-9_]*)\)', syntax))
+    roots = ({ref.split('.')[0] for ref in qualified} | opened | aliased) - {name}
     declared = set(module['sourceDependencies'])
     primitive_refs = set(module['primitives'])
     actual_sources = roots & modules.keys()

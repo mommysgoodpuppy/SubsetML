@@ -286,6 +286,14 @@
         "SubsetText"
       ],
       "primitives": []
+    },
+    "SubsetOs": {
+      "source": "src/subset_os.sml",
+      "sourceDependencies": [
+        "SubsetPath",
+        "SubsetProcess"
+      ],
+      "primitives": []
     }
   },
   "languageRequirements": [

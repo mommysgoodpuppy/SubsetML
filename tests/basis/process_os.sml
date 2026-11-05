@@ -1,6 +1,7 @@
 (* @subsetml
 from "../../src/subset_option_value.sml" import * as SubsetOptionValue;
 from "../../src/subset_process.sml" import * as SubsetProcess;
+from "../../src/subset_os.sml" import * as SubsetOs;
 from "../../src/subset_result.sml" import * as SubsetResult;
 *)
 structure ProcessOs = struct
@@ -10,6 +11,7 @@ structure ProcessOs = struct
     | SubsetResult.Err _ => false
   val checked =
     SubsetProcess.isSuccess SubsetProcess.success andalso
+    SubsetOs.Process.isSuccess SubsetOs.Process.success andalso
     not (SubsetProcess.isSuccess SubsetProcess.failure) andalso
     succeeds "printf ran" andalso
     not (succeeds "exit 3") andalso
