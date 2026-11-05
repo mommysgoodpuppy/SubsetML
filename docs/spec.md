@@ -256,7 +256,7 @@ strdec ::= dec
 | Form | Status |
 |---|---|
 | `structure strid = struct dec end` at top level | kept |
-| structure declarations inside `struct … end` (nesting) | **omitted** |
+| structure declarations inside `struct … end` (nesting) | **omitted**, except the alias of M2 |
 | any other `strexp` (`longstrid`, `let … in strexp end`, ascription) | **omitted** |
 | `local` at structure level | **omitted** |
 | `signature`, `sig … end`, `:`/`:>` ascription, `where type`, sharing, `include`, `eqtype` | **omitted** |
@@ -267,7 +267,23 @@ any other top-level declarations. Each file corresponds to one Workman module: t
 `FooBar` lives in `foo_bar.sml`, which becomes `foo_bar.wm`, and the file's other top-level
 declarations join that module.
 
-Long identifiers may still have several qualifiers when the supplied library environment
+**Restriction M2.** The only structure declaration inside a `struct` is an alias, the counterpart
+of Workman's `export from "./file.wm" import * as Name;`:
+
+```sml
+structure OS = struct
+  structure Process = SubsetProcess
+  val shell = Process.system
+end
+```
+
+An alias appears before the structure's other declarations, names a whole structure the program
+declares by its unqualified name, and binds one name. It isn't a general structure expression:
+`struct … end` bodies, qualified targets, Basis targets, `and`, and aliases at top level or in
+`let` all stay omitted. Each is a compatible restriction of the Definition's `structure strid =
+longstrid`, so a valid program means the same to other SML compilers.
+
+Long identifiers may have several qualifiers when an alias or the supplied library environment
 contains nested structures. `OS.Process.exit` is an example in the current bootstrap layer.
 
 ## 8. Programs (§8)
@@ -359,6 +375,6 @@ examples, backend requirements and current scope.
 ## 11. Open questions
 
 * Whether to add the `word` type.
-* Structure aliases `structure A = B`.
+* Structure aliases beyond M2, such as `structure A = B` at top level.
 * Whether to require exhaustive matches, which would remove `Match` at runtime for native code.
   That is an extra restriction, so the Definition allows it.

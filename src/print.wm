@@ -124,7 +124,15 @@ let strdec = match {
   SStructure(_, bs) => {
     node(
       "structure",
-      SmlList.map((name, ds) => { node(name, SmlList.map(dec)(ds)) })(bs)
+      SmlList.map((name, aliases, ds) => {
+        node(
+          name,
+          SubsetList.append(
+            SmlList.map((_, alias, target) => { node("alias", [alias, target]) })(aliases),
+            SmlList.map(dec)(ds)
+          )
+        )
+      })(bs)
     )
   }
 };

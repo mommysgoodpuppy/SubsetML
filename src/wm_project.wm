@@ -47,7 +47,8 @@ export from "./subset_option_value.wm" import *;
 type Input = | Input<ModuleProject.Resolved, String, String>;
 type ProjectUnit = | Unit<Input, String, String>;
 type Edge = | Edge<String, Syntax.Pos, String, ModuleProject.ModuleId>;
-type Source = | Source<ProjectUnit, List<Edge>, WmLexer.Result>;
+type Source =
+  | Source<ProjectUnit, List<Edge>, List<Syntax.StructureAlias>, WmLexer.Result>;
 type Error = | Error<String, String, String, Syntax.Pos>;
 
 let failure = (path, src, message, pos) => { SubsetResult.Err(Error(path, src, message, pos)) };
@@ -67,10 +68,10 @@ let textOf = match {
   Unit(Input(_, _, src), _, _) => { src }
 };
 let sourceUnit = match {
-  Source(unit, _, _) => { unit }
+  Source(unit, _, _, _) => { unit }
 };
 let edgesOf = match {
-  Source(_, edges, _) => { edges }
+  Source(_, edges, _, _) => { edges }
 };
 
 // "basis/won.wm" names the Basis module subset_won.wm, as in Workman.
@@ -344,7 +345,7 @@ let prepare = (basis, units, unit) => {
       }
     }
   };
-  let rec imports = (tokens, edges, aliases, opens) => {
+  let rec imports = (tokens, edges, aliases, opens, exported) => {
     match(tokens) {
       [
         (WmLexer.WKey("from"), Var(pos)),
@@ -374,7 +375,8 @@ let prepare = (basis, units, unit) => {
                   rest,
                   [Edge(specifier, pos, alias, identity(child)), ..edges],
                   [(alias, name(child)), ..aliases],
-                  opens
+                  opens,
+                  exported
                 )
               }
             )
@@ -399,13 +401,14 @@ let prepare = (basis, units, unit) => {
                 Edge(_, _, _, target) => { ModuleProject.same(target, identity(child)) }
               }
             );
-            if (known) { imports(rest, edges, aliases, opened) } else {
+            if (known) { imports(rest, edges, aliases, opened, exported) } else {
               // No alias: an open alone doesn't make the module's name usable as a qualifier.
               imports(
                 rest,
                 [Edge(specifier, pos, name(child), identity(child)), ..edges],
                 aliases,
-                opened
+                opened,
+                exported
               )
             }
           }
@@ -440,14 +443,49 @@ let prepare = (basis, units, unit) => {
           ],
           edges,
           aliases,
-          opens
+          opens,
+          exported
+        )
+      },
+      // `structure Alias = Target`. The body's uses are rewritten like a private alias's.
+      [
+        (WmLexer.WName(["export"]), _),
+        (WmLexer.WKey("from"), Var(pos)),
+        (WmLexer.WScon(Syntax.SString(specifier)), Var(specifierPos)),
+        (WmLexer.WKey("import"), Var(importPos)),
+        (WmLexer.WKey("*"), Var(starPos)),
+        (WmLexer.WKey("as"), Var(asPos)),
+        (WmLexer.WName([alias]), Var(aliasPos)),
+        (WmLexer.WKey(";"), Var(endPos)),
+        ..rest
+      ] => {
+        SubsetResult.andThen(
+          dependency(specifier, pos),
+          (child) => {
+            imports(
+              [
+                (WmLexer.WKey("from"), pos),
+                (WmLexer.WScon(Syntax.SString(specifier)), specifierPos),
+                (WmLexer.WKey("import"), importPos),
+                (WmLexer.WKey("*"), starPos),
+                (WmLexer.WKey("as"), asPos),
+                (WmLexer.WName([alias]), aliasPos),
+                (WmLexer.WKey(";"), endPos),
+                ..rest
+              ],
+              edges,
+              aliases,
+              opens,
+              [(pos, alias, name(child)), ..exported]
+            )
+          }
         )
       },
       [(WmLexer.WName(["export"]), _), (WmLexer.WKey("from"), Var(pos)), .._] => {
         failure(
           path,
           src,
-          "only `export from \"./file.wm\" import *;` has an SML counterpart: SubsetML has no nested structures",
+          "only `export from \"./file.wm\" import *;` and `import * as Name;` have an SML counterpart",
           pos
         )
       },
@@ -488,7 +526,11 @@ let prepare = (basis, units, unit) => {
         SubsetResult.map(
           rewrite(tokens, []),
           (body) => {
-            (SubsetList.reverse(edges), SubsetList.append(SubsetList.reverse(opens), body))
+            (
+              SubsetList.reverse(edges),
+              SubsetList.reverse(exported),
+              SubsetList.append(SubsetList.reverse(opens), body)
+            )
           }
         )
       }
@@ -498,11 +540,12 @@ let prepare = (basis, units, unit) => {
     WmLexer.LexError(message, pos) => { failure(path, src, message, pos) },
     WmLexer.Tokens(tokens, comments) => {
       SubsetResult.map(
-        imports(tokens, [], [], []),
-        (edges, body) => {
+        imports(tokens, [], [], [], []),
+        (edges, exported, body) => {
           Source(
             unit,
             edges,
+            exported,
             WmLexer.Tokens(
               body,
               SubsetList.filter(

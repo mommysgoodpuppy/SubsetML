@@ -697,6 +697,23 @@ structure Parser = struct
   (* ---------------------------------------------------------------------------------------- *)
   (* Structures and programs *)
 
+  (* Restriction M2: only `structure Name = Target`, and only before the body's declarations. *)
+  val rec parseStructureAliases = fn (aliases, ts) =>
+    case (isKey (";", ts), isKey ("structure", ts)) of
+      (true, _) => parseStructureAliases (aliases, advance ts)
+    | (false, false) => Done (SubsetList.reverse aliases, ts)
+    | (false, true) =>
+        let val pos = posOf ts in
+          bind (bindableId ("a structure name", advance ts)) (fn name => fn ts =>
+            bind (expect ("=", ts)) (fn _ => fn ts =>
+              case (isKey ("struct", ts), SubsetList.exists (aliases, fn (_, other, _) => other = name)) of
+                (true, _) => Fail ("nested structures are not part of SubsetML", posOf ts)
+              | (false, true) => Fail ("duplicate structure alias " ^ name, pos)
+              | (false, false) =>
+                  bind (bindableId ("the name of a program structure", ts)) (fn target => fn ts =>
+                    parseStructureAliases ((pos, name, target) :: aliases, ts))))
+        end
+
   val parseStrBind = fn ts =>
     bind (bindableId ("a structure name", ts)) (fn name => fn ts =>
       if isKey (":", ts) then Fail ("signature ascription is not part of SubsetML", posOf ts)
@@ -705,11 +722,12 @@ structure Parser = struct
           if SubsetBool.not (isKey ("struct", ts)) then
             Fail ("only `struct ... end` structure expressions are part of SubsetML", posOf ts)
           else
-            bind (parseDecs (advance ts)) (fn ds => fn ts =>
-              if isKey ("structure", ts) then
-                Fail ("nested structures are not part of SubsetML", posOf ts)
-              else
-                bind (expect ("end", ts)) (fn _ => fn ts => Done ((name, ds), ts)))))
+            bind (parseStructureAliases ([], advance ts)) (fn aliases => fn ts =>
+              bind (parseDecs ts) (fn ds => fn ts =>
+                if isKey ("structure", ts) then
+                  Fail ("nested structures are not part of SubsetML; a structure alias must precede the structure's declarations", posOf ts)
+                else
+                  bind (expect ("end", ts)) (fn _ => fn ts => Done ((name, aliases, ds), ts))))))
 
   val rec parseStrDecs = fn ts =>
     case (isKey ("structure", ts), startsDec ts) of

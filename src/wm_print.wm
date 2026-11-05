@@ -695,7 +695,7 @@ let topdec = (structures, td) => {
       stack(SmlList.map(match {
         SDec(d) => { dec(structures, d) },
         SStructure(_, binds) => {
-          stack(SmlList.map((_, ds) => { stack(SmlList.map((d) => { dec(structures, d) })(ds)) })(binds))
+          stack(SmlList.map((_, _, ds) => { stack(SmlList.map((d) => { dec(structures, d) })(ds)) })(binds))
         }
       })(sds))
     },

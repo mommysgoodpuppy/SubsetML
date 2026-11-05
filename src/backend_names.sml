@@ -3,6 +3,7 @@ from "./subset_bool.sml" import * as SubsetBool;
 from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./syntax.sml" import * as Syntax;
 from "./subset_list.sml" import * as SubsetList;
+from "./subset_string.sml" import * as SubsetString;
 from "./compiler_text.sml" import * as CompilerText;
 from "./subset_char.sml" import * as SubsetChar;
 from "./elab.sml" import * as Elab;
@@ -105,22 +106,53 @@ structure BackendNames = struct
             in Supply (prefix, next, Invalid (owner, pos, "duplicate source binding " ^ source) :: symbols) end
     in add (add (supply, values), types) end
 
+  (* The scopes a module's structure aliases and opens add to its imports, keyed by dotted path,
+     so `Os.Process.x` finds its members the way `Process.x` does. *)
+  val flatMap = fn (items, f) => SubsetList.concat (SubsetList.map (items, f))
+  val pathUnder = fn (key, name) =>
+    let val prefix = name ^ "." in
+      if CompilerText.size key > CompilerText.size prefix andalso
+        CompilerText.slice (key, 0, CompilerText.size prefix) = prefix
+      then SOME (CompilerText.drop (key, CompilerText.size prefix))
+      else NONE
+    end
+  val nestedScopes = fn (imports, target) =>
+    flatMap (imports, fn (key, scope) => case pathUnder (key, target) of
+      SOME path => [(path, scope)] | NONE => [])
+  val structureScopes = fn (imports, prog) =>
+    flatMap (prog, fn
+        Syntax.TopDecs sds => flatMap (sds, fn
+            Syntax.SStructure (_, binds) => flatMap (binds, fn (_, aliases, ds) =>
+              SubsetList.append (
+                flatMap (aliases, fn (_, name, target) =>
+                  SubsetList.append (
+                    SubsetList.map (SubsetList.filter (imports, fn (key, _) => key = target), fn (_, scope) => (name, scope)),
+                    SubsetList.map (nestedScopes (imports, target), fn (path, scope) => (name ^ "." ^ path, scope)))),
+                flatMap (ds, fn
+                    Syntax.DOpen (_, paths) => flatMap (paths, fn
+                        [target] => nestedScopes (imports, target)
+                      | _ => [])
+                  | _ => [])))
+          | Syntax.SDec _ => [])
+      | Syntax.TopExp (_, _) => [])
+
   val moduleWithRuntime = fn (runtime, owner, imports, prog, initial) =>
     let
       val Supply (prefix, _, _) = initial
+      val imports = SubsetList.append (structureScopes (imports, prog), imports)
+      val scopeAt = fn qualifiers =>
+        SubsetList.find (imports, fn (key, _) => key = SubsetString.concatWith (qualifiers, "."))
       val resolve = fn (Scope (values, types), space, (qualifiers, name)) =>
         let
           val bindings = case qualifiers of [] => if space = "value" then values else types
-            | [moduleName] => (case SubsetList.find (imports, fn (key, _) => key = moduleName) of
+            | _ => (case scopeAt qualifiers of
                 NONE => [] | SOME (_, Scope (values, types)) => if space = "value" then values else types)
-            | _ => []
         in case lookup (bindings, name) of NONE => (qualifiers, name)
           | SOME (Binding (_, target, _)) => (qualifiers, target) end
       val isConstructor = fn (Scope (values, _), (qualifiers, name)) =>
         let val bindings = case qualifiers of [] => values
-          | [moduleName] => (case SubsetList.find (imports, fn (key, _) => key = moduleName) of
+          | _ => (case scopeAt qualifiers of
               NONE => [] | SOME (_, Scope (values, _)) => values)
-          | _ => []
         in case lookup (bindings, name) of SOME (Binding (_, _, constructor)) => constructor
           | NONE => member (["true", "false", "nil", "::", "NONE", "SOME", "LESS", "EQUAL", "GREATER"], name) end
       val rec ty = fn (env, t) =>
@@ -359,10 +391,10 @@ structure BackendNames = struct
 
       val rec phrases = fn (prog, exports, supply) => case prog of
           [] => ([], exports, supply)
-        | Syntax.TopDecs [Syntax.SStructure (p, [(name, ds)])] :: rest =>
+        | Syntax.TopDecs [Syntax.SStructure (p, [(name, aliases, ds)])] :: rest =>
             let val (ds, _, body, next) = declarations (empty, ds, supply)
                 val (rest, exports, next) = phrases (rest, body, next)
-            in (Syntax.TopDecs [Syntax.SStructure (p, [(name, ds)])] :: rest, exports, next) end
+            in (Syntax.TopDecs [Syntax.SStructure (p, [(name, aliases, ds)])] :: rest, exports, next) end
         | Syntax.TopExp (p, e) :: rest =>
             let val (e, next) = expression (exports, e, supply)
                 val (rest, exports, next) = phrases (rest, exports, next)
@@ -382,7 +414,9 @@ structure BackendNames = struct
       val rec loop = fn (modules, cache, supply) => case modules of
           [] => ([], supply)
         | (name, dependencies, (path, src, prog, cs)) :: rest =>
-            let val imports = SubsetList.filter (cache, fn (key, _) => member (dependencies, key))
+            let val imports = SubsetList.filter (cache, fn (key, _) =>
+                  SubsetList.exists (dependencies, fn dependency =>
+                    key = dependency orelse (case pathUnder (key, dependency) of SOME _ => true | NONE => false)))
                 val (prog, exports, next) = moduleWithRuntime (runtime, name, imports, prog, supply)
                 val next = if runtimeUsed (next, name) then
                   (case runtime of SOME runtimeName =>
@@ -395,7 +429,9 @@ structure BackendNames = struct
                   (case runtime of SOME runtimeName =>
                     if member (dependencies, runtimeName) then dependencies else SubsetList.append (dependencies, [runtimeName])
                   | NONE => dependencies) else dependencies
-                val (rest, next) = loop (rest, (name, exports) :: cache, next)
+                val nested = SubsetList.map (structureScopes (imports, prog), fn (path, scope) =>
+                  (name ^ "." ^ path, scope))
+                val (rest, next) = loop (rest, SubsetList.append (nested, (name, exports) :: cache), next)
             in ((name, dependencies, (path, src, prog, cs)) :: rest, next) end
     in loop (modules, [], Supply (prefix, 0, [])) end
 

@@ -740,13 +740,26 @@ structure Elab = struct
   (* --------------------------------------------------------------------------------------- *)
   (* Top-level phrases (Definition §8) *)
 
+  (* Restriction M2: an alias names a whole program structure, as a Workman file's import does. *)
+  val structureAliases = fn (env, aliases, st) =>
+    foldRes (fn (delta, (pos, name, target), st) =>
+               case structureAt (env, [target]) of
+                 SOME entry =>
+                   let val (found, isBasis) = entry in
+                     if isBasis then Err ("SubsetML can only alias structures the program declares, not Basis structure " ^ target ^ " (spec M2)", pos)
+                     else Ok (plus (delta, withStructure (name, found, false)), st)
+                   end
+               | NONE => Err ("unbound structure " ^ target, pos),
+             empty, aliases, st)
+
   val strdec = fn (env, sd, st) =>
     case sd of
       SDec d => dec ((env, 0, []), d, st)
     | SStructure (_, binds) =>
-        foldRes (fn (delta, (name, ds), st) =>
-                   bind (decs ((env, 0, []), ds, st)) (fn body => fn st =>
-                     Ok (plus (delta, withStructure (name, body, false)), st)),
+        foldRes (fn (delta, (name, aliases, ds), st) =>
+                   bind (structureAliases (env, aliases, st)) (fn nested => fn st =>
+                     bind (decs ((plus (env, nested), 0, []), ds, st)) (fn body => fn st =>
+                       Ok (plus (delta, withStructure (name, plus (nested, body), false)), st))),
                  empty, binds, st)
 
   val topdec = fn (env, td, st) =>

@@ -249,7 +249,14 @@ structure Translate = struct
   (* The file's structure name, or "" when it has none. *)
   val structureOf = fn prog =>
     concatMap (fn
-        TopDecs sds => concatMap (fn SStructure (_, binds) => SmlList.map (fn (name, _) => name) binds | SDec _ => [], sds)
+        TopDecs sds => concatMap (fn SStructure (_, binds) => SmlList.map (fn (name, _, _) => name) binds | SDec _ => [], sds)
+      | TopExp (_, _) => [], prog)
+
+  val structureAliases = fn prog =>
+    concatMap (fn
+        TopDecs sds => concatMap (fn
+            SStructure (_, binds) => concatMap (fn (_, aliases, _) => aliases, binds)
+          | SDec _ => [], sds)
       | TopExp (_, _) => [], prog)
 
   datatype result =
@@ -268,7 +275,7 @@ structure Translate = struct
         concatMap (fn
             TopDecs sds =>
               concatMap (fn
-                  SStructure (_, binds) => concatMap (fn (_, ds) => SmlList.map (fn d => TopDecs [SDec d]) ds, binds)
+                  SStructure (_, binds) => concatMap (fn (_, _, ds) => SmlList.map (fn d => TopDecs [SDec d]) ds, binds)
                 | SDec d => [TopDecs [SDec (decStrip (self, d))]], sds)
           | TopExp (p, e) => [TopDecs [SDec
               (DVal (p, [], [(PId (p, ([], "it")), expStrip (self, e))], []))]], prog)
@@ -318,7 +325,7 @@ structure Translate = struct
       val top = fn td => case td of
           TopExp (_, e) => expression e
         | TopDecs ds => concatMap (fn SDec d => declaration d
-            | SStructure (_, binds) => concatMap (fn (_, ds) => concatMap (declaration, ds), binds), ds)
+            | SStructure (_, binds) => concatMap (fn (_, _, ds) => concatMap (declaration, ds), binds), ds)
     in concatMap (top, prog) end
 
   (* SML closes an unresolved numeric class to int; Workman closes it to Number. A program that
@@ -359,9 +366,13 @@ structure Translate = struct
         case prog of
           TopDecs (SStructure (p, _) :: _) :: _ => p
         | _ => 0
-      val imports =
+      val aliases = structureAliases prog
+      val isAlias = fn q => SmlList.exists (fn (_, name, _) => name = q) aliases
+      val imports = SubsetList.append (
         SmlList.map (fn q => Doc.atom (start, "from \"./" ^ WmPrint.fileName q ^ "\" import * as " ^ q ^ ";"))
-          (SmlList.filter (fn q => q <> self andalso SmlList.exists (fn s => s = q) structures) used)
+          (SmlList.filter (fn q => q <> self andalso SubsetBool.not (isAlias q) andalso SmlList.exists (fn s => s = q) structures) used),
+        SmlList.map (fn (p, name, target) =>
+          Doc.atom (p, "export from \"./" ^ WmPrint.fileName target ^ "\" import * as " ^ name ^ ";")) aliases)
       (* Reject a numeric default when the file's standalone environment can be resolved. *)
       val defaulted = case Basis.initial of Unify.Err _ => false | Unify.Ok (basis, _) =>
         (case Elab.program (basis, prog, Unify.lenient) of Unify.Err _ => false
@@ -422,8 +433,8 @@ structure Translate = struct
     SmlList.map (fn
         TopDecs sds => TopDecs (SmlList.map (fn
             SDec d => SDec (mapDec (f, d))
-          | SStructure (p, binds) => SStructure (p, SmlList.map (fn (n, ds) =>
-              (n, SmlList.map (fn d => mapDec (f, d)) ds)) binds)) sds)
+          | SStructure (p, binds) => SStructure (p, SmlList.map (fn (n, aliases, ds) =>
+              (n, aliases, SmlList.map (fn d => mapDec (f, d)) ds)) binds)) sds)
       | TopExp (p, e) => TopExp (p, mapExp (f, e))) prog
 
   (* Native source spelling is a backend mapping, not a change to WM names or FFI keys.
@@ -464,7 +475,7 @@ structure Translate = struct
   val portableValues = fn (env, prog, st) =>
     let
       val used = concatMap (fn TopDecs sds => concatMap (fn SDec d => decNames d
-        | SStructure (_, bs) => concatMap (fn (_, ds) => concatMap (decNames, ds), bs), sds)
+        | SStructure (_, bs) => concatMap (fn (_, _, ds) => concatMap (decNames, ds), bs), sds)
         | TopExp (p, e) => expNames (p, e), prog)
       val fresh = fn n => BackendNames.avoid (SmlList.map (fn (_, x) => x) used, n)
       val rec options = fn xs =>
@@ -566,9 +577,10 @@ structure Translate = struct
         case sd of SDec d => Unify.bind (declaration (env, d, st)) (fn d => fn st =>
           Unify.bind (Elab.dec ((env, 0, []), d, st)) (fn delta => fn st => Unify.Ok ((delta, SDec d), st)))
         | SStructure (p, bs) =>
-            Unify.bind (Elab.foldRes (fn ((delta, output), (n, ds), st) =>
-              Unify.bind (declarations (env, ds, st)) (fn (body, ds) => fn st =>
-                Unify.Ok ((Env.plus (delta, Env.withStructure (n, body, false)), SubsetList.append (output, [(n, ds)])), st)),
+            Unify.bind (Elab.foldRes (fn ((delta, output), (n, aliases, ds), st) =>
+              Unify.bind (Elab.structureAliases (env, aliases, st)) (fn nested => fn st =>
+                Unify.bind (declarations (Env.plus (env, nested), ds, st)) (fn (body, ds) => fn st =>
+                  Unify.Ok ((Env.plus (delta, Env.withStructure (n, Env.plus (nested, body), false)), SubsetList.append (output, [(n, aliases, ds)])), st))),
               (Env.empty, []), bs, st)) (fn (delta, bs) => fn st =>
                 Unify.Ok ((delta, SStructure (p, bs)), st))
       val rec structures = fn (env, sds, st) =>
@@ -601,7 +613,8 @@ structure Translate = struct
       val deps = fn (_, _, prog, _) =>
         distinct (concatMap (fn
             TopDecs sds => concatMap (fn SDec d => decDeps d
-              | SStructure (_, bs) => concatMap (fn (_, ds) => concatMap (decDeps, ds), bs), sds)
+              | SStructure (_, bs) => concatMap (fn (_, aliases, ds) =>
+                  SubsetList.append (SmlList.map (fn (_, _, target) => target) aliases, concatMap (decDeps, ds)), bs), sds)
           | TopExp (_, e) => expQuals e, prog))
       val rec order = fn (item, visiting, done, acc) =>
         let val name = nameOfModule item in
@@ -700,7 +713,7 @@ structure Translate = struct
   val recoverProject = fn modules => recoverProjectWithRuntime (NONE, modules)
 
   (* A Workman module as SubsetML: its declarations become the structure named by the file. *)
-  val fromWmNamed = fn (name, src, decs, exps, comments) =>
+  val fromWmNamed = fn (name, aliases, src, decs, exps, comments) =>
     let
       (* Imports disappear from the AST. Anchor the structure before them, so comments
          between an import and the first declaration stay inside the structure. *)
@@ -715,7 +728,9 @@ structure Translate = struct
         | NONE => Doc.text ("structure " ^ name ^ " = struct")
       val structureDoc =
         Doc.stack [structureLine,
-                   Doc.indent (2, Doc.stack (SmlList.map SmlPrint.dec decs)),
+                   Doc.indent (2, Doc.stack (SubsetList.append (
+                     SmlList.map (fn (p, alias, target) => Doc.atom (p, "structure " ^ alias ^ " = " ^ target)) aliases,
+                     SmlList.map SmlPrint.dec decs))),
                    Doc.text "end"]
       val expDocs = SmlList.map (fn e => Doc.cat (SmlPrint.exp e, Doc.text ";")) exps
       val doc =
@@ -727,7 +742,7 @@ structure Translate = struct
     end
 
   val fromWm = fn (path, src, decs, exps, comments) =>
-    fromWmNamed (WmParse.structureName path, src, decs, exps, comments)
+    fromWmNamed (WmParse.structureName path, WmParse.structureAliases src, src, decs, exps, comments)
 
   (* Reprints a parsed file as SubsetML. *)
   val toSml = fn (src, prog, comments) =>

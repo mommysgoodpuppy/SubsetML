@@ -186,19 +186,19 @@ structure Main = struct
         in SubsetResult.andThen (traverse (units, fn unit => WmProject.prepare (basis, units, unit)), fn prepared =>
           SubsetResult.andThen (WmProject.order prepared, fn ordered =>
             let
-              val declarations = traverse (ordered, fn WmProject.Source (unit, _, tokens) =>
+              val declarations = traverse (ordered, fn WmProject.Source (unit, _, _, tokens) =>
                 case WmParse.recordLayoutsTokens (WmProject.name unit, WmProject.textOf unit, tokens) of
                   WmParse.Done (layouts, _) => SubsetResult.Ok layouts
                 | WmParse.Fail (message, pos) => WmProject.failure (WmProject.pathOf unit, WmProject.textOf unit, message, pos))
             in SubsetResult.andThen (declarations, fn groups =>
-              SubsetResult.andThen (traverse (ordered, fn WmProject.Source (unit, edges, tokens) =>
+              SubsetResult.andThen (traverse (ordered, fn WmProject.Source (unit, edges, aliases, tokens) =>
                 case WmParse.parseModuleProject (SmlList.concat groups, WmProject.name unit, WmProject.textOf unit, tokens, keywordPrefix) of
                   WmParse.ParseError (message, pos) => WmProject.failure (WmProject.pathOf unit, WmProject.textOf unit, message, pos)
                 | WmParse.Module (ds, es, cs) =>
                     SubsetResult.map (WmProject.imported (units, unit, edges), fn dependencies =>
                       (WmProject.name unit, SmlList.map WmProject.name dependencies,
                        (WmProject.pathOf unit, WmProject.textOf unit,
-                        Syntax.TopDecs [Syntax.SStructure (0, [(WmProject.name unit, ds)])] ::
+                        Syntax.TopDecs [Syntax.SStructure (0, [(WmProject.name unit, aliases, ds)])] ::
                         SmlList.map (fn e => Syntax.TopExp (0, e)) es, cs)))), fn modules =>
                 let
                   val (renamed, names) = BackendNames.projectWithRuntime (runtime, keywordPrefix, modules)
@@ -209,12 +209,12 @@ structure Main = struct
                   Unify.Err (message, pos) => WmProject.failure ("translation", "", BackendNames.diagnostic (names, message), pos)
                 | Unify.Ok (recovered, _) =>
                     SubsetResult.andThen (traverse (SmlListPair.zip (ordered, recovered),
-                      fn (WmProject.Source (unit, _, _), (_, src, prog, cs)) =>
+                      fn (WmProject.Source (unit, _, _, _), (_, src, prog, cs)) =>
                         SubsetResult.map (unitsNamed (dependenciesOf (WmProject.name unit) renamed), fn dependencies =>
                           let val (_, phrases) = Translate.module prog
                               val (ds, es) = Translate.parts phrases
                           in (outDir ^ "/" ^ WmProject.output unit,
-                            WmProject.metadata dependencies ^ Translate.fromWmNamed (WmProject.name unit, src, ds, es, cs)) end)), fn results =>
+                            WmProject.metadata dependencies ^ Translate.fromWmNamed (WmProject.name unit, Translate.structureAliases prog, src, ds, es, cs)) end)), fn results =>
                       case entryPath of NONE => SubsetResult.Ok results
                       | SOME path => (case ModuleProject.identify path of
                           SubsetResult.Err error => WmProject.failure (path, "", SubsetIo.errorText error, 0)
@@ -252,13 +252,14 @@ structure Main = struct
             case WmParse.parseModule text of
               WmParse.ParseError (msg, pos) => (eprint (errorLine (path, text, msg, pos)); NONE)
             | WmParse.Module (ds, es, cs) => SOME (path, text,
-                Syntax.TopDecs [Syntax.SStructure (0, [(WmParse.structureName name, ds)])] ::
+                Syntax.TopDecs [Syntax.SStructure (0, [(WmParse.structureName name, WmParse.structureAliases text, ds)])] ::
                 SmlList.map (fn e => Syntax.TopExp (0, e)) es, cs)) parsed
       val modules = SmlList.concat (SmlList.map (fn SOME m => [m] | NONE => []) loaded)
       val show = fn prog =>
         let val (_, phrases) = Translate.module prog
             val (ds, es) = Translate.parts phrases
-        in SubsetList.append (SmlList.map Print.dec (Normalize.decs ds), SmlList.map (fn e => Print.exp (Normalize.exp e)) es) end
+        in SubsetList.append (SmlList.map (fn (_, name, target) => name ^ " = " ^ target) (Translate.structureAliases prog),
+             SubsetList.append (SmlList.map Print.dec (Normalize.decs ds), SmlList.map (fn e => Print.exp (Normalize.exp e)) es)) end
       val check = fn (path, _, prog, _) =>
         case SmlList.find (fn (p, _, _, _) => p = path) modules of
           NONE => false

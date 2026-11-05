@@ -919,6 +919,30 @@ and parseDatBind = (ts) => {
 // ----------------------------------------------------------------------------------------
 // Structures and programs
 
+// Restriction M2: only `structure Name = Target`, and only before the body's declarations.
+let rec parseStructureAliases = (aliases, ts) => {
+  match(isKey(";", ts), isKey("structure", ts)) {
+    (true, _) => { parseStructureAliases(aliases, advance(ts)) },
+    (false, false) => { Done(SubsetList.reverse(aliases), ts) },
+    (false, true) => {
+      let pos = posOf(ts);
+      bind(bindableId("a structure name", advance(ts)))((name) => (ts) => {
+        bind(expect("=", ts))((_) => (ts) => {
+          match(isKey("struct", ts), SubsetList.exists(aliases, (_, other, _) => { other == name })) {
+            (true, _) => {
+              Fail("nested structures are not part of SubsetML", posOf(ts))
+            },
+            (false, true) => { Fail("duplicate structure alias " ++ name, pos) },
+            (false, false) => {
+              bind(bindableId("the name of a program structure", ts))((target) => (ts) => { parseStructureAliases([(pos, name, target), ..aliases], ts) })
+            }
+          }
+        })
+      })
+    }
+  }
+};
+
 let parseStrBind = (ts) => {
   bind(bindableId("a structure name", ts))((name) => (ts) => {
     if (isKey(":", ts)) {
@@ -928,12 +952,17 @@ let parseStrBind = (ts) => {
         if (SubsetBool.not(isKey("struct", ts))) {
           Fail("only `struct ... end` structure expressions are part of SubsetML", posOf(ts))
         } else {
-          bind(parseDecs(advance(ts)))((ds) => (ts) => {
-            if (isKey("structure", ts)) {
-              Fail("nested structures are not part of SubsetML", posOf(ts))
-            } else {
-              bind(expect("end", ts))((_) => (ts) => { Done((name, ds), ts) })
-            }
+          bind(parseStructureAliases([], advance(ts)))((aliases) => (ts) => {
+            bind(parseDecs(ts))((ds) => (ts) => {
+              if (isKey("structure", ts)) {
+                Fail(
+                  "nested structures are not part of SubsetML; a structure alias must precede the structure's declarations",
+                  posOf(ts)
+                )
+              } else {
+                bind(expect("end", ts))((_) => (ts) => { Done((name, aliases, ds), ts) })
+              }
+            })
           })
         }
       })

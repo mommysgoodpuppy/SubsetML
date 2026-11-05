@@ -357,7 +357,25 @@ let structureOf = (prog) => {
       TopDecs(sds) => {
         concatMap(
           match {
-            SStructure(_, binds) => { SmlList.map((name, _) => { name })(binds) },
+            SStructure(_, binds) => { SmlList.map((name, _, _) => { name })(binds) },
+            SDec(_) => { [] }
+          },
+          sds
+        )
+      },
+      TopExp(_, _) => { [] }
+    },
+    prog
+  )
+};
+
+let structureAliases = (prog) => {
+  concatMap(
+    match {
+      TopDecs(sds) => {
+        concatMap(
+          match {
+            SStructure(_, binds) => { concatMap((_, aliases, _) => { aliases }, binds) },
             SDec(_) => { [] }
           },
           sds
@@ -384,7 +402,7 @@ let module = (prog) => {
         concatMap(
           match {
             SStructure(_, binds) => {
-              concatMap((_, ds) => { SmlList.map((d) => { TopDecs([SDec(d)]) })(ds) }, binds)
+              concatMap((_, _, ds) => { SmlList.map((d) => { TopDecs([SDec(d)]) })(ds) }, binds)
             },
             SDec(d) => { [TopDecs([SDec(decStrip(self, d))])] }
           },
@@ -507,7 +525,9 @@ let declarationGaps = (structures, prog) => {
         concatMap(
           match {
             SDec(d) => { declaration(d) },
-            SStructure(_, binds) => { concatMap((_, ds) => { concatMap(declaration, ds) }, binds) }
+            SStructure(_, binds) => {
+              concatMap((_, _, ds) => { concatMap(declaration, ds) }, binds)
+            }
           },
           ds
         )
@@ -568,11 +588,21 @@ let toWm = (structures, path, src, prog, comments) => {
     [TopDecs([SStructure(p, _), .._]), .._] => { p },
     _ => { (0: I32) }
   };
-  let imports = SmlList.map((q) => {
-    Doc.atom(start, "from \"./" ++ WmPrint.fileName(q) ++ "\" import * as " ++ q ++ ";")
-  })(SmlList.filter((q) => {
-    if (q != self) { SmlList.exists((s) => { s == q })(structures) } else { false }
-  })(used));
+  let aliases = structureAliases(prog);
+  let isAlias = (q) => { SmlList.exists((_, name, _) => { name == q })(aliases) };
+  let imports = SubsetList.append(
+    SmlList.map((q) => {
+      Doc.atom(start, "from \"./" ++ WmPrint.fileName(q) ++ "\" import * as " ++ q ++ ";")
+    })(SmlList.filter((q) => {
+      if (if (q != self) { SubsetBool.not(isAlias(q)) } else { false }) { SmlList.exists((s) => { s == q })(structures) } else { false }
+    })(used)),
+    SmlList.map((p, name, target) => {
+      Doc.atom(
+        p,
+        "export from \"./" ++ WmPrint.fileName(target) ++ "\" import * as " ++ name ++ ";"
+      )
+    })(aliases)
+  );
   // Reject a numeric default when the file's standalone environment can be resolved.
   let defaulted = match(Basis.initial) {
     Unify.Err(_) => { false },
@@ -657,7 +687,7 @@ let mapProgram = (f, prog) => {
         SStructure(p, binds) => {
           SStructure(
             p,
-            SmlList.map((n, ds) => { (n, SmlList.map((d) => { mapDec(f, d) })(ds)) })(binds)
+            SmlList.map((n, aliases, ds) => { (n, aliases, SmlList.map((d) => { mapDec(f, d) })(ds)) })(binds)
           )
         }
       })(sds))
@@ -719,7 +749,7 @@ let portableValues = (env, prog, st) => {
         concatMap(
           match {
             SDec(d) => { decNames(d) },
-            SStructure(_, bs) => { concatMap((_, ds) => { concatMap(decNames, ds) }, bs) }
+            SStructure(_, bs) => { concatMap((_, _, ds) => { concatMap(decNames, ds) }, bs) }
           },
           sds
         )
@@ -941,15 +971,17 @@ let portableValues = (env, prog, st) => {
       },
       SStructure(p, bs) => {
         Unify.bind(Elab.foldRes(
-          ((delta, output), (n, ds), st) => {
-            Unify.bind(declarations(env, ds, st))((body, ds) => (st) => {
-              Unify.Ok(
-                (
-                  Env.plus(delta, Env.withStructure(n, body, false)),
-                  SubsetList.append(output, [(n, ds)])
-                ),
-                st
-              )
+          ((delta, output), (n, aliases, ds), st) => {
+            Unify.bind(Elab.structureAliases(env, aliases, st))((nested) => (st) => {
+              Unify.bind(declarations(Env.plus(env, nested), ds, st))((body, ds) => (st) => {
+                Unify.Ok(
+                  (
+                    Env.plus(delta, Env.withStructure(n, Env.plus(nested, body), false)),
+                    SubsetList.append(output, [(n, aliases, ds)])
+                  ),
+                  st
+                )
+              })
             })
           },
           (Env.empty, []),
@@ -1011,7 +1043,14 @@ let recover = (modules, target) => {
           concatMap(
             match {
               SDec(d) => { decDeps(d) },
-              SStructure(_, bs) => { concatMap((_, ds) => { concatMap(decDeps, ds) }, bs) }
+              SStructure(_, bs) => {
+                concatMap(
+                  (_, aliases, ds) => {
+                    SubsetList.append(SmlList.map((_, _, target) => { target })(aliases), concatMap(decDeps, ds))
+                  },
+                  bs
+                )
+              }
             },
             sds
           )
@@ -1177,7 +1216,7 @@ let recoverProjectWithRuntime = (runtime, modules) => {
 let recoverProject = (modules) => { recoverProjectWithRuntime(None, modules) };
 
 // A Workman module as SubsetML: its declarations become the structure named by the file.
-let fromWmNamed = (name, src, decs, exps, comments) => {
+let fromWmNamed = (name, aliases, src, decs, exps, comments) => {
   /* Imports disappear from the AST. Anchor the structure before them, so comments
      between an import and the first declaration stay inside the structure. */
   let first = match(WmLexer.lex(src)) {
@@ -1196,7 +1235,13 @@ let fromWmNamed = (name, src, decs, exps, comments) => {
   };
   let structureDoc = Doc.stack([
     structureLine,
-    Doc.indent((2: I32), Doc.stack(SmlList.map(SmlPrint.dec)(decs))),
+    Doc.indent(
+      (2: I32),
+      Doc.stack(SubsetList.append(
+        SmlList.map((p, alias, target) => { Doc.atom(p, "structure " ++ alias ++ " = " ++ target) })(aliases),
+        SmlList.map(SmlPrint.dec)(decs)
+      ))
+    ),
     Doc.text("end")
   ]);
   let expDocs = SmlList.map((e) => { Doc.cat(SmlPrint.exp(e), Doc.text(";")) })(exps);
@@ -1208,7 +1253,14 @@ let fromWmNamed = (name, src, decs, exps, comments) => {
 };
 
 let fromWm = (path, src, decs, exps, comments) => {
-  fromWmNamed(WmParse.structureName(path), src, decs, exps, comments)
+  fromWmNamed(
+    WmParse.structureName(path),
+    WmParse.structureAliases(src),
+    src,
+    decs,
+    exps,
+    comments
+  )
 };
 
 // Reprints a parsed file as SubsetML.

@@ -1418,17 +1418,14 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
           ) => {
             let rest = advance(advance(advance(advance(clause))));
             if (isKey("as", rest)) {
-              Fail(
-                "only `export from \"./file.wm\" import *` has a SubsetML counterpart: nested structures aren't supported",
-                p
-              )
+              bind(expect(";", advance(advance(rest))))((_) => (ts) => { Done([], ts) })
             } else {
               bind(expect(";", rest))((_) => (ts) => { Done([DOpen(p, [[structureName(file)]])], ts) })
             }
           },
           _ => {
             Fail(
-              "only `export from \"./file.wm\" import *` has a SubsetML counterpart: nested structures aren't supported",
+              "only `export from \"./file.wm\" import *` and `import * as Name` have a SubsetML counterpart",
               p
             )
           }
@@ -1654,6 +1651,34 @@ let recordLayoutsTokens = (owner, src, lexed) => {
 
 let recordLayouts = (path, src) => {
   recordLayoutsTokens(structureName(path), src, WmLexer.lex(src))
+};
+
+/* `export from "./x.wm" import * as Name;` is `structure Name = X`, which belongs to the
+   module's structure rather than its declarations. */
+let structureAliases = (src) => {
+  match(lex(src)) {
+    LexError(_) => { [] },
+    Tokens(tokens, _) => {
+      let rec scan = (tokens) => {
+        match(tokens) {
+          [] => { [] },
+          [
+            (WName(["export"]), Var(p)),
+            (WKey("from"), _),
+            (WScon(SString(file)), _),
+            (WKey("import"), _),
+            (WKey("*"), _),
+            (WKey("as"), _),
+            (WName([alias]), _),
+            (WKey(";"), _),
+            ..rest
+          ] => { [(p, alias, structureName(file)), ..scan(rest)] },
+          [_, ..rest] => { scan(rest) }
+        }
+      };
+      scan(tokens)
+    }
+  }
 };
 
 let parseModule = (src) => {

@@ -1183,13 +1183,40 @@ and datatypeDec = ((env, _, _), pos, binds, st) => {
 // ---------------------------------------------------------------------------------------
 // Top-level phrases (Definition §8)
 
+// Restriction M2: an alias names a whole program structure, as a Workman file's import does.
+let structureAliases = (env, aliases, st) => {
+  foldRes(
+    (delta, (pos, name, target), st) => {
+      match(structureAt(env, [target])) {
+        Some(entry) => {
+          let (found, isBasis) = entry;
+          if (isBasis) {
+            Err(
+              "SubsetML can only alias structures the program declares, not Basis structure " ++ target ++ " (spec M2)",
+              pos
+            )
+          } else { Ok(plus(delta, withStructure(name, found, false)), st) }
+        },
+        None => { Err("unbound structure " ++ target, pos) }
+      }
+    },
+    empty,
+    aliases,
+    st
+  )
+};
+
 let strdec = (env, sd, st) => {
   match(sd) {
     SDec(d) => { dec((env, (0: I32), []), d, st) },
     SStructure(_, binds) => {
       foldRes(
-        (delta, (name, ds), st) => {
-          bind(decs((env, (0: I32), []), ds, st))((body) => (st) => { Ok(plus(delta, withStructure(name, body, false)), st) })
+        (delta, (name, aliases, ds), st) => {
+          bind(structureAliases(env, aliases, st))((nested) => (st) => {
+            bind(decs((plus(env, nested), (0: I32), []), ds, st))((body) => (st) => {
+              Ok(plus(delta, withStructure(name, plus(nested, body), false)), st)
+            })
+          })
         },
         empty,
         binds,

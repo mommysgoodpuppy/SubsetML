@@ -91,7 +91,7 @@ structure NativeInt = struct
           | TopDecs ds => TopDecs (SmlList.map (fn sd => case sd of
               SDec d => SDec (dec d)
             | SStructure (q, bs) => SStructure (q, SmlList.map
-                (fn (name, ds) => (name, SmlList.map dec ds)) bs)) ds)
+                (fn (name, aliases, ds) => (name, aliases, SmlList.map dec ds)) bs)) ds)
         in SmlList.map top prog end
 
       val rec loop = fn (env, st, files, acc) => case files of

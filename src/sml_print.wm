@@ -363,13 +363,17 @@ and andGroup = (keyword, bindings) => {
 let strdec = match {
   SDec(d) => { dec(d) },
   SStructure(p, binds) => {
-    let bind = (i, (name, ds)) => {
+    let alias = (q, name, target) => { atom(q, "structure " ++ name ++ " = " ++ target) };
+    let bind = (i, (name, aliases, ds)) => {
       stack([
         cats([
           if (i == (0: I32)) { atom(p, "structure ") } else { text("and ") },
           text(name ++ " = struct")
         ]),
-        indent((2: I32), stack(SmlList.map(dec)(ds))),
+        indent(
+          (2: I32),
+          stack(SubsetList.append(SmlList.map(alias)(aliases), SmlList.map(dec)(ds)))
+        ),
         text("end")
       ])
     };

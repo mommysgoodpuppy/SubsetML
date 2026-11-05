@@ -961,12 +961,12 @@ structure WmParse = struct
               ((WKey "from", _), (WScon (SString file), _), (WKey "import", _), (WKey "*", _)) =>
                 let val rest = advance (advance (advance (advance clause))) in
                   if isKey ("as", rest) then
-                    Fail ("only `export from \"./file.wm\" import *` has a SubsetML counterpart: nested structures aren't supported", p)
+                    bind (expect (";", advance (advance rest))) (fn _ => fn ts => Done ([], ts))
                   else
                     bind (expect (";", rest)) (fn _ => fn ts =>
                       Done ([DOpen (p, [[structureName file]])], ts))
                 end
-            | _ => Fail ("only `export from \"./file.wm\" import *` has a SubsetML counterpart: nested structures aren't supported", p)
+            | _ => Fail ("only `export from \"./file.wm\" import *` and `import * as Name` have a SubsetML counterpart", p)
           end
       | _ => expected ("a declaration", ts)
     end
@@ -1099,6 +1099,22 @@ structure WmParse = struct
 
   val recordLayouts = fn (path, src) =>
     recordLayoutsTokens (structureName path, src, WmLexer.lex src)
+
+  (* `export from "./x.wm" import * as Name;` is `structure Name = X`, which belongs to the
+     module's structure rather than its declarations. *)
+  val structureAliases = fn src =>
+    case lex src of
+      LexError _ => []
+    | Tokens (tokens, _) =>
+        let
+          val rec scan = fn tokens =>
+            case tokens of
+              [] => []
+            | (WName ["export"], p) :: (WKey "from", _) :: (WScon (SString file), _) ::
+              (WKey "import", _) :: (WKey "*", _) :: (WKey "as", _) :: (WName [alias], _) ::
+              (WKey ";", _) :: rest => (p, alias, structureName file) :: scan rest
+            | _ :: rest => scan rest
+        in scan tokens end
 
   val parseModule = fn src =>
     case recordLayouts ("", src) of

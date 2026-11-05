@@ -217,9 +217,10 @@ structure SmlPrint = struct
       SDec d => dec d
     | SStructure (p, binds) =>
         let
-          val bind = fn (i, (name, ds)) =>
+          val alias = fn (q, name, target) => atom (q, "structure " ^ name ^ " = " ^ target)
+          val bind = fn (i, (name, aliases, ds)) =>
             stack [cats [if (i = 0) then atom (p, "structure ") else text "and ", text (name ^ " = struct")],
-                   indent (2, stack (SmlList.map dec ds)),
+                   indent (2, stack (SubsetList.append (SmlList.map alias aliases, SmlList.map dec ds))),
                    text "end"]
           val rec number = fn (i, bs) =>
             case bs of

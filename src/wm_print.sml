@@ -474,7 +474,7 @@ structure WmPrint = struct
         stack (SmlList.map (fn
                   SDec d => dec (structures, d)
                 | SStructure (_, binds) =>
-                    stack (SmlList.map (fn (_, ds) => stack (SmlList.map (fn d => dec (structures, d)) ds)) binds))
+                    stack (SmlList.map (fn (_, _, ds) => stack (SmlList.map (fn d => dec (structures, d)) ds)) binds))
                 sds)
     | TopExp (_, e) => cat (exp e, text ";")
 

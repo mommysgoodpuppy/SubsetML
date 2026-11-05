@@ -27,7 +27,7 @@ structure WmProject = struct
   datatype input = Input of ModuleProject.resolved * string * string
   datatype projectUnit = Unit of input * string * string
   datatype edge = Edge of string * Syntax.pos * string * ModuleProject.moduleId
-  datatype source = Source of projectUnit * edge list * WmLexer.result
+  datatype source = Source of projectUnit * edge list * Syntax.structureAlias list * WmLexer.result
   datatype error = Error of string * string * string * Syntax.pos
 
   val failure = fn (path, src, message, pos) => SubsetResult.Err (Error (path, src, message, pos))
@@ -36,8 +36,8 @@ structure WmProject = struct
   val output = fn Unit (_, _, output) => output
   val pathOf = fn Unit (Input (_, path, _), _, _) => path
   val textOf = fn Unit (Input (_, _, src), _, _) => src
-  val sourceUnit = fn Source (unit, _, _) => unit
-  val edgesOf = fn Source (_, edges, _) => edges
+  val sourceUnit = fn Source (unit, _, _, _) => unit
+  val edgesOf = fn Source (_, edges, _, _) => edges
 
   (* "basis/won.wm" names the Basis module subset_won.wm, as in Workman. *)
   val basisModule = fn specifier =>
@@ -178,7 +178,7 @@ structure WmProject = struct
             case SubsetList.find (units, fn child => ModuleProject.same (identity child, target)) of
               NONE => failure (path, src, "import dependency is not in the supplied source list: " ^ specifier, pos)
             | SOME child => SubsetResult.Ok child
-      val rec imports = fn (tokens, edges, aliases, opens) =>
+      val rec imports = fn (tokens, edges, aliases, opens, exported) =>
         case tokens of
           (WmLexer.WKey "from", pos) ::
           (WmLexer.WScon (Syntax.SString specifier), _) ::
@@ -191,7 +191,7 @@ structure WmProject = struct
               failure (path, src, "duplicate namespace alias " ^ alias, pos)
             else SubsetResult.andThen (dependency (specifier, pos), fn child =>
               imports (rest, Edge (specifier, pos, alias, identity child) :: edges,
-                (alias, name child) :: aliases, opens)))
+                (alias, name child) :: aliases, opens, exported)))
         | (WmLexer.WKey "from", pos) ::
           (WmLexer.WScon (Syntax.SString specifier), _) ::
           (WmLexer.WKey "import", _) :: (WmLexer.WKey "*", _) ::
@@ -202,9 +202,9 @@ structure WmProject = struct
                 val known = SubsetList.exists (edges, fn Edge (_, _, _, target) =>
                   ModuleProject.same (target, identity child))
               in
-                if known then imports (rest, edges, aliases, opened)
+                if known then imports (rest, edges, aliases, opened, exported)
                 (* No alias: an open alone doesn't make the module's name usable as a qualifier. *)
-                else imports (rest, Edge (specifier, pos, name child, identity child) :: edges, aliases, opened)
+                else imports (rest, Edge (specifier, pos, name child, identity child) :: edges, aliases, opened, exported)
               end)
         | (WmLexer.WKey "from", pos) :: _ =>
             failure (path, src, "reverse translation currently requires header namespace imports: from \"./file.wm\" import * as Name;", pos)
@@ -216,9 +216,21 @@ structure WmProject = struct
             imports ((WmLexer.WKey "from", pos) ::
               (WmLexer.WScon (Syntax.SString specifier), specifierPos) ::
               (WmLexer.WKey "import", importPos) :: (WmLexer.WKey "*", starPos) ::
-              (WmLexer.WKey ";", endPos) :: rest, edges, aliases, opens)
+              (WmLexer.WKey ";", endPos) :: rest, edges, aliases, opens, exported)
+        (* `structure Alias = Target`. The body's uses are rewritten like a private alias's. *)
+        | (WmLexer.WName ["export"], _) :: (WmLexer.WKey "from", pos) ::
+          (WmLexer.WScon (Syntax.SString specifier), specifierPos) ::
+          (WmLexer.WKey "import", importPos) :: (WmLexer.WKey "*", starPos) ::
+          (WmLexer.WKey "as", asPos) :: (WmLexer.WName [alias], aliasPos) ::
+          (WmLexer.WKey ";", endPos) :: rest =>
+            SubsetResult.andThen (dependency (specifier, pos), fn child =>
+              imports ((WmLexer.WKey "from", pos) ::
+                (WmLexer.WScon (Syntax.SString specifier), specifierPos) ::
+                (WmLexer.WKey "import", importPos) :: (WmLexer.WKey "*", starPos) ::
+                (WmLexer.WKey "as", asPos) :: (WmLexer.WName [alias], aliasPos) ::
+                (WmLexer.WKey ";", endPos) :: rest, edges, aliases, opens, (pos, alias, name child) :: exported))
         | (WmLexer.WName ["export"], _) :: (WmLexer.WKey "from", pos) :: _ =>
-            failure (path, src, "only `export from \"./file.wm\" import *;` has an SML counterpart: SubsetML has no nested structures", pos)
+            failure (path, src, "only `export from \"./file.wm\" import *;` and `import * as Name;` have an SML counterpart", pos)
         | _ =>
             let
               val rec rewrite = fn (tokens, acc) =>
@@ -237,13 +249,13 @@ structure WmProject = struct
                          else rewrite (rest, (WmLexer.WName (target :: tail), pos) :: acc))
                 | token :: rest => rewrite (rest, token :: acc)
             in SubsetResult.map (rewrite (tokens, []), fn body =>
-              (SubsetList.reverse edges, SubsetList.append (SubsetList.reverse opens, body))) end
+              (SubsetList.reverse edges, SubsetList.reverse exported, SubsetList.append (SubsetList.reverse opens, body))) end
     in
       case WmLexer.lex src of
         WmLexer.LexError (message, pos) => failure (path, src, message, pos)
       | WmLexer.Tokens (tokens, comments) =>
-          SubsetResult.map (imports (tokens, [], [], []), fn (edges, body) =>
-            Source (unit, edges, WmLexer.Tokens (body,
+          SubsetResult.map (imports (tokens, [], [], [], []), fn (edges, exported, body) =>
+            Source (unit, edges, exported, WmLexer.Tokens (body,
               SubsetList.filter (comments, fn (_, body, _) =>
                 (case ModuleImports.marked body of NONE => true | SOME _ => false) andalso
                 SubsetBool.not (ModuleImports.isGeneratedHeader body)))))

@@ -70,7 +70,13 @@ and Dec =
   | DDatatype<Pos, List<(List<String>, String, List<(Pos, String, Option<Ty>)>)>>
   | DOpen<Pos, List<List<String>>>;
 
-type Strdec = SDec<Dec> | SStructure<Pos, List<(String, List<Dec>)>>;
+/* `structure Name = Target` at the start of a `struct`: position, name, target. It lives here
+   rather than in `dec`, so no other declaration context can hold one (spec restriction M2). */
+type StructureAlias = (Pos, String, String);
+
+type Strdec =
+  | SDec<Dec>
+  | SStructure<Pos, List<(String, List<StructureAlias>, List<Dec>)>>;
 
 // One program phrase, terminated by `;` (§8).
 type Topdec = TopDecs<List<Strdec>> | TopExp<Pos, Exp>;

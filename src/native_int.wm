@@ -141,7 +141,10 @@ let project = (files) => {
             match(sd) {
               SDec(d) => { SDec(dec(d)) },
               SStructure(q, bs) => {
-                SStructure(q, SmlList.map((name, ds) => { (name, SmlList.map(dec)(ds)) })(bs))
+                SStructure(
+                  q,
+                  SmlList.map((name, aliases, ds) => { (name, aliases, SmlList.map(dec)(ds)) })(bs)
+                )
               }
             }
           })(ds))

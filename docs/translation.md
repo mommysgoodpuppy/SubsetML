@@ -26,6 +26,7 @@ compatibility forms listed below remain supported.
 | `structure FooBar = struct decs end` in `foo_bar.sml` | the declarations of `foo_bar.wm` |
 | other top-level declarations in the same file | more declarations of the same module; `FooBar.x` becomes `x` |
 | `open FooBar` (a program structure) | `export from "./foo_bar.wm" import *;` |
+| `structure Name = FooBar` at the start of a `struct` (spec M2) | `export from "./foo_bar.wm" import * as Name;` |
 | a qualified use `FooBar.x` | `FooBar.x`, plus `from "./foo_bar.wm" import * as FooBar;` at the top |
 | comments `(* … *)` | `// …` for one line, `/* … */` for several |
 
@@ -48,9 +49,9 @@ compiler round trips, header `export from "./file.wm" import *;` imports lower t
 `open` declarations, with or without a namespace import of the same module, and SML `open` prints
 back as that form. As in SML, the opened bindings become part of the importing module. A namespace
 import stays private: it only resolves qualified names, and emits no SML structure binding.
-Other `export from` clauses need nested structures, which SubsetML doesn't have, so they are
-diagnosed explicitly, as are named, non-local and later imports. Namespace values are not
-first-class.
+`export from "./file.wm" import * as Name;` lowers to the structure alias of spec restriction M2.
+`export from` with a named clause is diagnosed explicitly, as are other named, non-local and later
+imports. Namespace values are not first-class.
 
 A plain `from "./file.wm" import *;` also lowers to `open`, although in Workman it is private.
 SubsetML omits `local`, so the SML side exposes more than the Workman side does. See

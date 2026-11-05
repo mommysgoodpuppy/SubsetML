@@ -113,9 +113,70 @@ grep -q 'open Middle' "$tmp/open-out/forward.sml"
 "$compiler" wm "$tmp/open-back" "$tmp/open-out/base.sml" "$tmp/open-out/middle.sml"
 grep -q 'export from "./base.wm" import \*;' "$tmp/open-back/middle.wm"
 if command -v wm >/dev/null 2>&1; then wm check "$tmp/open/user.wm" >/dev/null; fi
-# Clauses that would need a nested structure are diagnosed.
-reject 'export from "./records.wm" import * as Records;' 'no nested structures' "$tmp/records.wm"
-reject 'export from "./records.wm" import {make};' 'no nested structures' "$tmp/records.wm"
+# A named clause has no SML counterpart.
+reject 'export from "./records.wm" import {make};' 'SML counterpart' "$tmp/records.wm"
+
+# `export from ... import * as` is a structure alias, reachable through every level. `val end` needs
+# a backend name, so this also covers names resolved through the alias.
+mkdir "$tmp/alias" "$tmp/alias-out" "$tmp/alias-back"
+cat > "$tmp/alias/base.wm" <<'WM'
+type Shape = | Circle<I32> | Dot;
+let value: I32 = 7;
+let end = 8;
+let add = (a: I32, b: I32) => { a + b };
+WM
+cat > "$tmp/alias/os.wm" <<'WM'
+export from "./base.wm" import * as Process;
+let viaAlias = Process.value;
+WM
+printf 'export from "./os.wm" import * as OS;\n' > "$tmp/alias/sys.wm"
+cat > "$tmp/alias/user.wm" <<'WM'
+from "./os.wm" import * as OS;
+from "./sys.wm" import * as Sys;
+let total = OS.Process.add(OS.Process.value, Sys.OS.viaAlias);
+let keyword = OS.Process.end;
+let shape: OS.Process.Shape = OS.Process.Circle(Sys.OS.Process.value);
+let radius = match(shape) { OS.Process.Circle(r) => { r }, OS.Process.Dot => { 0 } };
+WM
+alias_wm="$tmp/alias/base.wm $tmp/alias/os.wm $tmp/alias/sys.wm $tmp/alias/user.wm"
+"$compiler" sml "$tmp/alias-out" $alias_wm
+grep -q 'structure Process = Base' "$tmp/alias-out/os.sml"
+grep -q 'structure OS = Os' "$tmp/alias-out/sys.sml"
+alias_sml="$tmp/alias-out/base.sml $tmp/alias-out/os.sml $tmp/alias-out/sys.sml $tmp/alias-out/user.sml"
+"$compiler" check $alias_sml
+"$compiler" roundtrip $alias_sml
+"$compiler" wm "$tmp/alias-back" $alias_sml
+grep -q 'export from "./base.wm" import \* as Process;' "$tmp/alias-back/os.wm"
+if command -v mlton >/dev/null 2>&1; then
+  {
+    printf '$(SML_LIB)/basis/basis.mlb\n'
+    for f in $alias_sml; do printf '%s\n' "$f"; done
+  } > "$tmp/alias-out/all.mlb"
+  mlton -output "$tmp/alias-out/all" "$tmp/alias-out/all.mlb"
+fi
+if command -v wm >/dev/null 2>&1; then wm check "$tmp/alias/user.wm" >/dev/null; fi
+
+# Restriction M2 keeps this from growing into general nesting.
+cat > "$tmp/alias/target.sml" <<'SML'
+structure Target = struct val x = 1 end
+SML
+reject_sml() {
+  printf '%s\n' "$1" > "$tmp/alias/case.sml"
+  if "$compiler" check "$tmp/alias/target.sml" "$tmp/alias/case.sml" > "$tmp/alias/error" 2>&1; then
+    echo "FAIL: accepted: $1"
+    exit 1
+  fi
+  grep -q "$2" "$tmp/alias/error" || { echo "FAIL: wrong error for: $1"; cat "$tmp/alias/error"; exit 1; }
+}
+reject_sml 'structure Case = struct structure P = struct end end' 'nested structures'
+reject_sml 'structure Case = struct val y = 1 structure P = Target end' 'must precede'
+reject_sml 'structure Case = struct structure P = Target and Q = Target end' 'expected'
+reject_sml 'structure Case = struct structure P = Target.Inner end' 'structure'
+reject_sml 'structure Case = struct structure P = Target structure P = Target end' 'duplicate structure alias'
+reject_sml 'structure Case = struct structure P = Missing end' 'unbound structure Missing'
+reject_sml 'structure Case = struct structure P = List end' 'not Basis structure List'
+reject_sml 'structure P = Target' 'struct ... end'
+reject_sml 'val y = let structure P = Target in 1 end' 'tructure'
 # An open alone doesn't make the module's own name usable as a qualifier, in either language.
 cat > "$tmp/open/qualified.wm" <<'WM'
 from "./base.wm" import *;

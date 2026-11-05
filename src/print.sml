@@ -84,7 +84,9 @@ structure Print = struct
   val strdec = fn
       SDec d => dec d
     | SStructure (_, bs) =>
-        node ("structure", SmlList.map (fn (name, ds) => node (name, SmlList.map dec ds)) bs)
+        node ("structure", SmlList.map (fn (name, aliases, ds) => node (name,
+          SubsetList.append (SmlList.map (fn (_, alias, target) => node ("alias", [alias, target])) aliases,
+            SmlList.map dec ds))) bs)
 
   val topdec = fn
       TopDecs sds => SubsetString.concatWith (SubsetList.map (sds, strdec), " ")

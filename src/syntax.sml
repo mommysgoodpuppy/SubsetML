@@ -72,9 +72,13 @@ structure Syntax = struct
     | DDatatype of pos * (string list * string * (pos * string * ty option) list) list
     | DOpen of pos * string list list
 
+  (* `structure Name = Target` at the start of a `struct`: position, name, target. It lives here
+     rather than in `dec`, so no other declaration context can hold one (spec restriction M2). *)
+  type structureAlias = pos * string * string
+
   datatype strdec =
       SDec of dec
-    | SStructure of pos * (string * dec list) list
+    | SStructure of pos * (string * structureAlias list * dec list) list
 
   (* One program phrase, terminated by `;` (§8). *)
   datatype topdec =

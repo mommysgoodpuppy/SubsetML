@@ -273,7 +273,7 @@ let fromWmLoaded = (outDir, basis, runtimePath, entryPath, adapterSpecs, sources
             let declarations = traverse(
               ordered,
               match {
-                WmProject.Source(unit, _, tokens) => {
+                WmProject.Source(unit, _, _, tokens) => {
                   match(WmParse.recordLayoutsTokens(WmProject.name(unit), WmProject.textOf(unit), tokens)) {
                     WmParse.Done(layouts, _) => { SubsetResult.Ok(layouts) },
                     WmParse.Fail(message, pos) => {
@@ -290,7 +290,7 @@ let fromWmLoaded = (outDir, basis, runtimePath, entryPath, adapterSpecs, sources
                   traverse(
                     ordered,
                     match {
-                      WmProject.Source(unit, edges, tokens) => {
+                      WmProject.Source(unit, edges, aliases, tokens) => {
                         match(WmParse.parseModuleProject(
                           SmlList.concat(groups),
                           WmProject.name(unit),
@@ -312,7 +312,7 @@ let fromWmLoaded = (outDir, basis, runtimePath, entryPath, adapterSpecs, sources
                                     WmProject.pathOf(unit),
                                     WmProject.textOf(unit),
                                     [
-                                      Syntax.TopDecs([Syntax.SStructure((0: I32), [(WmProject.name(unit), ds)])]),
+                                      Syntax.TopDecs([Syntax.SStructure((0: I32), [(WmProject.name(unit), aliases, ds)])]),
                                       ..SmlList.map((e) => { Syntax.TopExp((0: I32), e) })(es)
                                     ],
                                     cs
@@ -340,7 +340,7 @@ let fromWmLoaded = (outDir, basis, runtimePath, entryPath, adapterSpecs, sources
                           traverse(
                             SmlListPair.zip(ordered, recovered),
                             match {
-                              (WmProject.Source(unit, _, _), (_, Var(src), Var(prog), Var(cs))) => {
+                              (WmProject.Source(unit, _, _, _), (_, Var(src), Var(prog), Var(cs))) => {
                                 SubsetResult.map(
                                   unitsNamed(dependenciesOf(WmProject.name(unit))(renamed)),
                                   (dependencies) => {
@@ -348,7 +348,7 @@ let fromWmLoaded = (outDir, basis, runtimePath, entryPath, adapterSpecs, sources
                                     let (ds, es) = Translate.parts(phrases);
                                     (
                                       outDir ++ "/" ++ WmProject.output(unit),
-                                      WmProject.metadata(dependencies) ++ Translate.fromWmNamed(WmProject.name(unit), src, ds, es, cs)
+                                      WmProject.metadata(dependencies) ++ Translate.fromWmNamed(WmProject.name(unit), Translate.structureAliases(prog), src, ds, es, cs)
                                     )
                                   }
                                 )
@@ -449,7 +449,9 @@ let roundTrip = (parsed) => {
               path,
               text,
               [
-                Syntax.TopDecs([Syntax.SStructure((0: I32), [(WmParse.structureName(name), ds)])]),
+                Syntax.TopDecs([
+                  Syntax.SStructure((0: I32), [(WmParse.structureName(name), WmParse.structureAliases(text), ds)])
+                ]),
                 ..SmlList.map((e) => { Syntax.TopExp((0: I32), e) })(es)
               ],
               cs
@@ -467,8 +469,11 @@ let roundTrip = (parsed) => {
     let (_, phrases) = Translate.module(prog);
     let (ds, es) = Translate.parts(phrases);
     SubsetList.append(
-      SmlList.map(Print.dec)(Normalize.decs(ds)),
-      SmlList.map((e) => { Print.exp(Normalize.exp(e)) })(es)
+      SmlList.map((_, name, target) => { name ++ " = " ++ target })(Translate.structureAliases(prog)),
+      SubsetList.append(
+        SmlList.map(Print.dec)(Normalize.decs(ds)),
+        SmlList.map((e) => { Print.exp(Normalize.exp(e)) })(es)
+      )
     )
   };
   let check = (path, _, prog, _) => {

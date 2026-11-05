@@ -4,6 +4,7 @@ from "./subset_bool.sml" import * as SubsetBool;
 from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./syntax.sml" import * as Syntax;
 from "./subset_list.sml" import * as SubsetList;
+from "./subset_string.sml" import * as SubsetString;
 from "./compiler_text.sml" import * as CompilerText;
 from "./subset_char.sml" import * as SubsetChar;
 from "./elab.sml" import * as Elab;
@@ -19,6 +20,7 @@ from "./compiler_text.wm" import * as CompilerText;
 from "./subset_bool.wm" import * as SubsetBool;
 from "./subset_char.wm" import * as SubsetChar;
 from "./elab.wm" import * as Elab;
+from "./subset_string.wm" import * as SubsetString;
 
 export from "./subset_option_value.wm" import *;
 
@@ -286,19 +288,98 @@ let validate = match {
   }
 };
 
+/* The scopes a module's structure aliases and opens add to its imports, keyed by dotted path,
+   so `Os.Process.x` finds its members the way `Process.x` does. */
+let flatMap = (items, f) => { SubsetList.concat(SubsetList.map(items, f)) };
+let pathUnder = (key, name) => {
+  let prefix = name ++ ".";
+  if (if (CompilerText.size(key) > CompilerText.size(prefix)) {
+    CompilerText.slice(key, (0: I32), CompilerText.size(prefix)) == prefix
+  } else { false }) { Some(CompilerText.drop(key, CompilerText.size(prefix))) } else { None }
+};
+let nestedScopes = (imports, target) => {
+  flatMap(
+    imports,
+    (key, scope) => {
+      match(pathUnder(key, target)) {
+        Some(path) => { [(path, scope)] },
+        None => { [] }
+      }
+    }
+  )
+};
+let structureScopes = (imports, prog) => {
+  flatMap(
+    prog,
+    match {
+      Syntax.TopDecs(sds) => {
+        flatMap(
+          sds,
+          match {
+            Syntax.SStructure(_, binds) => {
+              flatMap(
+                binds,
+                (_, aliases, ds) => {
+                  SubsetList.append(
+                    flatMap(
+                      aliases,
+                      (_, name, target) => {
+                        SubsetList.append(
+                          SubsetList.map(
+                            SubsetList.filter(imports, (key, _) => { key == target }),
+                            (_, scope) => { (name, scope) }
+                          ),
+                          SubsetList.map(
+                            nestedScopes(imports, target),
+                            (path, scope) => { (name ++ "." ++ path, scope) }
+                          )
+                        )
+                      }
+                    ),
+                    flatMap(
+                      ds,
+                      match {
+                        Syntax.DOpen(_, paths) => {
+                          flatMap(
+                            paths,
+                            match {
+                              [target] => { nestedScopes(imports, target) },
+                              _ => { [] }
+                            }
+                          )
+                        },
+                        _ => { [] }
+                      }
+                    )
+                  )
+                }
+              )
+            },
+            Syntax.SDec(_) => { [] }
+          }
+        )
+      },
+      Syntax.TopExp(_, _) => { [] }
+    }
+  )
+};
+
 let moduleWithRuntime = (runtime, owner, imports, prog, initial) => {
   let Supply(prefix, _, _) = initial;
+  let imports = SubsetList.append(structureScopes(imports, prog), imports);
+  let scopeAt = (qualifiers) => {
+    SubsetList.find(imports, (key, _) => { key == SubsetString.concatWith(qualifiers, ".") })
+  };
   let resolve = match {
     (Scope(values, types), Var(space), (Var(qualifiers), Var(name))) => {
       let bindings = match(qualifiers) {
         [] => { if (space == "value") { values } else { types } },
-        [moduleName] => {
-          match(SubsetList.find(imports, (key, _) => { key == moduleName })) {
+        _ => {
+          match(scopeAt(qualifiers)) {
             None => { [] },
             Some(_, Scope(values, types)) => { if (space == "value") { values } else { types } }
           }
-        },
-        _ => { [] }
+        }
       };
       match(lookup(bindings, name)) {
         None => { (qualifiers, name) },
@@ -310,13 +391,12 @@ let moduleWithRuntime = (runtime, owner, imports, prog, initial) => {
     (Scope(values, _), (Var(qualifiers), Var(name))) => {
       let bindings = match(qualifiers) {
         [] => { values },
-        [moduleName] => {
-          match(SubsetList.find(imports, (key, _) => { key == moduleName })) {
+        _ => {
+          match(scopeAt(qualifiers)) {
             None => { [] },
             Some(_, Scope(values, _)) => { values }
           }
-        },
-        _ => { [] }
+        }
       };
       match(lookup(bindings, name)) {
         Some(Binding(_, _, constructor)) => { constructor },
@@ -797,10 +877,17 @@ let moduleWithRuntime = (runtime, owner, imports, prog, initial) => {
   let rec phrases = (prog, exports, supply) => {
     match(prog) {
       [] => { ([], exports, supply) },
-      [Syntax.TopDecs([Syntax.SStructure(p, [(Var(name), Var(ds))])]), ..rest] => {
+      [
+        Syntax.TopDecs([Syntax.SStructure(p, [(Var(name), Var(aliases), Var(ds))])]),
+        ..rest
+      ] => {
         let (ds, _, body, next) = declarations(empty, ds, supply);
         let (rest, exports, next) = phrases(rest, body, next);
-        ([Syntax.TopDecs([Syntax.SStructure(p, [(name, ds)])]), ..rest], exports, next)
+        (
+          [Syntax.TopDecs([Syntax.SStructure(p, [(name, aliases, ds)])]), ..rest],
+          exports,
+          next
+        )
       },
       [Syntax.TopExp(p, e), ..rest] => {
         let (e, next) = expression(exports, e, supply);
@@ -838,7 +925,22 @@ let projectWithRuntime = (runtime, prefix, modules) => {
         (Var(name), Var(dependencies), (Var(path), Var(src), Var(prog), Var(cs))),
         ..rest
       ] => {
-        let imports = SubsetList.filter(cache, (key, _) => { member(dependencies, key) });
+        let imports = SubsetList.filter(
+          cache,
+          (key, _) => {
+            SubsetList.exists(
+              dependencies,
+              (dependency) => {
+                if (key == dependency) { true } else {
+                  match(pathUnder(key, dependency)) {
+                    Some(_) => { true },
+                    None => { false }
+                  }
+                }
+              }
+            )
+          }
+        );
         let (prog, exports, next) = moduleWithRuntime(runtime, name, imports, prog, supply);
         let next = if (runtimeUsed(next, name)) {
           match(runtime) {
@@ -870,7 +972,11 @@ let projectWithRuntime = (runtime, prefix, modules) => {
             None => { dependencies }
           }
         } else { dependencies };
-        let (rest, next) = loop(rest, [(name, exports), ..cache], next);
+        let nested = SubsetList.map(
+          structureScopes(imports, prog),
+          (path, scope) => { (name ++ "." ++ path, scope) }
+        );
+        let (rest, next) = loop(rest, SubsetList.append(nested, [(name, exports), ..cache]), next);
         ([(name, dependencies, (path, src, prog, cs)), ..rest], next)
       }
     }
