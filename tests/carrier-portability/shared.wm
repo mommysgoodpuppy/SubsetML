@@ -1,4 +1,4 @@
-let number: Result<Number, String> = Monad.via Result.carrier (x) => { Ok(x + 1) } (Ok(1));
+let number: Result<Real64.Real, String> = Monad.via Result.carrier (x) => { Ok(x + 1) } (Ok(1));
 let text: Result<String, Bool> = Monad.via Result.carrier (x) => { Ok(x ++ "!") } (Ok("hi"));
 let mapped: Result<Bool, String> = Result.carrier.map(Ok("value"), (_) => {true});
 let combined: Result<String, Bool> = Result.carrier.map2(Ok("a"), Ok("b"), (a, b) => {a ++ b});

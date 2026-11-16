@@ -39,7 +39,7 @@ the active compiler graph. Their real-valued interfaces are not changed.
 ## WM transition
 
 This is a breaking Basis API migration. Since 2026-10-23 `int` translates to
-Workman's `I32` ([translation rules](translation.md#integers)), so `make wm`
+Workman's `Int32.Int` ([translation rules](translation.md#integers)), so `make wm`
 regenerates the migrated compiler and its `.wm` mirrors run on WM/JS again.
 
 Historical Basis tests that supply real-valued indices or test fractional/NaN

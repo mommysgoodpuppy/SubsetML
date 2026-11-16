@@ -324,7 +324,10 @@ let conventionWarnings = (decs, exps) => {
   SubsetList.append(
     concatMap(
       keyword,
-      SubsetList.append(concatMap(decNames, decs), concatMap((e) => { expNames((0: I32), e) }, exps))
+      SubsetList.append(
+        concatMap(decNames, decs),
+        concatMap((e) => { expNames((0: Int32.Int), e) }, exps)
+      )
     ),
     concatMap(casing, decs)
   )
@@ -346,7 +349,7 @@ let baseName = (path) => {
     [] => { path }
   };
   if (CompilerText.isSuffix(file, ".sml")) {
-    CompilerText.slice(file, (0: I32), CompilerText.size(file) - (4: I32))
+    CompilerText.slice(file, (0: Int32.Int), CompilerText.size(file) - (4: Int32.Int))
   } else { file }
 };
 
@@ -586,7 +589,7 @@ let toWm = (structures, path, src, prog, comments) => {
   let used = distinct(SubsetList.append(concatMap(decQuals, decs), concatMap(expQuals, exps)));
   let start = match(prog) {
     [TopDecs([SStructure(p, _), .._]), .._] => { p },
-    _ => { (0: I32) }
+    _ => { (0: Int32.Int) }
   };
   let aliases = structureAliases(prog);
   let isAlias = (q) => { SmlList.exists((_, name, _) => { name == q })(aliases) };
@@ -634,7 +637,7 @@ let toWm = (structures, path, src, prog, comments) => {
     TranslateError(path ++ ": unsupported WM translation: " ++ SubsetString.concatWith(gaps, ", ") ++ "; embedded SML declarations are not supported")
   } else {
     if (if (self != "") { expected != baseName(path) ++ ".wm" } else { false }) {
-      TranslateError(path ++ ": structure " ++ self ++ " must be in a file named " ++ CompilerText.slice(expected, (0: I32), CompilerText.size(expected) - (3: I32)) ++ ".sml")
+      TranslateError(path ++ ": structure " ++ self ++ " must be in a file named " ++ CompilerText.slice(expected, (0: Int32.Int), CompilerText.size(expected) - (3: Int32.Int)) ++ ".sml")
     } else {
       Output(
         baseName(path) ++ ".wm",
@@ -702,7 +705,7 @@ let keywordPrefix = BackendNames.prefix;
 
 // Compatibility entry: the source-list backend uses project-wide binding resolution.
 let keywordProgram = (prefix, prog) => {
-  let (prog, _, _) = BackendNames.module("", [], prog, BackendNames.Supply(prefix, (0: I32), []));
+  let (prog, _, _) = BackendNames.module("", [], prog, BackendNames.Supply(prefix, (0: Int32.Int), []));
   prog
 };
 
@@ -777,7 +780,9 @@ let portableValues = (env, prog, st) => {
     let rec identity = (i, args) => {
       match(args) {
         [] => { true },
-        [Types.TGen(j), ..rest] => { if (i == j) { identity(i + (1: I32), rest) } else { false } },
+        [Types.TGen(j), ..rest] => {
+          if (i == j) { identity(i + (1: Int32.Int), rest) } else { false }
+        },
         _ => { false }
       }
     };
@@ -790,7 +795,7 @@ let portableValues = (env, prog, st) => {
               if (SmlList.exists((x) => { x == n })(seen)) { localType(rest, seen) } else {
                 match(body) {
                   Types.TCon(name, args) => {
-                    if (if (if (Unify.sameName(name, nominal)) { arity == Types.arityOf(nominal) } else { false }) { identity((0: I32), args) } else { false }) { Some(path, n) } else { localType(rest, [n, ..seen]) }
+                    if (if (if (Unify.sameName(name, nominal)) { arity == Types.arityOf(nominal) } else { false }) { identity((0: Int32.Int), args) } else { false }) { Some(path, n) } else { localType(rest, [n, ..seen]) }
                   },
                   _ => { localType(rest, [n, ..seen]) }
                 }
@@ -829,10 +834,10 @@ let portableValues = (env, prog, st) => {
           },
           parameters
         );
-        Unify.bind(Elab.exp((env, (1: I32), []), source, st))((sourceType) => (probe) => {
+        Unify.bind(Elab.exp((env, (1: Int32.Int), []), source, st))((sourceType) => (probe) => {
           Unify.bind(Elab.mapRes(
             (v, probe) => {
-              let (t, probe) = Unify.fresh(probe, Types.KPlain, (1: I32));
+              let (t, probe) = Unify.fresh(probe, Types.KPlain, (1: Int32.Int));
               Unify.Ok((v, t), probe)
             },
             variables,
@@ -840,13 +845,13 @@ let portableValues = (env, prog, st) => {
           ))((arguments) => (probe) => {
             Unify.bind(Elab.elabTy(env, (v) => { Env.assoc(v, arguments) }, p, layout, probe))((layoutType) => (probe) => {
               Unify.bind(Elab.unifyAt(probe, p, "copied layout", layoutType, sourceType))((_) => (probe) => {
-                Unify.bind(Elab.closeDeclaration((0: I32), probe))((_) => (probe) => {
+                Unify.bind(Elab.closeDeclaration((0: Int32.Int), probe))((_) => (probe) => {
                   let rec syntaxType = (t) => {
                     match(Unify.prune(probe, t)) {
                       Types.TVar(v) => {
                         match(Unify.lookup(probe, v)) {
                           Unify.Free(kind, level) => {
-                            if (level <= (0: I32)) { None } else {
+                            if (level <= (0: Int32.Int)) { None } else {
                               match(kind) {
                                 Types.KClass(_) => { None },
                                 _ => {
@@ -922,8 +927,8 @@ let portableValues = (env, prog, st) => {
     match(e) {
       ECopy(p, source, target, layout) => { copy(env, p, source, target, layout, st) },
       EApp(ESelect(_, _), EId(_, _)) => {
-        Unify.bind(Elab.exp((env, (1: I32), []), e, st))((t) => (probe) => {
-          Unify.bind(Elab.closeDeclaration((0: I32), probe))((_) => (probe) => {
+        Unify.bind(Elab.exp((env, (1: Int32.Int), []), e, st))((t) => (probe) => {
+          Unify.bind(Elab.closeDeclaration((0: Int32.Int), probe))((_) => (probe) => {
             match(Unify.prune(probe, t)) {
               Types.TArrow(_, _) => {
                 let arg = fresh("subsetmlAlias" ++ CompilerText.natural(p));
@@ -955,7 +960,7 @@ let portableValues = (env, prog, st) => {
       [] => { Unify.Ok((Env.empty, []), st) },
       [d, ..rest] => {
         Unify.bind(declaration(env, d, st))((d) => (st) => {
-          Unify.bind(Elab.dec((env, (0: I32), []), d, st))((delta) => (st) => {
+          Unify.bind(Elab.dec((env, (0: Int32.Int), []), d, st))((delta) => (st) => {
             Unify.bind(declarations(Env.plus(env, delta), rest, st))((more, rest) => (st) => { Unify.Ok((Env.plus(delta, more), [d, ..rest]), st) })
           })
         })
@@ -966,7 +971,7 @@ let portableValues = (env, prog, st) => {
     match(sd) {
       SDec(d) => {
         Unify.bind(declaration(env, d, st))((d) => (st) => {
-          Unify.bind(Elab.dec((env, (0: I32), []), d, st))((delta) => (st) => { Unify.Ok((delta, SDec(d)), st) })
+          Unify.bind(Elab.dec((env, (0: Int32.Int), []), d, st))((delta) => (st) => { Unify.Ok((delta, SDec(d)), st) })
         })
       },
       SStructure(p, bs) => {
@@ -1064,7 +1069,7 @@ let recover = (modules, target) => {
     let name = nameOfModule(item);
     if (SmlList.exists((n) => { n == name })(done)) { Unify.Ok((done, acc), Unify.initial) } else {
       if (SmlList.exists((n) => { n == name })(visiting)) {
-        Unify.Err("cyclic module dependency involving " ++ name, (0: I32))
+        Unify.Err("cyclic module dependency involving " ++ name, (0: Int32.Int))
       } else {
         let needed = SmlList.filter((m) => {
           if (nameOfModule(m) != name) { SmlList.exists((n) => { n == nameOfModule(m) })(deps(item)) } else { false }
@@ -1120,7 +1125,7 @@ let recover = (modules, target) => {
             Unify.bind(strict(basis, rewritten, Unify.initial))((_) => (st) => {
               match(SmlList.find((m) => { nameOfModule(m) == nameOfModule(target) })(rewritten)) {
                 Some(m) => { Unify.Ok(m, st) },
-                None => { Unify.Err("missing translated module", (0: I32)) }
+                None => { Unify.Err("missing translated module", (0: Int32.Int)) }
               }
             })
           })
@@ -1137,7 +1142,9 @@ let recoverProjectWithRuntime = (runtime, modules) => {
     SmlList.foldl((name, result) => {
       Unify.bind(result)((env) => (st) => {
         match(SmlList.find((key, _) => { key == name })(cache)) {
-          None => { Unify.Err("missing resolved dependency " ++ name, (0: I32)) },
+          None => {
+            Unify.Err("missing resolved dependency " ++ name, (0: Int32.Int))
+          },
           Some(_, body) => {
             Unify.Ok(Env.plus(env, Env.withStructure(name, body, false)), st)
           }
@@ -1147,7 +1154,9 @@ let recoverProjectWithRuntime = (runtime, modules) => {
   };
   let own = (env, name) => {
     match(Env.structureAt(env, [name])) {
-      None => { Unify.Err("missing translated structure " ++ name, (0: I32)) },
+      None => {
+        Unify.Err("missing translated structure " ++ name, (0: Int32.Int))
+      },
       Some(body, _) => {
         let selected = match(runtime) {
           Some(key) => { key == name },
@@ -1158,12 +1167,12 @@ let recoverProjectWithRuntime = (runtime, modules) => {
             ([Types.KPlain], Types.TArrow(Types.TCon(tn, []), Types.TGen(index))),
             Env.SValue
           ) => {
-            if (Types.stampOf(tn) == Types.stampOf(Types.stringName)) { index == (0: I32) } else { false }
+            if (Types.stampOf(tn) == Types.stampOf(Types.stringName)) { index == (0: Int32.Int) } else { false }
           },
           _ => { false }
         };
         if (if (selected) { SubsetBool.not(valid) } else { false }) {
-          Unify.Err("panic runtime must export panic : string -> 'a", (0: I32))
+          Unify.Err("panic runtime must export panic : string -> 'a", (0: Int32.Int))
         } else { Unify.Ok(body, Unify.initial) }
       }
     }
@@ -1236,7 +1245,7 @@ let fromWmNamed = (name, aliases, src, decs, exps, comments) => {
   let structureDoc = Doc.stack([
     structureLine,
     Doc.indent(
-      (2: I32),
+      (2: Int32.Int),
       Doc.stack(SubsetList.append(
         SmlList.map((p, alias, target) => { Doc.atom(p, "structure " ++ alias ++ " = " ++ target) })(aliases),
         SmlList.map(SmlPrint.dec)(decs)

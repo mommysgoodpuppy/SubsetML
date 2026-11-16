@@ -6,7 +6,7 @@ from "./subset_char.sml" import * as SubsetChar;
 *)
 
 (* Checked decimal parsing over the portable signed 32-bit integer domain. *)
-structure SubsetInt = struct
+structure SubsetInt32 = struct
   datatype error = InvalidInteger | Overflow | StringError of SubsetString.error
 
   (* Accumulate negatively so the minimum integer never needs to be negated. *)

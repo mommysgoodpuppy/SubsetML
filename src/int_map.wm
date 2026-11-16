@@ -11,7 +11,7 @@ from "./subset_option_value.wm" import * as SubsetOptionValue;
 
 export from "./subset_option_value.wm" import *;
 
-type Map<a> = Empty | Leaf<I32, a> | Branch<Map<a>, Map<a>>;
+type Map<a> = Empty | Leaf<Int32.Int, a> | Branch<Map<a>, Map<a>>;
 let empty = Empty;
 let rec find = (tree, key) => {
   match(tree) {
@@ -19,8 +19,8 @@ let rec find = (tree, key) => {
     Leaf(stored, value) => { if (stored == key) { Some(value) } else { None } },
     Branch(left, right) => {
       find(
-        if (I32.mod(key, (2: I32)) == (0: I32)) { left } else { right },
-        I32.div(key, (2: I32))
+        if (Int32.mod(key, (2: Int32.Int)) == (0: Int32.Int)) { left } else { right },
+        Int32.div(key, (2: Int32.Int))
       )
     }
   }
@@ -34,7 +34,11 @@ let rec insert = (tree, key, value) => {
       }
     },
     Branch(left, right) => {
-      if (I32.mod(key, (2: I32)) == (0: I32)) { Branch(insert(left, I32.div(key, (2: I32)), value), right) } else { Branch(left, insert(right, I32.div(key, (2: I32)), value)) }
+      if (Int32.mod(key, (2: Int32.Int)) == (0: Int32.Int)) {
+        Branch(insert(left, Int32.div(key, (2: Int32.Int)), value), right)
+      } else {
+        Branch(left, insert(right, Int32.div(key, (2: Int32.Int)), value))
+      }
     }
   }
 };

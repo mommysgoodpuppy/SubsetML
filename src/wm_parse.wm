@@ -52,7 +52,7 @@ let bind = (r) => (k) => {
 
 let peek = match {
   [t, .._] => { t },
-  [] => { (WEOF, (0: I32)) }
+  [] => { (WEOF, (0: Int32.Int)) }
 };
 
 let advance = match {
@@ -145,8 +145,10 @@ let constructorName = (name) => {
 
 let tyConName = match {
   ([], "Void") => { ([], "unit") },
-  ([], "Number") => { ([], "real") },
-  ([], "I32") => { ([], "int") },
+  (["Real64"], "Real") => { ([], "real") },
+  ([], "Real64") => { ([], "real") },
+  (["Int32"], "Int") => { ([], "int") },
+  ([], "Int32") => { ([], "int") },
   (Var(qs), Var(s)) => { (qs, decapitalize(s)) }
 };
 
@@ -174,7 +176,7 @@ let structureName = (file) => {
     [] => { file }
   };
   let stem = if (CompilerText.isSuffix(base, ".wm")) {
-    CompilerText.slice(base, (0: I32), CompilerText.size(base) - (3: I32))
+    CompilerText.slice(base, (0: Int32.Int), CompilerText.size(base) - (3: Int32.Int))
   } else { base };
   BackendNames.moduleHint(stem)
 };
@@ -224,9 +226,9 @@ and typeName = (quals, name, ts) => {
 /* Patterns. As in WmPrint, `inMatch` marks a match arm and `binds` whether a bare name binds
    at this position. */
 
-/* A bare Workman integer literal is an SML int when it fits in I32 and real otherwise, so
+/* A bare Workman integer literal is an SML int when it fits in Int32 and real otherwise, so
    `1` is int and `1.0` is real. Workman itself types `1` from context and defaults it to
-   Number, so Number code read here must spell its integral constants `1.0`. */
+   Real64, so Real64 code read here must spell its integral constants `1.0`. */
 let number = (c) => {
   match(c) {
     SInt(s) => {
@@ -239,23 +241,25 @@ let number = (c) => {
 let negativeLiteral = (minusPos, ts) => {
   match(peek(ts)) {
     (WScon(SInt(s)), Var(p)) => {
-      if (p == minusPos + (1: I32)) { Some(number(SInt("~" ++ s))) } else { None }
+      if (p == minusPos + (1: Int32.Int)) { Some(number(SInt("~" ++ s))) } else { None }
     },
     (WScon(SReal(s)), Var(p)) => {
-      if (p == minusPos + (1: I32)) { Some(SReal("~" ++ s)) } else { None }
+      if (p == minusPos + (1: Int32.Int)) { Some(SReal("~" ++ s)) } else { None }
     },
     _ => { None }
   }
 };
 
-/* The text of an integer literal at the start of `ts`, `-` included: `(n: I32)` is an SML int
+/* The text of an integer literal at the start of `ts`, `-` included: `(n: Int32.Int)` is an SML int
    constant even outside the range a bare literal reads as int. */
 let integerText = (ts) => {
   match(peek(ts)) {
     (WScon(SInt(s)), _) => { Some(s) },
     (WKey("-"), Var(p)) => {
       match(peek(advance(ts))) {
-        (WScon(SInt(s)), Var(q)) => { if (q == p + (1: I32)) { Some("~" ++ s) } else { None } },
+        (WScon(SInt(s)), Var(q)) => {
+          if (q == p + (1: Int32.Int)) { Some("~" ++ s) } else { None }
+        },
         _ => { None }
       }
     },
@@ -410,33 +414,33 @@ let lambdaAhead = (ts) => {
     match(peek(ts)) {
       (WEOF, _) => { false },
       (WKey(k), _) => {
-        if (if (if (if (k == "(") { true } else { k == "[" }) { true } else { k == "{" }) { true } else { k == ".{" }) { scan(depth + (1: I32), advance(ts)) } else {
+        if (if (if (if (k == "(") { true } else { k == "[" }) { true } else { k == "{" }) { true } else { k == ".{" }) { scan(depth + (1: Int32.Int), advance(ts)) } else {
           if (if (if (k == ")") { true } else { k == "]" }) { true } else { k == "}" }) {
-            if (depth == (1: I32)) { isKey("=>", advance(ts)) } else { scan(depth - (1: I32), advance(ts)) }
+            if (depth == (1: Int32.Int)) { isKey("=>", advance(ts)) } else { scan(depth - (1: Int32.Int), advance(ts)) }
           } else { scan(depth, advance(ts)) }
         }
       },
       _ => { scan(depth, advance(ts)) }
     }
   };
-  if (isKey("(", ts)) { scan((0: I32), ts) } else { false }
+  if (isKey("(", ts)) { scan((0: Int32.Int), ts) } else { false }
 };
 
 let binLevel = match {
-  "||" => { Some((1: I32)) },
-  "&&" => { Some((2: I32)) },
-  "==" => { Some((3: I32)) },
-  "!=" => { Some((3: I32)) },
-  "<" => { Some((4: I32)) },
-  ">" => { Some((4: I32)) },
-  "<=" => { Some((4: I32)) },
-  ">=" => { Some((4: I32)) },
-  "++" => { Some((5: I32)) },
-  "+" => { Some((5: I32)) },
-  "-" => { Some((5: I32)) },
-  "*" => { Some((6: I32)) },
-  "/" => { Some((6: I32)) },
-  "%" => { Some((6: I32)) },
+  "||" => { Some((1: Int32.Int)) },
+  "&&" => { Some((2: Int32.Int)) },
+  "==" => { Some((3: Int32.Int)) },
+  "!=" => { Some((3: Int32.Int)) },
+  "<" => { Some((4: Int32.Int)) },
+  ">" => { Some((4: Int32.Int)) },
+  "<=" => { Some((4: Int32.Int)) },
+  ">=" => { Some((4: Int32.Int)) },
+  "++" => { Some((5: Int32.Int)) },
+  "+" => { Some((5: Int32.Int)) },
+  "-" => { Some((5: Int32.Int)) },
+  "*" => { Some((6: Int32.Int)) },
+  "/" => { Some((6: Int32.Int)) },
+  "%" => { Some((6: Int32.Int)) },
   _ => { None }
 };
 
@@ -524,7 +528,7 @@ type RecordPart = Spread<Exp> | Field<String, Exp>;
 let rec parameterType = (variables, t) => {
   match(t) {
     TyCon([], ([], Var(name))) => {
-      match(SmlList.find((v) => { decapitalize(CompilerText.drop(v, (1: I32))) == name })(variables)) {
+      match(SmlList.find((v) => { decapitalize(CompilerText.drop(v, (1: Int32.Int))) == name })(variables)) {
         Some(v) => { TyVar(v) },
         None => { t }
       }
@@ -570,8 +574,8 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
   let source = CompilerText.source(src);
   let spaceBefore = (ts) => {
     let p = posOf(ts);
-    if (p > (0: I32)) {
-      if (WmLexer.isSpace(CompilerText.sub(source, p - (1: I32)))) { true } else { CompilerText.sub(source, p - (1: I32)) == '/' }
+    if (p > (0: Int32.Int)) {
+      if (WmLexer.isSpace(CompilerText.sub(source, p - (1: Int32.Int)))) { true } else { CompilerText.sub(source, p - (1: Int32.Int)) == '/' }
     } else { false }
   };
   let startsSpaceArgument = (ts) => {
@@ -632,7 +636,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
   let literalLayout = (variables, fields) => {
     let occurrences = SmlList.concat(SmlList.map((_, t) => { variablesIn(t) })(fields));
     if (SmlList.all((v) => {
-      SubsetList.length(SmlList.filter((n) => { n == v })(occurrences)) == (1: I32)
+      SubsetList.length(SmlList.filter((n) => { n == v })(occurrences)) == (1: Int32.Int)
     })(variables)) {
       SmlList.all((_, t) => {
         if (SubsetList.isEmpty(variablesIn(t))) { true } else {
@@ -663,7 +667,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
   let aliases = SmlList.map(match {
     Layout(moduleName, name, parameters, _) => {
       DType(
-        (0: I32),
+        (0: Int32.Int),
         [
           (
             parameters,
@@ -811,12 +815,12 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
     let rec more = (l, ts) => {
       match(fallbackOperator(ts)) {
         Some(opr) => {
-          bind(parseBinary((1: I32), advance(ts)))((r) => (ts') => { more(infixApp(opr, posOf(ts), l, r), ts') })
+          bind(parseBinary((1: Int32.Int), advance(ts)))((r) => (ts') => { more(infixApp(opr, posOf(ts), l, r), ts') })
         },
         None => { Done(l, ts) }
       }
     };
-    bind(parseBinary((1: I32), ts))((l) => (ts) => { more(l, ts) })
+    bind(parseBinary((1: Int32.Int), ts))((l) => (ts) => { more(l, ts) })
   }
 
   and parseBinary = (minLevel, ts) => {
@@ -829,7 +833,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
                 if (opr == "%") {
                   Fail("`%` has no SubsetML counterpart (SML `mod` differs)", p)
                 } else {
-                  bind(parseBinary(level + (1: I32), advance(ts)))((r) => (ts) => {
+                  bind(parseBinary(level + (1: Int32.Int), advance(ts)))((r) => (ts) => {
                     more(
                       match(opr) {
                         "&&" => { EAndalso(l, r) },
@@ -1048,7 +1052,9 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
           bind(separated(part, ",", "}", ts))((parts) => (ts) => {
             bind(expect("}", ts))((_) => (ts) => {
               let prefix = "subsetmlRecord" ++ CompilerText.natural(p) ++ "_";
-              let parameters = SmlList.map((v) => { (v, "'" ++ fresh(prefix ++ CompilerText.drop(v, (1: I32)))) })(variables);
+              let parameters = SmlList.map((v) => {
+                (v, "'" ++ fresh(prefix ++ CompilerText.drop(v, (1: Int32.Int))))
+              })(variables);
               let rec fieldType = (t) => {
                 match(t) {
                   TyVar(v) => {
@@ -1107,12 +1113,12 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
                                       [_, ..rest] => {
                                         [
                                           fresh(prefix ++ label ++ "Argument" ++ CompilerText.natural(index)),
-                                          ..argumentNames(index + (1: I32), rest)
+                                          ..argumentNames(index + (1: Int32.Int), rest)
                                         ]
                                       }
                                     }
                                   };
-                                  let bound = argumentNames((0: I32), arguments);
+                                  let bound = argumentNames((0: Int32.Int), arguments);
                                   let patterns = SmlList.map((name) => { PId(p, ([], name)) })(bound);
                                   let values = SmlList.map((name) => { EId(p, ([], name)) })(bound);
                                   let pattern = match(domain) {
@@ -1244,7 +1250,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
                       Spread(e) => {
                         finish(
                           rest,
-                          index + (1: I32),
+                          index + (1: Int32.Int),
                           [(PTyped(PId(p, ([], temporary)), targetType), e), ..bindings],
                           SmlList.map((label, _) => { (label, EApp(ESelect(p, label), value)) })(fields),
                           explicit
@@ -1258,7 +1264,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
                               let (_, t) = pair;
                               finish(
                                 rest,
-                                index + (1: I32),
+                                index + (1: Int32.Int),
                                 [(PTyped(PId(p, ([], temporary)), fieldFor(label, t)), e), ..bindings],
                                 [(label, value), ..SmlList.filter((l, _) => { l != label })(values)],
                                 [label, ..explicit]
@@ -1271,7 +1277,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
                   }
                 }
               };
-              finish(parts, (0: I32), [], [], [])
+              finish(parts, (0: Int32.Int), [], [], [])
             })
           })
         }
@@ -1574,7 +1580,11 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
             } else {
               bind(parseExp(ts))((e) => (ts) => {
                 bind(expect(";", ts))((_) => (ts) => {
-                  items([DVal((0: I32), [], [(PId((0: I32), ([], "it")), e)], []), ..decs], exps, ts)
+                  items(
+                    [DVal((0: Int32.Int), [], [(PId((0: Int32.Int), ([], "it")), e)], []), ..decs],
+                    exps,
+                    ts
+                  )
                 })
               })
             }
@@ -1603,7 +1613,7 @@ let recordLayoutsTokens = (owner, src, lexed) => {
   let rec scan = (tokens, layouts, depth) => {
     match(tokens) {
       [(WKey("record"), Var(start)), ..rest] => {
-        if (depth > (0: I32)) {
+        if (depth > (0: Int32.Int)) {
           Fail(
             "record layout declarations must be top-level in the initial translation profile",
             start
@@ -1617,7 +1627,10 @@ let recordLayoutsTokens = (owner, src, lexed) => {
                   owner,
                   src,
                   Tokens(
-                    SubsetList.append(SubsetList.filter(tokens, (_, p) => { p <= stop }), [(WEOF, stop + (1: I32))]),
+                    SubsetList.append(
+                      SubsetList.filter(tokens, (_, p) => { p <= stop }),
+                      [(WEOF, stop + (1: Int32.Int))]
+                    ),
                     []
                   )
                 )) {
@@ -1636,16 +1649,16 @@ let recordLayoutsTokens = (owner, src, lexed) => {
           header(rest)
         }
       },
-      [(WKey("{"), _), ..rest] => { scan(rest, layouts, depth + (1: I32)) },
-      [(WKey(".{"), _), ..rest] => { scan(rest, layouts, depth + (1: I32)) },
-      [(WKey("}"), _), ..rest] => { scan(rest, layouts, depth - (1: I32)) },
+      [(WKey("{"), _), ..rest] => { scan(rest, layouts, depth + (1: Int32.Int)) },
+      [(WKey(".{"), _), ..rest] => { scan(rest, layouts, depth + (1: Int32.Int)) },
+      [(WKey("}"), _), ..rest] => { scan(rest, layouts, depth - (1: Int32.Int)) },
       [_, ..rest] => { scan(rest, layouts, depth) },
       [] => { Done(SmlList.rev(layouts), []) }
     }
   };
   match(lexed) {
     LexError(message, offset) => { Fail(message, offset) },
-    Tokens(tokens, _) => { scan(tokens, [], (0: I32)) }
+    Tokens(tokens, _) => { scan(tokens, [], (0: Int32.Int)) }
   }
 };
 

@@ -23,13 +23,13 @@ let arguments = () => {
   (SubsetResult.Err("native adapter required"): SubsetResult.Result<List<String>, String>)
 };
 let system = (command: String) => {
-  (SubsetResult.Err("native adapter required"): SubsetResult.Result<I32, String>)
+  (SubsetResult.Err("native adapter required"): SubsetResult.Result<Int32.Int, String>)
 };
 let getEnv = (name: String) => {
   (SubsetOptionValue.None: SubsetOptionValue.Option<String>)
 };
-let exit = (code: I32) => { void };
-let terminate = (code: I32) => { void };
+let exit = (code: Int32.Int) => { void };
+let terminate = (code: Int32.Int) => { void };
 let makeDir = (name: String) => {
   (SubsetResult.Err("native adapter required"): SubsetResult.Result<Void, String>)
 };

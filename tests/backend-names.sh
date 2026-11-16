@@ -8,7 +8,7 @@ compiler = Path('bin/subsetml').resolve()
 with tempfile.TemporaryDirectory(prefix='subsetml-backend-names-') as directory:
     root = Path(directory); out = root / 'sml'; out.mkdir()
     module = root / 'source.wm'
-    module.write_text('''record Span = { end: I32, fn: I32 };
+    module.write_text('''record Span = { end: Int32.Int, fn: Int32.Int };
 let fn = (value) => {value + 1};
 let make = Span;
 let subsetmlKeyword_value0_Span = "authored";
@@ -35,7 +35,7 @@ let good = field(span) == 4 && copied.fn == 9 && copied.end == 2 &&
     subprocess.run([root / 'test'], check=True)
     # Variant constructor identity is also preserved after renaming its reserved spelling.
     variants = root / 'variants.wm'
-    variants.write_text('''type T = | Span<I32>;
+    variants.write_text('''type T = | Span<Int32.Int>;
 let read = (t) => {match(t) {Span(n) => {n}}};
 let good = read(Span(5)) == 5;
 ''')

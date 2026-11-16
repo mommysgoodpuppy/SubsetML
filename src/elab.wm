@@ -43,7 +43,7 @@ export from "./unify.wm" import *;
 export from "./env.wm" import *;
 
 // The context: environment, level, and the explicit type variables in scope.
-type Context = (Env, I32, List<String>);
+type Context = (Env, Int32.Int, List<String>);
 
 let envOf = (env, _, _) => { env };
 let scopedOf = (_, _, scoped) => { scoped };
@@ -420,16 +420,16 @@ let rec pat = (ctx, p, st) => {
       })
     },
     PTuple(ps) => {
-      bind(pats(ctx, at((0: I32), patPos(p)), ps, st))((ts, vars) => (st) => {
+      bind(pats(ctx, at((0: Int32.Int), patPos(p)), ps, st))((ts, vars) => (st) => {
         Ok((if (SmlList.null(ts)) { unitTy } else { tupleTy(ts) }, vars), st)
       })
     },
     PList(ps) => {
       let (elem, st0) = fresh(st, KPlain, level);
-      bind(pats(ctx, at((0: I32), patPos(p)), ps, st0))((ts, vars) => (st) => {
+      bind(pats(ctx, at((0: Int32.Int), patPos(p)), ps, st0))((ts, vars) => (st) => {
         bind(foldRes(
           (_, (t, x), st) => {
-            unifyAt(st, at((0: I32), patPos(x)), "list pattern element", elem, t)
+            unifyAt(st, at((0: Int32.Int), patPos(x)), "list pattern element", elem, t)
           },
           void,
           SmlListPair.zip(ts, ps),
@@ -457,8 +457,8 @@ let rec pat = (ctx, p, st) => {
     },
     PTyped(inner, t) => {
       bind(pat(ctx, inner, st))((ti, vars) => (st) => {
-        bind(scopedTy(ctx, at((0: I32), patPos(inner)), t, st))((t') => (st) => {
-          bind(unifyAt(st, at((0: I32), patPos(inner)), "type annotation", t', ti))((_) => (st) => { Ok((t', vars), st) })
+        bind(scopedTy(ctx, at((0: Int32.Int), patPos(inner)), t, st))((t') => (st) => {
+          bind(unifyAt(st, at((0: Int32.Int), patPos(inner)), "type annotation", t', ti))((_) => (st) => { Ok((t', vars), st) })
         })
       })
     }
@@ -567,7 +567,7 @@ let rec exp = (ctx, e, st) => {
       bind(foldRes(
         (_, x, st) => {
           bind(exp(ctx, x, st))((t) => (st) => {
-            unifyAt(st, at((0: I32), expPos(x)), "list element", elem, t)
+            unifyAt(st, at((0: Int32.Int), expPos(x)), "list element", elem, t)
           })
         },
         void,
@@ -590,7 +590,7 @@ let rec exp = (ctx, e, st) => {
           if (SmlList.exists((s) => { s >= start })(tynames(resolve(st, t)))) {
             Err(
               "the type of this `let` mentions a type declared inside it",
-              at((0: I32), expPos(e))
+              at((0: Int32.Int), expPos(e))
             )
           } else { Ok(t, st) }
         })
@@ -628,8 +628,8 @@ let rec exp = (ctx, e, st) => {
     EApp(f, a) => { application(ctx, f, a, st) },
     ETyped(x, t) => {
       bind(exp(ctx, x, st))((tx) => (st) => {
-        bind(scopedTy(ctx, at((0: I32), expPos(x)), t, st))((t') => (st) => {
-          bind(unifyAt(st, at((0: I32), expPos(x)), "type annotation", t', tx))((_) => (st) => { Ok(t', st) })
+        bind(scopedTy(ctx, at((0: Int32.Int), expPos(x)), t, st))((t') => (st) => {
+          bind(unifyAt(st, at((0: Int32.Int), expPos(x)), "type annotation", t', tx))((_) => (st) => { Ok(t', st) })
         })
       })
     },
@@ -637,10 +637,10 @@ let rec exp = (ctx, e, st) => {
     EOrelse(a, b) => { boolOp(ctx, "orelse", a, b, st) },
     EIf(c, a, b) => {
       bind(exp(ctx, c, st))((tc) => (st) => {
-        bind(unifyAt(st, at((0: I32), expPos(c)), "condition of `if`", boolTy, tc))((_) => (st) => {
+        bind(unifyAt(st, at((0: Int32.Int), expPos(c)), "condition of `if`", boolTy, tc))((_) => (st) => {
           bind(exp(ctx, a, st))((ta) => (st) => {
             bind(exp(ctx, b, st))((tb) => (st) => {
-              bind(unifyAt(st, at((0: I32), expPos(b)), "branches of `if` differ", ta, tb))((_) => (st) => { Ok(ta, st) })
+              bind(unifyAt(st, at((0: Int32.Int), expPos(b)), "branches of `if` differ", ta, tb))((_) => (st) => { Ok(ta, st) })
             })
           })
         })
@@ -649,7 +649,13 @@ let rec exp = (ctx, e, st) => {
     ECase(x, rules) => {
       bind(exp(ctx, x, st))((tx) => (st) => {
         bind(matchRules(ctx, rules, st))((tp, tr) => (st) => {
-          bind(unifyAt(st, at((0: I32), expPos(x)), "`case` patterns do not fit the value", tp, tx))((_) => (st) => { Ok(tr, st) })
+          bind(unifyAt(
+            st,
+            at((0: Int32.Int), expPos(x)),
+            "`case` patterns do not fit the value",
+            tp,
+            tx
+          ))((_) => (st) => { Ok(tr, st) })
         })
       })
     },
@@ -668,7 +674,7 @@ and application = (ctx, f, a, st) => {
         _ => { "function argument" }
       };
       let pos = at(
-        (0: I32),
+        (0: Int32.Int),
         match(expPos(a)) {
           Some(q) => { Some(q) },
           None => { expPos(f) }
@@ -689,9 +695,9 @@ and application = (ctx, f, a, st) => {
 
 and boolOp = (ctx, name, a, b, st) => {
   bind(exp(ctx, a, st))((ta) => (st) => {
-    bind(unifyAt(st, at((0: I32), expPos(a)), "operand of " ++ name, boolTy, ta))((_) => (st) => {
+    bind(unifyAt(st, at((0: Int32.Int), expPos(a)), "operand of " ++ name, boolTy, ta))((_) => (st) => {
       bind(exp(ctx, b, st))((tb) => (st) => {
-        bind(unifyAt(st, at((0: I32), expPos(b)), "operand of " ++ name, boolTy, tb))((_) => (st) => { Ok(boolTy, st) })
+        bind(unifyAt(st, at((0: Int32.Int), expPos(b)), "operand of " ++ name, boolTy, tb))((_) => (st) => { Ok(boolTy, st) })
       })
     })
   })
@@ -705,7 +711,7 @@ and matchRules = (ctx, rules, st) => {
   bind(foldRes(
     (_, (p, x), st) => {
       bind(pat(ctx, p, st))((t, vars) => (st) => {
-        bind(unifyAt(st, at((0: I32), patPos(p)), "patterns of a match differ", tp, t))((_) => (st) => {
+        bind(unifyAt(st, at((0: Int32.Int), patPos(p)), "patterns of a match differ", tp, t))((_) => (st) => {
           bind(exp(
             (
               plus(env, withValues(SmlList.map((v, vt) => { (v, (([], vt), SValue)) })(vars))),
@@ -715,7 +721,7 @@ and matchRules = (ctx, rules, st) => {
             x,
             st
           ))((tx) => (st) => {
-            unifyAt(st, at((0: I32), expPos(x)), "results of a match differ", tr, tx)
+            unifyAt(st, at((0: Int32.Int), expPos(x)), "results of a match differ", tr, tx)
           })
         })
       })
@@ -777,7 +783,7 @@ and valDec = ((env, level, scoped), pos, tyvars, plain, recs, st) => {
   let bindings = SubsetList.append(plain, recs);
   let implicit = SmlList.filter((v) => { SubsetBool.not(member(v, scoped)) })(distinct(concatMap((p, e) => { SubsetList.append(patTyVars(p), expTyVars(e)) }, bindings)));
   let explicit = distinct(SubsetList.append(tyvars, implicit));
-  let inner = (env, level + (1: I32), SubsetList.append(scoped, explicit));
+  let inner = (env, level + (1: Int32.Int), SubsetList.append(scoped, explicit));
   // A binding's pattern, its type and variables, checked against its expression's type.
   let plainBinding = ((p, e), st) => {
     bind(exp(inner, e, st))((te) => (st) => {
@@ -813,7 +819,7 @@ and valDec = ((env, level, scoped), pos, tyvars, plain, recs, st) => {
     bind(mapRes(plainBinding, plain, st))((plainResults) => (st) => {
       bind(mapRes(recPattern, recs, st))((recVars) => (st) => {
         let recEnv = withValues(SmlList.map((v, t) => { (v, (([], t), SValue)) })(SmlList.concat(recVars)));
-        let recInner = (plus(env, recEnv), level + (1: I32), SubsetList.append(scoped, explicit));
+        let recInner = (plus(env, recEnv), level + (1: Int32.Int), SubsetList.append(scoped, explicit));
         bind(foldRes(
           (_, ((_, e), vars), st) => {
             match(vars) {
@@ -840,7 +846,7 @@ and valDec = ((env, level, scoped), pos, tyvars, plain, recs, st) => {
 and closeValBindings = (level, explicit, pos, results, st) => {
   let names = concatMap((vars, _) => { SmlList.map((x, _) => { x })(vars) }, results);
   match(SmlList.find((x) => {
-    SubsetList.length(SmlList.filter((y) => { y == x })(names)) > (1: I32)
+    SubsetList.length(SmlList.filter((y) => { y == x })(names)) > (1: Int32.Int)
   })(names), SmlList.find((x) => { member(x, unbindable) })(names)) {
     (Some(x), _) => { Err("`" ++ x ++ "` is bound twice in this declaration", pos) },
     (_, Some(x)) => { Err("`" ++ x ++ "` cannot be rebound", pos) },
@@ -998,7 +1004,7 @@ and rigidNames = (t) => {
 and typeDec = ((env, _, _), pos, binds, st) => {
   let names = SmlList.map((_, name, _) => { name })(binds);
   let dup = SmlList.find((n) => {
-    SubsetList.length(SmlList.filter((m) => { m == n })(names)) > (1: I32)
+    SubsetList.length(SmlList.filter((m) => { m == n })(names)) > (1: Int32.Int)
   })(names);
   match(dup) {
     Some(n) => { Err("type " ++ n ++ " is bound twice", pos) },
@@ -1030,17 +1036,17 @@ and typeDec = ((env, _, _), pos, binds, st) => {
 // Maps a declaration's type parameters to TGen.
 and paramScope = (pos, params, st) => {
   match(SmlList.find((v) => {
-    SubsetList.length(SmlList.filter((w) => { w == v })(params)) > (1: I32)
+    SubsetList.length(SmlList.filter((w) => { w == v })(params)) > (1: Int32.Int)
   })(params)) {
     Some(v) => { Err("type parameter " ++ v ++ " appears twice", pos) },
     None => {
       let rec index = match {
         (_, [], _) => { None },
         (Var(v), [w, ..rest], Var(i)) => {
-          if (v == w) { Some(TGen(i)) } else { index(v, rest, i + (1: I32)) }
+          if (v == w) { Some(TGen(i)) } else { index(v, rest, i + (1: Int32.Int)) }
         }
       };
-      Ok((v) => { index(v, params, (0: I32)) }, st)
+      Ok((v) => { index(v, params, (0: Int32.Int)) }, st)
     }
   }
 }
@@ -1067,7 +1073,7 @@ and datatypeDec = ((env, _, _), pos, binds, st) => {
   let cons = concatMap((_, _, cs) => { SmlList.map((_, c, _) => { c })(cs) }, binds);
   let dupIn = (xs) => {
     SmlList.find((n) => {
-      SubsetList.length(SmlList.filter((m) => { m == n })(xs)) > (1: I32)
+      SubsetList.length(SmlList.filter((m) => { m == n })(xs)) > (1: Int32.Int)
     })(xs)
   };
   // Fresh type names, first assuming every one admits equality.
@@ -1208,12 +1214,12 @@ let structureAliases = (env, aliases, st) => {
 
 let strdec = (env, sd, st) => {
   match(sd) {
-    SDec(d) => { dec((env, (0: I32), []), d, st) },
+    SDec(d) => { dec((env, (0: Int32.Int), []), d, st) },
     SStructure(_, binds) => {
       foldRes(
         (delta, (name, aliases, ds), st) => {
           bind(structureAliases(env, aliases, st))((nested) => (st) => {
-            bind(decs((plus(env, nested), (0: I32), []), ds, st))((body) => (st) => {
+            bind(decs((plus(env, nested), (0: Int32.Int), []), ds, st))((body) => (st) => {
               Ok(plus(delta, withStructure(name, plus(nested, body), false)), st)
             })
           })
@@ -1239,7 +1245,7 @@ let topdec = (env, td, st) => {
       )
     },
     TopExp(pos, e) => {
-      dec((env, (0: I32), []), DVal(pos, [], [(PId(pos, ([], "it")), e)], []), st)
+      dec((env, (0: Int32.Int), []), DVal(pos, [], [(PId(pos, ([], "it")), e)], []), st)
     }
   }
 };

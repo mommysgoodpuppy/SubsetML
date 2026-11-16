@@ -38,12 +38,12 @@ structure WmPrint = struct
     case CompilerText.characters s of [] => false | first :: rest => SubsetChar.isAlpha first
   val dotted = fn (qs, s) => SubsetString.concatWith (SubsetList.append (qs, [s]), ".")
 
-  (* Type constructors are capitalized; the Definition's `unit` and the Basis `real` take
-     Workman's names. *)
+  (* Type constructors are capitalized; the Definition's `unit` and the fixed-size `int` and
+     `real` take Workman's names. *)
   val tyConName = fn
       ([], "unit") => "Void"
-    | ([], "real") => "Number"
-    | ([], "int") => "I32"
+    | ([], "real") => "Real64.Real"
+    | ([], "int") => "Int32.Int"
     | (qs, s) => dotted (qs, capitalize s)
 
   (* Numeric adapters retain SML argument order. Keep this table shared with the reader. *)
@@ -54,9 +54,9 @@ structure WmPrint = struct
         [("String", ["size", "sub", "substring", "extract"]),
          ("List", ["length", "nth", "take", "drop", "tabulate"]),
          ("Char", ["ord", "chr"]), ("CharVector", ["tabulate"])]),
-      SmlList.map (fn x => ((["Num"], x), (["Number"], x)))
+      SmlList.map (fn x => ((["Num"], x), (["Real64"], x)))
         ["div", "mod", "toString", "fromString"],
-      SmlList.map (fn x => (([], x), (["I32"], x))) ["div", "mod"]]
+      SmlList.map (fn x => (([], x), (["Int32"], x))) ["div", "mod"]]
 
   (* Basis constructors spelled differently in Workman. *)
   val valueName = fn
@@ -105,11 +105,11 @@ structure WmPrint = struct
         if c = quote then "\\" ^ CompilerText.str c
         else (if SubsetChar.isPrint c then CompilerText.str c else "\\u00" ^ hex2 (let val SubsetResult.Ok code = SubsetChar.toCode c in code end))
 
-  (* Workman integer literals are overloaded and default to Number, so an SML int constant is
-     ascribed. The reader turns `(n: I32)` back into the constant. A real keeps its fraction,
+  (* Workman integer literals are overloaded and default to Real64, so an SML int constant is
+     ascribed. The reader turns `(n: Int32.Int)` back into the constant. A real keeps its fraction,
      since the reader takes a bare integer literal as int. *)
   val scon = fn
-      SInt s => "(" ^ minus s ^ ": I32)"
+      SInt s => "(" ^ minus s ^ ": Int32.Int)"
     | SReal s => minus s
     | SString s => "\"" ^ SubsetString.concat (SubsetList.map (CompilerText.characters s,
         fn c => escapeChar (#"\"", c))) ^ "\""
@@ -292,7 +292,7 @@ structure WmPrint = struct
     | EApp (EId (p, (["Real"], opr)), ETuple [l, r]) =>
         if opr = "==" orelse opr = "!=" then
           let val left = case l of ETyped (x, TyCon ([], ([], "real"))) => x | _ => l in
-            (3, cats [text "(", exp left, text ": Number)", atom (p, " " ^ opr ^ " "),
+            (3, cats [text "(", exp left, text ": Real64.Real)", atom (p, " " ^ opr ^ " "),
                         parenAt (4, expL r)])
           end
         else call (EId (p, (["Real"], opr)), ETuple [l, r])

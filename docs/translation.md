@@ -106,8 +106,8 @@ ordinary WM labels and go through the shared backend renaming system.
 | `val rec f = fn … and g = fn …` | `let rec f = … and g = …;` |
 | `val x : t = e` | `let x: T = e;` |
 | `type 'a t = ty` | `type T<a> = Ty;` |
-| `type point = {x : real, y : real}` | `record Point = { x: Number, y: Number };` |
-| `datatype 'a t = A \| B of 'a * real` | `type T<a> = A \| B<a, Number>;` |
+| `type point = {x : real, y : real}` | `record Point = { x: Real64.Real, y: Real64.Real };` |
+| `datatype 'a t = A \| B of 'a * real` | `type T<a> = A \| B<a, Real64.Real>;` |
 | `datatype t = Only` (one constructor) | `type T = \| Only;` |
 
 ## Expressions
@@ -124,12 +124,12 @@ ordinary WM labels and go through the shared backend renaming system.
 | `f x`, `f (a, b)`, `f ()`, `f x y` | `f(x)`, `f(a, b)`, `f()`, `f(x)(y)` |
 | `andalso`, `orelse`, `not e` | conditional branches, `!e` |
 | `=`, `<>`, `^` | `==`, `!=`, `++` |
-| `Real.== (a, b)`, `Real.!= (a, b)` | `(a: Number) == b`, `(a: Number) != b` |
-| `Real.==`, `Real.!=` as function values | `(realLeft: Number, realRight: Number) => { (realLeft: Number) == realRight }` (or `!=`) |
+| `Real.== (a, b)`, `Real.!= (a, b)` | `(a: Real64.Real) == b`, `(a: Real64.Real) != b` |
+| `Real.==`, `Real.!=` as function values | `(realLeft: Real64.Real, realRight: Real64.Real) => { (realLeft: Real64.Real) == realRight }` (or `!=`) |
 | `42.0`, `~42.0`, `1.5e~3` | `42`, `-42`, `1.5e-3` |
 | `~ e` | `-e` |
 | `Num.String.size`, `Num.List.nth`, etc. | `String.size`, `List.nth`, etc., using the current bootstrap argument order |
-| `Num.div`, `Num.mod`, `Num.toString`, `Num.fromString` | `Number.div`, `Number.mod`, `Number.toString`, `Number.fromString` |
+| `Num.div`, `Num.mod`, `Num.toString`, `Num.fromString` | `Real64.div`, `Real64.mod`, `Real64.toString`, `Real64.fromString` |
 | `x :: xs`, `[a, b]`, `nil` | `[x, ..xs]`, `[a, b]`, `[]` |
 | `xs @ ys` | `List.append(xs, ys)` (the SML Basis has no `List.append`, so it reads back as `@`) |
 | `()` | `void` |
@@ -141,7 +141,7 @@ ordinary WM labels and go through the shared backend renaming system.
 Workman's operator precedences differ from SML's (for example, `==` binds looser than `<`), so
 the printer adds parentheses wherever the Workman grammar needs them.
 
-Numeric equality carries a `Number` annotation because a bare `==` would lose the real type
+Numeric equality carries a `Real64.Real` annotation because a bare `==` would lose the real type
 of a generic SML helper such as `fn (x, y) => Real.== (x, y)`. The reader removes this redundant
 annotation when restoring `Real.==` or `Real.!=`. Function values expand to typed lambdas;
 these return to equivalent SML lambdas, which the round-trip comparison canonicalizes back
@@ -150,7 +150,7 @@ scalar real operands become `Real.==`/`Real.!=`, while SML equality types keep `
 Modules are checked in dependency order, then checked again with strict SML equality rules
 before any output is written. Equality on functions or real-containing lists/records is rejected.
 A generic comparison whose numeric type is not determined at its declaration needs a
-`Number` annotation; later calls do not specialize an already generalized comparison.
+`Real64.Real` annotation; later calls do not specialize an already generalized comparison.
 
 Standalone module expressions become `val it = ...` in declaration order inside the SML
 structure. This follows SML's expression-phrase binding and keeps preceding module values
@@ -225,7 +225,7 @@ so nullary constructor patterns keep their identity without becoming comparisons
 | SubsetML | Workman |
 |---|---|
 | type constructors `token`, `Syntax.pos` | `Token`, `Syntax.Pos` |
-| `unit`, `real`, `int` | `Void`, `Number`, `I32` |
+| `unit`, `real`, `int` | `Void`, `Real64.Real`, `Int32.Int` |
 | `string`, `char`, `bool`, `'a list`, `'a option` | `String`, `Char`, `Bool`, `List<a>`, `Option<a>` |
 | type variable `'a` | `a` (Workman type variables are lowercase names) |
 | `t1 * t2`, `t1 -> t2` | `(T1, T2)`, `T1 -> T2` |
@@ -409,23 +409,23 @@ code translates as described in [Integers](#integers).
 
 ## Integers
 
-SML `int` and Workman `I32` have the same range, checked arithmetic and `div`/`mod`
-rounding. Workman integer literals are overloaded and default to `Number`, while SML
+SML `int` and Workman `Int32.Int` have the same range, checked arithmetic and `div`/`mod`
+rounding. Workman integer literals are overloaded and default to `Real64.Real`, while SML
 defaults unresolved numeric operations to `int`, so the translation never relies on
 either default:
 
 | SML | Workman |
 |---|---|
-| `int` | `I32` |
-| `42`, `~5`, `0x7f` (expression or pattern) | `(42: I32)`, `(-5: I32)`, `(0x7f: I32)` |
-| `a div b`, `a mod b`, `div` | `I32.div(a, b)`, `I32.mod(a, b)`, `I32.div` |
+| `int` | `Int32.Int` |
+| `42`, `~5`, `0x7f` (expression or pattern) | `(42: Int32.Int)`, `(-5: Int32.Int)`, `(0x7f: Int32.Int)` |
+| `a div b`, `a mod b`, `div` | `Int32.div(a, b)`, `Int32.mod(a, b)`, `Int32.div` |
 | `42.0` | `42.0` |
 
 Every int constant is ascribed, and every real keeps its fraction, so `SML → Workman → SML`
 is unchanged. Reading hand-written Workman, a bare integer literal is `int` when it fits in
-`I32`, and `real` otherwise; `1.0` and `1e3` are `real`. This matches Workman wherever the
-literal's context is `I32`. Where the context is `Number`, write the literal as `1.0`, or the
-native build fails to type-check; it never computes a different value. `(n: I32)` is still
+`Int32.Int`, and `real` otherwise; `1.0` and `1e3` are `real`. This matches Workman wherever the
+literal's context is `Int32.Int`. Where the context is `Real64.Real`, write the literal as `1.0`, or the
+native build fails to type-check; it never computes a different value. `(n: Int32.Int)` is still
 read as an int constant. A numeric
 operation whose type only the default decides, such as `fn (a, b) => a + b`, is
 rejected in both directions; annotate an operand as `int` or `real`. `Int.*` and

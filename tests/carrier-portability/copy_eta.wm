@@ -1,5 +1,5 @@
 let copied = Monad.Carrier { ..Result.carrier };
-let number: Result<Number, String> = Monad.via copied (x) => {Ok(x)} (Ok(1));
+let number: Result<Real64.Real, String> = Monad.via copied (x) => {Ok(x)} (Ok(1));
 let text: Result<String, Bool> = Monad.via copied (x) => {Ok(x)} (Ok("text"));
 let main = () => {
   let checked = match(number, text) { (Ok(1), Ok("text")) => {true}, _ => {false} };

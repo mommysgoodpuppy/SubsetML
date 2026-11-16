@@ -49,7 +49,7 @@ let bind = (r) => (k) => {
 
 let peek = match {
   [t, .._] => { t },
-  [] => { (TEOF, (0: I32)) }
+  [] => { (TEOF, (0: Int32.Int)) }
 };
 
 let advance = match {
@@ -74,23 +74,23 @@ let isKey = (k, ts) => {
 
 // Precedence and right associativity of the fixed infix identifiers.
 let fixity = match {
-  "*" => { Some((7: I32), false) },
-  "/" => { Some((7: I32), false) },
-  "div" => { Some((7: I32), false) },
-  "mod" => { Some((7: I32), false) },
-  "+" => { Some((6: I32), false) },
-  "-" => { Some((6: I32), false) },
-  "^" => { Some((6: I32), false) },
-  "::" => { Some((5: I32), true) },
-  "@" => { Some((5: I32), true) },
-  "=" => { Some((4: I32), false) },
-  "<>" => { Some((4: I32), false) },
-  "<" => { Some((4: I32), false) },
-  ">" => { Some((4: I32), false) },
-  "<=" => { Some((4: I32), false) },
-  ">=" => { Some((4: I32), false) },
-  "o" => { Some((3: I32), false) },
-  "before" => { Some((0: I32), false) },
+  "*" => { Some((7: Int32.Int), false) },
+  "/" => { Some((7: Int32.Int), false) },
+  "div" => { Some((7: Int32.Int), false) },
+  "mod" => { Some((7: Int32.Int), false) },
+  "+" => { Some((6: Int32.Int), false) },
+  "-" => { Some((6: Int32.Int), false) },
+  "^" => { Some((6: Int32.Int), false) },
+  "::" => { Some((5: Int32.Int), true) },
+  "@" => { Some((5: Int32.Int), true) },
+  "=" => { Some((4: Int32.Int), false) },
+  "<>" => { Some((4: Int32.Int), false) },
+  "<" => { Some((4: Int32.Int), false) },
+  ">" => { Some((4: Int32.Int), false) },
+  "<=" => { Some((4: Int32.Int), false) },
+  ">=" => { Some((4: Int32.Int), false) },
+  "o" => { Some((3: Int32.Int), false) },
+  "before" => { Some((0: Int32.Int), false) },
   _ => { None }
 };
 
@@ -102,7 +102,7 @@ let precedence = (s) => {
       let (p, _) = payload;
       p
     },
-    None => { (-1: I32) }
+    None => { (-1: Int32.Int) }
   }
 };
 
@@ -278,7 +278,9 @@ let rec climb = (make, lhs, rest, minPrec) => {
             [(Var(opr2), _, _), .._] => {
               // Integer precedences have a total order.
               match(SubsetOrder.compareInt(precedence(opr2), precedence(opr)), rightAssoc(opr2)) {
-                (SubsetOrder.Greater, _) => { absorb(climb(make, rhs, more, precedence(opr) + (1: I32))) },
+                (SubsetOrder.Greater, _) => {
+                  absorb(climb(make, rhs, more, precedence(opr) + (1: Int32.Int)))
+                },
                 (SubsetOrder.Equal, true) => { absorb(climb(make, rhs, more, precedence(opr))) },
                 _ => { (rhs, more) }
               }
@@ -332,7 +334,7 @@ let resolve = (group, make, items, start) => {
         bind(pairs(rest, []))((ps) => (_) => {
           Done(
             {
-              let (tree, _) = climb(make, first, ps, (0: I32));
+              let (tree, _) = climb(make, first, ps, (0: Int32.Int));
               tree
             },
             []
@@ -345,7 +347,7 @@ let resolve = (group, make, items, start) => {
 
 let applyExp = match {
   [f, ..args] => { Done(SmlList.foldl((a, f) => { EApp(f, a) })(f)(args), []) },
-  [] => { Fail("internal error: empty application", (0: I32)) }
+  [] => { Fail("internal error: empty application", (0: Int32.Int)) }
 };
 
 let infixExp = (opr, p, l, r) => { EApp(EId(p, ([], opr)), ETuple([l, r])) };

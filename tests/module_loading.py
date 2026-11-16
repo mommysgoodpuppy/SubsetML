@@ -36,11 +36,11 @@ def diamond(name, alias=False, distinct=False):
     directory = root / name
     a = module(directory / ('one' if distinct else '.'), 'a', 'A',
                'datatype token = Token of real\nval token = Token 1.0',
-               'type Token = | Token<Number>; let token = Token(1);')
+               'type Token = | Token<Real64.Real>; let token = Token(1);')
     if distinct:
         module(directory / 'two', 'a', 'A',
                'datatype token = Token of real\nval token = Token 1.0',
-               'type Token = | Token<Number>; let token = Token(1);')
+               'type Token = | Token<Real64.Real>; let token = Token(1);')
     if alias:
         (directory / 'link.sml').symlink_to(a.name)
         (directory / 'link.wm').symlink_to(a.with_suffix('.wm').name)
@@ -91,7 +91,7 @@ module(directory / 'other', 'a', 'A', 'val value = "wrong"', 'let value = "wrong
 (directory / 'other' / 'nested').mkdir()
 (directory / 'link').symlink_to('other/nested', target_is_directory=True)
 case(module(directory, 'root', 'Root', 'val value : real = A.value',
-            'let value: Number = A.value;', [('./link/../a', 'A')]))
+            'let value: Real64.Real = A.value;', [('./link/../a', 'A')]))
 
 directory = root / 'unreachable'
 entry = module(directory, 'root', 'Root', 'val value = 1.0', 'let value = 1;')

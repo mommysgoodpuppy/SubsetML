@@ -63,12 +63,12 @@ let startsAlpha = (s) => {
 };
 let dotted = (qs, s) => { SubsetString.concatWith(SubsetList.append(qs, [s]), ".") };
 
-/* Type constructors are capitalized; the Definition's `unit` and the Basis `real` take
-   Workman's names. */
+/* Type constructors are capitalized; the Definition's `unit` and the fixed-size `int` and
+   `real` take Workman's names. */
 let tyConName = match {
   ([], "unit") => { "Void" },
-  ([], "real") => { "Number" },
-  ([], "int") => { "I32" },
+  ([], "real") => { "Real64.Real" },
+  ([], "int") => { "Int32.Int" },
   (Var(qs), Var(s)) => { dotted(qs, capitalize(s)) }
 };
 
@@ -80,8 +80,8 @@ let numNames = SubsetList.concat([
     ("Char", ["ord", "chr"]),
     ("CharVector", ["tabulate"])
   ])),
-  SmlList.map((x) => { ((["Num"], x), (["Number"], x)) })(["div", "mod", "toString", "fromString"]),
-  SmlList.map((x) => { (([], x), (["I32"], x)) })(["div", "mod"])
+  SmlList.map((x) => { ((["Num"], x), (["Real64"], x)) })(["div", "mod", "toString", "fromString"]),
+  SmlList.map((x) => { (([], x), (["Int32"], x)) })(["div", "mod"])
 ]);
 
 // Basis constructors spelled differently in Workman.
@@ -127,14 +127,14 @@ let hex2 = (n) => {
   let rec digit = (index, values) => {
     match(values) {
       [first, ..rest] => {
-        if (index <= (0: I32)) { first } else { digit(index - (1: I32), rest) }
+        if (index <= (0: Int32.Int)) { first } else { digit(index - (1: Int32.Int), rest) }
       }
     }
   };
   let rec split = (low, high) => {
-    if (low >= (16: I32)) { split(low - (16: I32), high + (1: I32)) } else { (high, low) }
+    if (low >= (16: Int32.Int)) { split(low - (16: Int32.Int), high + (1: Int32.Int)) } else { (high, low) }
   };
-  let (high, low) = split(n, (0: I32));
+  let (high, low) = split(n, (0: Int32.Int));
   digit(high, digits) ++ digit(low, digits)
 };
 
@@ -157,11 +157,11 @@ let escapeChar = (quote, c) => {
   }
 };
 
-/* Workman integer literals are overloaded and default to Number, so an SML int constant is
-   ascribed. The reader turns `(n: I32)` back into the constant. A real keeps its fraction,
+/* Workman integer literals are overloaded and default to Real64, so an SML int constant is
+   ascribed. The reader turns `(n: Int32.Int)` back into the constant. A real keeps its fraction,
    since the reader takes a bare integer literal as int. */
 let scon = match {
-  SInt(s) => { "(" ++ minus(s) ++ ": I32)" },
+  SInt(s) => { "(" ++ minus(s) ++ ": Int32.Int)" },
   SReal(s) => { minus(s) },
   SString(s) => {
     "\"" ++ SubsetString.concat(SubsetList.map(CompilerText.characters(s), (c) => { escapeChar('"', c) })) ++ "\""
@@ -265,7 +265,7 @@ let rec pat = (inMatch, binds, p) => {
       let field = match {
         (Var(l), PId(_, ([], Var(x)))) => {
           if (if (x == l) { SubsetBool.not(isConName([], x)) } else { false }) { text(l) } else {
-            cats([text(l ++ " = "), child(false, PId((0: I32), ([], x)))])
+            cats([text(l ++ " = "), child(false, PId((0: Int32.Int), ([], x)))])
           }
         },
         (Var(l), Var(q)) => { cats([text(l ++ " = "), child(false, q)]) }
@@ -310,21 +310,21 @@ let params = (p) => {
    || 1, && 2, == != 3, comparisons 4, ++ + - 5, * / 6, prefix 7, calls 9, atoms 10. */
 
 let binop = match {
-  "=" => { Some("==", (3: I32)) },
-  "<>" => { Some("!=", (3: I32)) },
-  "<" => { Some("<", (4: I32)) },
-  ">" => { Some(">", (4: I32)) },
-  "<=" => { Some("<=", (4: I32)) },
-  ">=" => { Some(">=", (4: I32)) },
-  "+" => { Some("+", (5: I32)) },
-  "-" => { Some("-", (5: I32)) },
-  "^" => { Some("++", (5: I32)) },
-  "*" => { Some("*", (6: I32)) },
-  "/" => { Some("/", (6: I32)) },
+  "=" => { Some("==", (3: Int32.Int)) },
+  "<>" => { Some("!=", (3: Int32.Int)) },
+  "<" => { Some("<", (4: Int32.Int)) },
+  ">" => { Some(">", (4: Int32.Int)) },
+  "<=" => { Some("<=", (4: Int32.Int)) },
+  ">=" => { Some(">=", (4: Int32.Int)) },
+  "+" => { Some("+", (5: Int32.Int)) },
+  "-" => { Some("-", (5: Int32.Int)) },
+  "^" => { Some("++", (5: Int32.Int)) },
+  "*" => { Some("*", (6: Int32.Int)) },
+  "/" => { Some("/", (6: Int32.Int)) },
   _ => { None }
 };
 
-let parenAt = (need: I32, (level, d)) => {
+let parenAt = (need: Int32.Int, (level, d)) => {
   if (level >= need) { d } else { cats([text("("), d, text(")")]) }
 };
 
@@ -343,9 +343,12 @@ let blockParts = match {
 
 let rec expL = match {
   EScon(p, c) => {
-    (if (isNegative(c)) { (7: I32) } else { (10: I32) }, atom(p, scon(c)))
+    (
+      if (isNegative(c)) { (7: Int32.Int) } else { (10: Int32.Int) },
+      atom(p, scon(c))
+    )
   },
-  EId(p, ([], "nil")) => { ((10: I32), atom(p, "[]")) },
+  EId(p, ([], "nil")) => { ((10: Int32.Int), atom(p, "[]")) },
   EId(p, (["Real"], Var(opr))) => {
     if (if (opr == "==") { true } else { opr == "!=" }) {
       let realTy = TyCon([], ([], "real"));
@@ -360,12 +363,12 @@ let rec expL = match {
           )
         )
       ]))
-    } else { ((10: I32), atom(p, valueName(["Real"], opr))) }
+    } else { ((10: Int32.Int), atom(p, valueName(["Real"], opr))) }
   },
-  EId(p, id) => { ((10: I32), atom(p, valueName(id))) },
+  EId(p, id) => { ((10: Int32.Int), atom(p, valueName(id))) },
   ERecord(p, fields) => {
     (
-      (10: I32),
+      (10: Int32.Int),
       cat(
         atom(p, "."),
         group(
@@ -378,12 +381,18 @@ let rec expL = match {
     )
   },
   ECopy(_, source, _, _) => { expL(source) },
-  ESelect(p, l) => { ((10: I32), atom(p, "#" ++ l)) },
-  ETuple([]) => { ((10: I32), text("void")) },
-  ETuple(es) => { ((10: I32), group("(", ",", ")", SmlList.map(exp)(es))) },
-  EList(es) => { ((10: I32), group("[", ",", "]", SmlList.map(exp)(es))) },
-  ESeq(es) => { ((10: I32), group("(", ";", ")", SmlList.map(exp)(es))) },
-  ELet(ds, es) => { ((10: I32), block(ds, es)) },
+  ESelect(p, l) => { ((10: Int32.Int), atom(p, "#" ++ l)) },
+  ETuple([]) => { ((10: Int32.Int), text("void")) },
+  ETuple(es) => {
+    ((10: Int32.Int), group("(", ",", ")", SmlList.map(exp)(es)))
+  },
+  EList(es) => {
+    ((10: Int32.Int), group("[", ",", "]", SmlList.map(exp)(es)))
+  },
+  ESeq(es) => {
+    ((10: Int32.Int), group("(", ";", ")", SmlList.map(exp)(es)))
+  },
+  ELet(ds, es) => { ((10: Int32.Int), block(ds, es)) },
   EApp(EId(p, ([], "::")), ETuple([h, t])) => {
     let rec spine = match {
       (EApp(EId(_, ([], "::")), ETuple([h, t])), Var(acc)) => { spine(t, [h, ..acc]) },
@@ -397,7 +406,7 @@ let rec expL = match {
       Some(e) => { [cat(text(".."), exp(e))] }
     };
     (
-      (10: I32),
+      (10: Int32.Int),
       cat(
         atom(p, ""),
         group("[", ",", "]", SubsetList.append(SmlList.map(exp)(items), tailDocs))
@@ -411,13 +420,13 @@ let rec expL = match {
         _ => { l }
       };
       (
-        (3: I32),
+        (3: Int32.Int),
         cats([
           text("("),
           exp(left),
-          text(": Number)"),
+          text(": Real64.Real)"),
           atom(p, " " ++ opr ++ " "),
-          parenAt((4: I32), expL(r))
+          parenAt((4: Int32.Int), expL(r))
         ])
       )
     } else { call(EId(p, (["Real"], opr)), ETuple([l, r])) }
@@ -433,11 +442,11 @@ let rec expL = match {
         } else {
           (
             // o and before: no Workman operator, so the SML operator stays.
-            (0: I32),
+            (0: Int32.Int),
             cats([
-              parenAt((9: I32), expL(l)),
+              parenAt((9: Int32.Int), expL(l)),
               atom(p, " " ++ opr ++ " "),
-              parenAt((9: I32), expL(r))
+              parenAt((9: Int32.Int), expL(r))
             ])
           )
         }
@@ -449,22 +458,24 @@ let rec expL = match {
           cats([
             parenAt(level, expL(l)),
             atom(p, " " ++ spelling ++ " "),
-            parenAt(level + (1: I32), expL(r))
+            parenAt(level + (1: Int32.Int), expL(r))
           ])
         )
       },
       (None, false) => { call(EId(p, ([], opr)), ETuple([l, r])) }
     }
   },
-  EApp(EId(p, ([], "not")), e) => { ((7: I32), cat(atom(p, "!"), parenAt((7: I32), expL(e)))) },
+  EApp(EId(p, ([], "not")), e) => {
+    ((7: Int32.Int), cat(atom(p, "!"), parenAt((7: Int32.Int), expL(e))))
+  },
   EApp(EId(p, ([], "~")), e) => {
     let (level, d) = expL(e);
     (
       // `-3` would read back as a negative literal, so a literal operand keeps parentheses.
-      (7: I32),
+      (7: Int32.Int),
       cat(
         atom(p, "-"),
-        match(e, level >= (9: I32)) {
+        match(e, level >= (9: Int32.Int)) {
           (EScon(_, SInt(_)), _) => { d },
           (EScon(_, _), _) => { cats([text("("), d, text(")")]) },
           (_, true) => { d },
@@ -474,17 +485,17 @@ let rec expL = match {
     )
   },
   EApp(ESelect(p, l), e) => {
-    if (if (selectable(e)) { startsAlpha(l) } else { false }) { ((10: I32), cats([exp(e), atom(p, "." ++ l)])) } else { call(ESelect(p, l), e) }
+    if (if (selectable(e)) { startsAlpha(l) } else { false }) { ((10: Int32.Int), cats([exp(e), atom(p, "." ++ l)])) } else { call(ESelect(p, l), e) }
   },
   EApp(f, a) => { call(f, a) },
   ETyped(e, t) => {
-    ((10: I32), cats([text("("), exp(e), text(": "), ty(t), text(")")]))
+    ((10: Int32.Int), cats([text("("), exp(e), text(": "), ty(t), text(")")]))
   },
-  EAndalso(a, b) => { expL(EIf(a, b, EId((0: I32), ([], "false")))) },
-  EOrelse(a, b) => { expL(EIf(a, EId((0: I32), ([], "true")), b)) },
+  EAndalso(a, b) => { expL(EIf(a, b, EId((0: Int32.Int), ([], "false")))) },
+  EOrelse(a, b) => { expL(EIf(a, EId((0: Int32.Int), ([], "true")), b)) },
   EIf(c, a, b) => {
     (
-      (0: I32),
+      (0: Int32.Int),
       cats([
         text("if ("),
         exp(c),
@@ -500,14 +511,17 @@ let rec expL = match {
       ETuple([first, second, ..more]) => { join(", ", SmlList.map(exp)([first, second, ..more])) },
       _ => { exp(e) }
     };
-    ((0: I32), cat(cats([text("match("), scrutinee, text(") ")]), arms(rules)))
+    (
+      (0: Int32.Int),
+      cat(cats([text("match("), scrutinee, text(") ")]), arms(rules))
+    )
   },
   EFn([(Var(p), Var(body))]) => {
     if (paramOk(p)) {
-      ((0: I32), cats([params(p), text(" => "), lambdaBody(body)]))
-    } else { ((0: I32), cat(text("match "), arms([(p, body)]))) }
+      ((0: Int32.Int), cats([params(p), text(" => "), lambdaBody(body)]))
+    } else { ((0: Int32.Int), cat(text("match "), arms([(p, body)]))) }
   },
-  EFn(rules) => { ((0: I32), cat(text("match "), arms(rules))) }
+  EFn(rules) => { ((0: Int32.Int), cat(text("match "), arms(rules))) }
 }
 
 and exp = (e) => {
@@ -522,7 +536,7 @@ and call = (f, a) => {
     ETuple(es) => { group("(", ",", ")", SmlList.map(exp)(es)) },
     _ => { cats([text("("), exp(a), text(")")]) }
   };
-  ((9: I32), cat(parenAt((9: I32), expL(f)), args))
+  ((9: Int32.Int), cat(parenAt((9: Int32.Int), expL(f)), args))
 }
 
 // A curried lambda chains without braces: (a) => (b) => { e }.
@@ -542,12 +556,12 @@ and arms = (rules) => {
     (_, []) => { [] },
     (Var(i), [r, ..rest]) => {
       [
-        if (i < count - (1: I32)) { cat(arm(r), text(",")) } else { arm(r) },
-        ..go(i + (1: I32), rest)
+        if (i < count - (1: Int32.Int)) { cat(arm(r), text(",")) } else { arm(r) },
+        ..go(i + (1: Int32.Int), rest)
       ]
     }
   };
-  stack([text("{"), indent((2: I32), stack(go((0: I32), rules))), text("}")])
+  stack([text("{"), indent((2: Int32.Int), stack(go((0: Int32.Int), rules))), text("}")])
 }
 
 // `{ decs; e1; ...; en }`, on one line when it is a single short expression.
@@ -557,23 +571,25 @@ and block = (ds, es) => {
     (_, []) => { [] },
     (Var(i), [e, ..rest]) => {
       [
-        if (i < count - (1: I32)) { cat(exp(e), text(";")) } else { exp(e) },
-        ..exps(i + (1: I32), rest)
+        if (i < count - (1: Int32.Int)) { cat(exp(e), text(";")) } else { exp(e) },
+        ..exps(i + (1: Int32.Int), rest)
       ]
     }
   };
-  let items = SubsetList.append(SmlList.map((d) => { dec([], d) })(ds), exps((0: I32), es));
+  let items = SubsetList.append(SmlList.map((d) => { dec([], d) })(ds), exps((0: Int32.Int), es));
   match(items) {
     [single] => {
       if (if (SmlList.null(ds)) {
         match(flat(single)) {
-          Some(text) => { CompilerText.size(text) <= (60: I32) },
+          Some(text) => { CompilerText.size(text) <= (60: Int32.Int) },
           None => { false }
         }
-      } else { false }) { cats([text("{ "), single, text(" }")]) } else { stack([text("{"), indent((2: I32), single), text("}")]) }
+      } else { false }) { cats([text("{ "), single, text(" }")]) } else {
+        stack([text("{"), indent((2: Int32.Int), single), text("}")])
+      }
     },
     _ => {
-      stack([text("{"), indent((2: I32), stack(items)), text("}")])
+      stack([text("{"), indent((2: Int32.Int), stack(items)), text("}")])
     }
   }
 }
@@ -656,7 +672,7 @@ and dec = (structures, d) => {
         if (fits(oneLine)) { oneLine } else {
           stack([
             head,
-            indent((2: I32), stack(SmlList.map((c) => { cat(text("| "), c) })(docs)))
+            indent((2: Int32.Int), stack(SmlList.map((c) => { cat(text("| "), c) })(docs)))
           ])
         }
       };

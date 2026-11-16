@@ -133,8 +133,8 @@
         "SubsetTextHost.decodeUtf8"
       ]
     },
-    "SubsetInt": {
-      "source": "src/subset_int.sml",
+    "SubsetInt32": {
+      "source": "src/subset_int32.sml",
       "sourceDependencies": [
         "SubsetResult",
         "SubsetString",

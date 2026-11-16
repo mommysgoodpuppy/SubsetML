@@ -6,7 +6,7 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir "$tmp/sml" "$tmp/reject"
 cat > "$tmp/records.wm" <<'WM'
-record Point = { x: I32, y: I32 };
+record Point = { x: Int32.Int, y: Int32.Int };
 record Box<T> = { value: T };
 WM
 cat > "$tmp/updates.wm" <<'WM'
@@ -43,7 +43,7 @@ reject() {
   if ! rg -q "$2" "$tmp/error"; then cat "$tmp/error"; exit 1; fi
   [ -z "$(ls -A "$tmp/reject")" ]
 }
-reject 'let bad = () => { record Local = { x: I32 }; Local { x = 1 } };' 'record layout declarations must be top-level'
+reject 'let bad = () => { record Local = { x: Int32.Int }; Local { x = 1 } };' 'record layout declarations must be top-level'
 reject 'let bad = .{..value, x = 3};' 'record updates must name their record type'
 reject 'let bad = Missing { x = 3 };' 'unknown record layout'
 reject 'let bad = Records.Point { x = 3 };' 'missing record field y'

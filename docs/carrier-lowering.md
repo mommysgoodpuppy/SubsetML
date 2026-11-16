@@ -24,7 +24,7 @@ record of values is non-expansive. Preserve the latter form for eligible literal
 ```wm
 record Box<T> = { value: T };
 let empty = Box { value = [] };
-let numbers: Box<List<Number>> = empty;
+let numbers: Box<List<Real64.Real>> = empty;
 let texts: Box<List<String>> = empty;
 ```
 

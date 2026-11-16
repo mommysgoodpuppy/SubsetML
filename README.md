@@ -16,7 +16,7 @@ It is meant to be:
 SubsetML includes a signed 32-bit `int` alongside `real`. Integer literals, equality,
 patterns, checked arithmetic, `div`/`mod` and numeric defaulting follow SML semantics,
 with a fixed range across targets. This expands the previously real-only subset;
-see the [integer specification](docs/integers.md). `int` translates to Workman's `I32`
+see the [integer specification](docs/integers.md). `int` translates to Workman's `Int32.Int`
 ([translation rules](docs/translation.md#integers)).
 The compiler and indexed Basis APIs now use integers; see the
 [migration status and PS2 memory result](docs/integer-migration.md).

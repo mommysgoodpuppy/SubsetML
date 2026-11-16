@@ -21,11 +21,11 @@ export from "./subset_option_value.wm" import *;
 
 /* A type name (Definition §4.1): its stamp, its printed name, its arity, and whether it
    admits equality, given type arguments that do. */
-type Tyname = (I32, String, I32, Bool);
+type Tyname = (Int32.Int, String, Int32.Int, Bool);
 
 type Ty =
-  | TVar<I32> // unification variable; see Unify
-  | TGen<I32> // the i-th bound variable of a type scheme
+  | TVar<Int32.Int> // unification variable; see Unify
+  | TGen<Int32.Int> // the i-th bound variable of a type scheme
   | TRigid<String> // an explicit type variable 'a in scope
   | TCon<Tyname, List<Ty>>
   | TArrow<Ty, Ty>
@@ -46,15 +46,15 @@ let arityOf = (_, _, a, _) => { a };
 // ---------------------------------------------------------------------------------------
 // The type names of the initial basis. Program type names get stamps from `firstStamp`.
 
-let boolName = ((1: I32), "bool", (0: I32), true);
-let intName = ((2: I32), "int", (0: I32), true);
-let realName = ((3: I32), "real", (0: I32), false);
-let stringName = ((4: I32), "string", (0: I32), true);
-let charName = ((5: I32), "char", (0: I32), true);
-let listName = ((6: I32), "list", (1: I32), true);
-let optionName = ((7: I32), "option", (1: I32), true);
-let orderName = ((8: I32), "order", (0: I32), true);
-let firstStamp = (100: I32);
+let boolName = ((1: Int32.Int), "bool", (0: Int32.Int), true);
+let intName = ((2: Int32.Int), "int", (0: Int32.Int), true);
+let realName = ((3: Int32.Int), "real", (0: Int32.Int), false);
+let stringName = ((4: Int32.Int), "string", (0: Int32.Int), true);
+let charName = ((5: Int32.Int), "char", (0: Int32.Int), true);
+let listName = ((6: Int32.Int), "list", (1: Int32.Int), true);
+let optionName = ((7: Int32.Int), "option", (1: Int32.Int), true);
+let orderName = ((8: Int32.Int), "order", (0: Int32.Int), true);
+let firstStamp = (100: Int32.Int);
 
 let boolTy = TCon(boolName, []);
 let intTy = TCon(intName, []);
@@ -131,7 +131,7 @@ let tupleComponents = (fields) => {
       if (l == tupleLabel(digits)) { check(nextTupleLabel(digits), rest) } else { false }
     }
   };
-  if (if (SubsetList.length(fields) >= (2: I32)) { check(['1'], fields) } else { false }) { Some(SmlList.map((_, t) => { t })(fields)) } else { None }
+  if (if (SubsetList.length(fields) >= (2: Int32.Int)) { check(['1'], fields) } else { false }) { Some(SmlList.map((_, t) => { t })(fields)) } else { None }
 };
 
 // Replaces TGen i by the i-th argument.

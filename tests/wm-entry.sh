@@ -6,7 +6,7 @@ import tempfile, subprocess
 compiler = Path('bin/subsetml').resolve()
 with tempfile.TemporaryDirectory(prefix='subsetml-entry-') as directory:
  root = Path(directory); out = root / 'out'; out.mkdir()
- (root / 'core.wm').write_text('type Thing = | Thing<I32>;\nlet _ = print("C");\nlet value = Thing(3);\n')
+ (root / 'core.wm').write_text('type Thing = | Thing<Int32.Int>;\nlet _ = print("C");\nlet value = Thing(3);\n')
  (root / 'alias.wm').symlink_to('core.wm')
  (root / 'left.wm').write_text('from "./core.wm" import * as Core;\nlet _ = print("L");\nlet value = Core.value;\n')
  (root / 'right.wm').write_text('from "./alias.wm" import * as Same;\nlet _ = print("R");\nlet value = Same.value;\n')
@@ -39,7 +39,7 @@ let good = read(Left.value) + read(Right.value) == 6;
  driver.write_text('val _ = if Entry.good then () else OS.Process.exit OS.Process.failure\n')
 
  for name in ['a', 'b']:
-  (root / name).mkdir(); (root / name / 'shared.wm').write_text('type Thing = | Thing<I32>;\nlet value = Thing(1);\n')
+  (root / name).mkdir(); (root / name / 'shared.wm').write_text('type Thing = | Thing<Int32.Int>;\nlet value = Thing(1);\n')
  entry.write_text('''from "./a/shared.wm" import * as A;
 from "./b/shared.wm" import * as B;
 let readA = (v) => { match(v) { A.Thing(n) => {n} } };

@@ -42,7 +42,7 @@ SubsetML has three jobs. It is the common language of Workman (`../wm-mini`) and
 route for compiling Workman through MLton. And it is a target simple enough for a small native
 compiler. The omissions follow the Workman ledger (`../wm-mini/docs/smlparallels.md`, "SML
 Language Forms With No Workman Equivalent"). Workman's *differences*, such as nominal records,
-pinned match identifiers, `Number` and Workman-only syntax, are not part of SubsetML. Where SML
+pinned match identifiers and Workman-only syntax, are not part of SubsetML. Where SML
 and Workman disagree, SubsetML keeps SML's meaning, sometimes restricted so that both agree.
 
 ## 2. Lexical structure (§2)
@@ -359,7 +359,7 @@ examples, backend requirements and current scope.
 * The `native` command explicitly targets `Int32.int` and resolved Int32
   operations; relying on a host's default `int` is insufficient (MLWorks uses
   30 bits). The checker alone does not change a host compiler's representation.
-* `int` translates to Workman's `I32` (`docs/translation.md`); a bare WM number
+* `int` translates to Workman's `Int32.Int` (`docs/translation.md`); a bare WM number
   still translates to `real`. The native SML path does not depend on the WM compiler.
 
 ## 10. Implementation-defined choices

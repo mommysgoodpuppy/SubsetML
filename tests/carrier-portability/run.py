@@ -39,7 +39,7 @@ with tempfile.TemporaryDirectory(prefix='subset-carriers-') as directory:
             assert native == expected and wm == expected, (name, native, wm)
     # A separate translation spelling issue: fn is a valid WM label and an SML keyword.
     keyword = output / 'keyword.wm'
-    keyword.write_text('record One = { fn: Number -> Number };\n'
+    keyword.write_text('record One = { fn: Real64.Real -> Real64.Real };\n'
                        'let value = One { fn = (x) => { x } };\n')
     generated = output / 'generated'
     generated.mkdir()

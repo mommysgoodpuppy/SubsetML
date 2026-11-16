@@ -22,6 +22,9 @@ An operation the SML Basis lacks may be added when it is portable and generally 
 
 - **One module per SML structure,** named `Subset` plus the structure name: `SubsetList`,
   `SubsetString`, `SubsetOs`. Workman drops the prefix (`basis/list.wm`, namespace `List`).
+- **Numeric modules carry their size.** `int` and `real` have fixed sizes in SubsetML, so their
+  modules are the sized SML structures, `SubsetInt32` and later `SubsetReal64`, never `Int` or
+  `Real`. Workman spells the types `Int32.Int` and `Real64.Real`.
 - **One name, one meaning.** A module never defines a value under a name that another module uses
   for a different operation on the same kind of data. Consumers may add new names on top of a
   Basis module (Workman's `std` does), but never redefine a Basis name.
@@ -160,8 +163,5 @@ record here why the deviation stays.
   (It carries no offset, since it describes one character.)
 - `slice_error` translates to the Workman type name `Slice_error`. A name that reads well in both
   languages (`sliceError`) is preferable for new types.
-- Internal helpers are exported under ordinary names (`SubsetList.validCount`, `SubsetInt.digits`,
+- Internal helpers are exported under ordinary names (`SubsetList.validCount`, `SubsetInt32.digits`,
   `SubsetChar.isLowerChars`), which makes them look public.
-- wm-mini's `markdown/i32-plan.md` planned to rename the bootstrap `Int` namespace to `I32`.
-  Under these rules it keeps SML's name, `Int`; Workman's numeric type names are being revised
-  to match.

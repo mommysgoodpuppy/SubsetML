@@ -100,7 +100,7 @@ SML's `~` sign spelling. As with SML's `fromString`, parsing is not specified to
 consume an entire input string. This is a minimal compatibility namespace, not
 a complete implementation of the SML Basis `INTEGER` signature.
 
-`int` translates to Workman's `I32`, which has the same range, checked arithmetic
+`int` translates to Workman's `Int32.Int`, which has the same range, checked arithmetic
 and `div`/`mod` rounding; see [the translation rules](translation.md#integers).
 The `Int` namespace and `abs` have no Workman mapping yet.
 

@@ -7,7 +7,7 @@ compiler = Path('bin/subsetml').resolve()
 with tempfile.TemporaryDirectory(prefix='subsetml-native-') as directory:
  root = Path(directory); out = root / 'out'; out.mkdir()
  (root / 'a').mkdir(); (root / 'b').mkdir()
- (root / 'result.wm').write_text('type Result = | Ok<I32>;\nlet _ = print("R");\n')
+ (root / 'result.wm').write_text('type Result = | Ok<Int32.Int>;\nlet _ = print("R");\n')
  (root / 'a/host.wm').write_text('let value = 99;\n')
  checker = root / 'b/host.wm'
  checker.write_text('from "../result.wm" import * as ExpectedResult;\nlet value = ExpectedResult.Ok(0);\n')

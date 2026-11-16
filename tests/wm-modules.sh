@@ -6,7 +6,7 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir "$tmp/out" "$tmp/reject" "$tmp/a" "$tmp/b"
 cat > "$tmp/records.wm" <<'WM'
-type Thing = | Thing<I32>;
+type Thing = | Thing<Int32.Int>;
 record Box<T> = { value: T };
 let make = (value) => { Thing(value) };
 WM
@@ -35,7 +35,7 @@ printf '$(SML_LIB)/basis/basis.mlb\n%s\n%s\n%s\n%s\n' \
 mlton -output "$tmp/test" "$tmp/test.mlb"
 "$tmp/test"
 cat > "$tmp/a/shared.wm" <<'WM'
-type Thing = | Thing<I32>;
+type Thing = | Thing<Int32.Int>;
 let value = Thing(1);
 WM
 cp "$tmp/a/shared.wm" "$tmp/b/shared.wm"
@@ -97,7 +97,7 @@ WM
 reject 'from "./cycle.wm" import * as Cycle;' 'import cycle' "$tmp/cycle.wm"
 # `export from ... import *` translates to SML open, whose bindings are part of the opening module.
 mkdir "$tmp/open" "$tmp/open-out" "$tmp/open-back"
-printf 'type Thing = | Thing<I32>;\nlet value = 7;\n' > "$tmp/open/base.wm"
+printf 'type Thing = | Thing<Int32.Int>;\nlet value = 7;\n' > "$tmp/open/base.wm"
 printf 'export from "./base.wm" import *;\nlet own = value + 1;\n' > "$tmp/open/middle.wm"
 printf 'export from "./middle.wm" import *;\n' > "$tmp/open/forward.wm"
 cat > "$tmp/open/user.wm" <<'WM'
@@ -120,10 +120,10 @@ reject 'export from "./records.wm" import {make};' 'SML counterpart' "$tmp/recor
 # a backend name, so this also covers names resolved through the alias.
 mkdir "$tmp/alias" "$tmp/alias-out" "$tmp/alias-back"
 cat > "$tmp/alias/base.wm" <<'WM'
-type Shape = | Circle<I32> | Dot;
-let value: I32 = 7;
+type Shape = | Circle<Int32.Int> | Dot;
+let value: Int32.Int = 7;
 let end = 8;
-let add = (a: I32, b: I32) => { a + b };
+let add = (a: Int32.Int, b: Int32.Int) => { a + b };
 WM
 cat > "$tmp/alias/os.wm" <<'WM'
 export from "./base.wm" import * as Process;

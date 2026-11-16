@@ -30,10 +30,10 @@ local
     "2147483647", "2147483648", "-2147483648", "-2147483649", "\t+123abc", "abc", "9.9"]
   val integerOracle = List.all (fn text =>
     let val expected = (case Int32.fromString text of
-          NONE => SubsetResult.Err SubsetInt.InvalidInteger
+          NONE => SubsetResult.Err SubsetInt32.InvalidInteger
         | SOME value => SubsetResult.Ok (Int32.toInt value))
-          handle Overflow => SubsetResult.Err SubsetInt.Overflow
-    in SubsetInt.fromString text = expected end) integerInputs
+          handle Overflow => SubsetResult.Err SubsetInt32.Overflow
+    in SubsetInt32.fromString text = expected end) integerInputs
   val paddingOracle = List.all (fn text => List.all (fn width =>
     SubsetStringCvt.padLeft (text, width, #" ") = SubsetResult.Ok (StringCvt.padLeft #" " width text)
     andalso SubsetStringCvt.padRight (text, width, #"0") = SubsetResult.Ok (StringCvt.padRight #"0" width text))

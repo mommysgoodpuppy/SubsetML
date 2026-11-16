@@ -17,12 +17,12 @@ echo "round trips: $pass passed, $fail failed"
 
 # sml -> wm -> sml: each file's declarations survive the translation (up to Normalize)
 set --
-# The compiler's integer code translates as I32.
+# The compiler's integer code translates as Int32.Int.
 $bin roundtrip src/subset_option_value.sml src/subset_result.sml src/subset_list.sml || { echo "FAIL: integer compiler module round trip"; exit 1; }
 for f in tests/accept/*.sml; do
   case "$f" in
     tests/accept/overload-unresolved.sml|tests/accept/integer_basics.sml)
-      # A numeric operation fixed only by SML's int default would become Number in Workman.
+      # A numeric operation fixed only by SML's int default would become Real64.Real in Workman.
       if $bin roundtrip "$f" > "$tmp/unsupported" 2>&1; then
         echo "FAIL: accepted a defaulted numeric operation: $f"; exit 1
       fi

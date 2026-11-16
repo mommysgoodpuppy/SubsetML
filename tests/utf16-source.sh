@@ -34,7 +34,7 @@ if command -v wm >/dev/null 2>&1; then
   cat > "$tmp/wm/js_units.wm" <<'WM'
 from "./subset_utf16_source.wm" import * as Source;
 from "./subset_result.wm" import * as Result;
-from js.global("String") import unsafe { fromCharCode: Number -> String };
+from js.global("String") import unsafe { fromCharCode: Real64.Real -> String };
 let check = (units, expected) => {
   match(Source.fromNativeUnits(units)) {
     Result.Err(_) => {false},

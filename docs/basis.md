@@ -489,7 +489,7 @@ has no opaque module types to hide its tree/view constructors.
 |---|---|
 | `fromUnits units` | Build from numeric code units; first invalid element reports `InvalidUnit offset`. |
 | `fromNativeUnits text` | Extract raw host storage codes using `SubsetTextHost.codes`, then validate units. Native byte strings are not implicitly UTF-8 decoded. |
-| `length source` | Number of UTF-16 units, including two for each supplementary scalar. |
+| `length source` | Real64.Real of UTF-16 units, including two for each supplementary scalar. |
 | `peek (source, index)` | `SOME code` at a valid integral index; `NONE` for EOF, outside the view, or an invalid index. |
 | `at (source, index)` | Checked lookup; invalid indices report `InvalidIndex`. |
 | `slice (source, start, count)` | Shared source view; validates integral boundaries. An empty view at EOF is valid. |
@@ -627,13 +627,13 @@ both representations.
 
 ### Decimal integers, padding and lexical paths
 
-`SubsetInt.fromString value` is the decimal `INTEGER.fromString` counterpart:
+`SubsetInt32.fromString value` is the decimal `INTEGER.fromString` counterpart:
 skip ASCII whitespace, accept an optional `+`, `-` or `~`, and parse a decimal
 prefix. Trailing input is not consumed or required to be whitespace. The stricter
 `parseDecimal value` requires complete consumption with an optional sign and no
 whitespace; `parseNatural value` accepts only one or more ASCII digits. Leading
 zeros are accepted; callers enforcing canonical spelling must check that policy.
-All return `Result<int, SubsetInt.error>`, with `InvalidInteger`, `Overflow`, or
+All return `Result<int, SubsetInt32.error>`, with `InvalidInteger`, `Overflow`, or
 `StringError of SubsetString.error`. Entire byte input is validated first.
 Overflow is checked before arithmetic in the signed 32-bit range, including
 `~2147483648`; long runs of leading zeros use constant call-stack space. Parsing
@@ -688,7 +688,7 @@ custom module declares its source dependencies and explicit primitive calls. The
 | `SubsetUtf16` | SubsetChar, SubsetList, SubsetResult, SubsetUnicode | none |
 | `SubsetString` | SubsetOptionValue, SubsetChar, SubsetList, SubsetResult, SubsetBytes | SubsetTextHost.codes, fromCodes |
 | `SubsetText` | SubsetOptionValue, SubsetList, SubsetBytes, SubsetResult, SubsetString, SubsetUnicode, SubsetUtf8, SubsetOrder | SubsetTextHost.encodeUtf8, decodeUtf8 |
-| `SubsetInt` | SubsetResult, SubsetString, SubsetList, SubsetChar | none |
+| `SubsetInt32` | SubsetResult, SubsetString, SubsetList, SubsetChar | none |
 | `SubsetStringCvt` | SubsetResult, SubsetList, SubsetString, SubsetText | none |
 | `SubsetPath` | SubsetResult, SubsetList, SubsetString, SubsetText | none |
 | `SubsetNatural` | SubsetBool, SubsetList, SubsetResult, SubsetString | none |
@@ -896,7 +896,7 @@ implementations and normalizes precision metadata to the SubsetML integer type.
 
 Compiler internals, `SubsetNatural`, byte/list/string sizes and indices, scalar
 codes and the text-host contract now use `int`. This is a breaking API migration;
-generated WM mirrors use Workman's `I32`. The unrelated legacy `Num` adapter retains
+generated WM mirrors use Workman's `Int32.Int`. The unrelated legacy `Num` adapter retains
 its real-valued compatibility interface. Integer arithmetic can dynamically raise
 `Overflow`/`Div`; authored SubsetML still has no exception handlers.
 
