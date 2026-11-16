@@ -57,6 +57,16 @@ becomes `val a = File.a` at the start of the structure instead. Duplicate import
 errors. `export from` with a named clause is diagnosed explicitly, as are non-local and later
 imports. Namespace values are not first-class.
 
+Workman opens each public Basis module `subset_x.wm` as the namespace `X` in every program, so
+`List.filter` is `SubsetList.filter` and `ListPair.zip` is `SubsetListPair.zip`. With `--basis
+DIR`, a module that uses an uppercase `X.name` without importing `X` gets `from "basis/x.wm"
+import * as X;`. The host adapters and the Basis modules themselves are excluded, and `Int32`
+stays the translator's numeric namespace. Without `--basis`, these names keep the bootstrap
+meanings below. Workman's `std/` extensions are not part of the Basis and remain unbound.
+
+`before` and `o` are infix in the SML Basis Library, so native output renames bindings with
+those names, as it does SML keywords.
+
 A plain `from "./file.wm" import *;` also lowers to `open`, although in Workman it is private.
 SubsetML omits `local`, so the SML side exposes more than the Workman side does. See
 `markdown/issues/private-imports.md`.

@@ -65,6 +65,66 @@ structure WmProject = struct
         NONE => SubsetResult.Err (SubsetIo.HostError "basis/ imports need --basis DIR")
       | SOME directory => ModuleProject.identify (directory ^ "/" ^ file))
 
+  (* Workman opens each public Basis module subset_x.wm as the namespace X in every program:
+     `List` is SubsetList and `ListPair` is SubsetListPair. With a Basis directory, a module
+     that uses `X.name` without binding X in an import gets that Basis import, so discovery,
+     preparation and checking treat it as written. The host adapters are not namespaces, and
+     the Basis modules themselves import each other explicitly. `Int32` stays the translator's
+     own numeric namespace (`Int32.Int`, `Int32.div`), which the numeric refactor revisits. *)
+  val basisFile = fn name =>
+    let val rec go = fn (cs, previous, acc) => case cs of
+        [] => SubsetList.reverse acc
+      | c :: rest =>
+          let val separated = SubsetChar.isUpper c andalso
+                (SubsetChar.isLower previous orelse SubsetChar.isDigit previous)
+          in go (rest, c, if separated then SubsetChar.toLower c :: #"_" :: acc else SubsetChar.toLower c :: acc) end
+    in "subset_" ^ CompilerText.implode (go (CompilerText.characters name, #"_", [])) ^ ".wm" end
+
+  val implicitBasis = fn (basis, path, tokens) =>
+    let
+      val canonical = fn path => case ModuleProject.identify path of
+          SubsetResult.Ok (ModuleProject.Resolved (_, canonical)) => SOME canonical
+        | SubsetResult.Err _ => NONE
+      val inside = fn directory => case (canonical directory, canonical path) of
+          (SOME directory, SOME file) =>
+            CompilerText.size file > CompilerText.size directory + 1 andalso
+            CompilerText.slice (file, 0, CompilerText.size directory + 1) = directory ^ "/"
+        | _ => false
+    in
+    case basis of
+      NONE => tokens
+    | SOME directory => if inside directory then tokens else
+        let
+          (* Every single name inside an import header, whether alias or named item. *)
+          val rec imported = fn (tokens, inside, acc) => case tokens of
+              [] => acc
+            | (WmLexer.WKey "import", _) :: rest => imported (rest, true, acc)
+            | (WmLexer.WKey ";", _) :: rest => imported (rest, false, acc)
+            | (WmLexer.WName [name], _) :: rest =>
+                imported (rest, inside, if inside then name :: acc else acc)
+            | _ :: rest => imported (rest, inside, acc)
+          val explicit = imported (tokens, false, [])
+          val available = fn name =>
+            CompilerText.firstIs (name, SubsetChar.isUpper) andalso
+            SubsetBool.not (SubsetList.exists (["Host", "TextHost", "Int32"], fn n => n = name)) andalso
+            SubsetBool.not (SubsetList.exists (explicit, fn n => n = name)) andalso
+            (case ModuleProject.identify (directory ^ "/" ^ basisFile name) of
+               SubsetResult.Ok _ => true | SubsetResult.Err _ => false)
+          val rec uses = fn (tokens, acc) => case tokens of
+              [] => SubsetList.reverse acc
+            | (WmLexer.WName (head :: _ :: _), pos) :: rest =>
+                if SubsetList.exists (acc, fn (n, _) => n = head) orelse SubsetBool.not (available head)
+                then uses (rest, acc) else uses (rest, (head, pos) :: acc)
+            | _ :: rest => uses (rest, acc)
+          val header = fn (name, pos) =>
+            [(WmLexer.WKey "from", pos),
+             (WmLexer.WScon (Syntax.SString ("basis/" ^ CompilerText.slice (basisFile name, 7,
+                CompilerText.size (basisFile name) - 7))), pos),
+             (WmLexer.WKey "import", pos), (WmLexer.WKey "*", pos), (WmLexer.WKey "as", pos),
+             (WmLexer.WName [name], pos), (WmLexer.WKey ";", pos)]
+        in SubsetList.append (SubsetList.concat (SubsetList.map (uses (tokens, []), header)), tokens) end
+    end
+
   (* Discovery reads only the supported import header. Preparation still validates aliases,
      private scope and later imports using the same canonical identities. *)
   val headerPaths = fn (path, src, tokens) =>
@@ -109,7 +169,7 @@ structure WmProject = struct
               case WmLexer.lex src of
                 WmLexer.LexError (message, pos) => failure (path, src, message, pos)
               | WmLexer.Tokens (tokens, _) =>
-                  SubsetResult.andThen (headerPaths (path, src, tokens), fn paths =>
+                  SubsetResult.andThen (headerPaths (path, src, implicitBasis (basis, path, tokens)), fn paths =>
                     let val rec walk = fn (paths, seen) => case paths of
                         [] => SubsetResult.Ok seen
                       | (specifier, pos) :: rest =>
@@ -324,7 +384,7 @@ structure WmProject = struct
       case WmLexer.lex src of
         WmLexer.LexError (message, pos) => failure (path, src, message, pos)
       | WmLexer.Tokens (tokens, comments) =>
-          SubsetResult.map (imports (tokens, [], [], [], [], []), fn (edges, exported, body) =>
+          SubsetResult.map (imports (implicitBasis (basis, path, tokens), [], [], [], [], []), fn (edges, exported, body) =>
             Source (unit, edges, exported, WmLexer.Tokens (body,
               SubsetList.filter (comments, fn (_, body, _) =>
                 (case ModuleImports.marked body of NONE => true | SOME _ => false) andalso

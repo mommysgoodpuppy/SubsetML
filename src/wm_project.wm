@@ -113,6 +113,110 @@ let resolve = (basis, referrer, specifier) => {
   }
 };
 
+/* Workman opens each public Basis module subset_x.wm as the namespace X in every program:
+   `List` is SubsetList and `ListPair` is SubsetListPair. With a Basis directory, a module
+   that uses `X.name` without binding X in an import gets that Basis import, so discovery,
+   preparation and checking treat it as written. The host adapters are not namespaces, and
+   the Basis modules themselves import each other explicitly. `Int32` stays the translator's
+   own numeric namespace (`Int32.Int`, `Int32.div`), which the numeric refactor revisits. */
+let basisFile = (name) => {
+  let rec go = (cs, previous, acc) => {
+    match(cs) {
+      [] => { SubsetList.reverse(acc) },
+      [c, ..rest] => {
+        let separated = if (SubsetChar.isUpper(c)) {
+          if (SubsetChar.isLower(previous)) { true } else { SubsetChar.isDigit(previous) }
+        } else { false };
+        go(
+          rest,
+          c,
+          if (separated) { [SubsetChar.toLower(c), '_', ..acc] } else { [SubsetChar.toLower(c), ..acc] }
+        )
+      }
+    }
+  };
+  "subset_" ++ CompilerText.implode(go(CompilerText.characters(name), '_', [])) ++ ".wm"
+};
+
+let implicitBasis = (basis, path, tokens) => {
+  let canonical = (path) => {
+    match(ModuleProject.identify(path)) {
+      SubsetResult.Ok(ModuleProject.Resolved(_, canonical)) => { Some(canonical) },
+      SubsetResult.Err(_) => { None }
+    }
+  };
+  let inside = (directory) => {
+    match(canonical(directory), canonical(path)) {
+      (Some(directory), Some(file)) => {
+        if (CompilerText.size(file) > CompilerText.size(directory) + (1: Int32.Int)) {
+          CompilerText.slice(file, (0: Int32.Int), CompilerText.size(directory) + (1: Int32.Int)) == directory ++ "/"
+        } else { false }
+      },
+      _ => { false }
+    }
+  };
+  match(basis) {
+    None => { tokens },
+    Some(directory) => {
+      if (inside(directory)) { tokens } else {
+        // Every single name inside an import header, whether alias or named item.
+        let rec imported = (tokens, inside, acc) => {
+          match(tokens) {
+            [] => { acc },
+            [(WmLexer.WKey("import"), _), ..rest] => { imported(rest, true, acc) },
+            [(WmLexer.WKey(";"), _), ..rest] => { imported(rest, false, acc) },
+            [(WmLexer.WName([name]), _), ..rest] => {
+              imported(rest, inside, if (inside) { [name, ..acc] } else { acc })
+            },
+            [_, ..rest] => { imported(rest, inside, acc) }
+          }
+        };
+        let explicit = imported(tokens, false, []);
+        let available = (name) => {
+          if (if (if (CompilerText.firstIs(name, SubsetChar.isUpper)) {
+            SubsetBool.not(SubsetList.exists(["Host", "TextHost", "Int32"], (n) => { n == name }))
+          } else { false }) {
+            SubsetBool.not(SubsetList.exists(explicit, (n) => { n == name }))
+          } else { false }) {
+            match(ModuleProject.identify(directory ++ "/" ++ basisFile(name))) {
+              SubsetResult.Ok(_) => { true },
+              SubsetResult.Err(_) => { false }
+            }
+          } else { false }
+        };
+        let rec uses = (tokens, acc) => {
+          match(tokens) {
+            [] => { SubsetList.reverse(acc) },
+            [(WmLexer.WName([head, _, .._]), Var(pos)), ..rest] => {
+              if (if (SubsetList.exists(acc, (n, _) => { n == head })) { true } else { SubsetBool.not(available(head)) }) { uses(rest, acc) } else { uses(rest, [(head, pos), ..acc]) }
+            },
+            [_, ..rest] => { uses(rest, acc) }
+          }
+        };
+        let header = (name, pos) => {
+          [
+            (WmLexer.WKey("from"), pos),
+            (
+              WmLexer.WScon(Syntax.SString("basis/" ++ CompilerText.slice(
+                basisFile(name),
+                (7: Int32.Int),
+                CompilerText.size(basisFile(name)) - (7: Int32.Int)
+              ))),
+              pos
+            ),
+            (WmLexer.WKey("import"), pos),
+            (WmLexer.WKey("*"), pos),
+            (WmLexer.WKey("as"), pos),
+            (WmLexer.WName([name]), pos),
+            (WmLexer.WKey(";"), pos)
+          ]
+        };
+        SubsetList.append(SubsetList.concat(SubsetList.map(uses(tokens, []), header)), tokens)
+      }
+    }
+  }
+};
+
 /* Discovery reads only the supported import header. Preparation still validates aliases,
    private scope and later imports using the same canonical identities. */
 let headerPaths = (path, src, tokens) => {
@@ -209,7 +313,7 @@ let discover = (basis, roots) => {
             WmLexer.LexError(message, pos) => { failure(path, src, message, pos) },
             WmLexer.Tokens(tokens, _) => {
               SubsetResult.andThen(
-                headerPaths(path, src, tokens),
+                headerPaths(path, src, implicitBasis(basis, path, tokens)),
                 (paths) => {
                   let rec walk = (paths, seen) => {
                     match(paths) {
@@ -677,7 +781,7 @@ let prepare = (basis, units, unit) => {
     WmLexer.LexError(message, pos) => { failure(path, src, message, pos) },
     WmLexer.Tokens(tokens, comments) => {
       SubsetResult.map(
-        imports(tokens, [], [], [], [], []),
+        imports(implicitBasis(basis, path, tokens), [], [], [], [], []),
         (edges, exported, body) => {
           Source(
             unit,

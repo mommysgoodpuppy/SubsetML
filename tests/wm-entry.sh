@@ -72,6 +72,21 @@ let value = readA(A.value) + readB(B.value);
  subprocess.run(['mlton', '-output', root / 'basis-entry', mlb], check=True)
  subprocess.run([root / 'basis-entry'], check=True)
 
+ # As in Workman, an unimported `List.name` is the Basis module subset_list.wm. A lowercase
+ # head is a record read, and an explicit import of the name wins.
+ subprocess.run([compiler, 'wm', basis, 'src/subset_option_value.sml', 'src/subset_result.sml', 'src/subset_list.sml'], check=True)
+ entry.write_text('record Source = { text: String };\n'
+                  'let source: Source = .{ text = "abc" };\n'
+                  'let before = (n: Int32.Int) => { n + 1 };\n'
+                  'let kept = List.filter([1, 2, 3, 4], (n: Int32.Int) => { n > 2 });\n'
+                  'let matched = if (source.text == "abc") { 1 } else { 0 };\n'
+                  'let value = before(List.length(kept)) + List.length(List.reverse(kept)) + matched;\n')
+ subprocess.run([compiler, 'sml-entry', out, '--basis', basis, entry], check=True)
+ assert 'SubsetList.filter' in (out / 'entry.sml').read_text()
+ driver.write_text('val _ = if Entry.value = 6 then () else OS.Process.exit OS.Process.failure\n')
+ subprocess.run(['mlton', '-output', root / 'implicit-basis', mlb], check=True)
+ subprocess.run([root / 'implicit-basis'], check=True)
+
  rejected = root / 'rejected'; rejected.mkdir()
  for body, expected in [
   ('from "./left.wm" import * as Left;\nlet value = Core.value;\n', b'not explicitly imported'),
@@ -86,5 +101,5 @@ let value = readA(A.value) + readB(B.value);
   result = subprocess.run([compiler, 'sml-entry', rejected, entry], capture_output=True)
   assert result.returncode != 0 and expected in result.stdout + result.stderr, (body, result)
   assert not list(rejected.iterdir())
-print('WM entry discovery: canonical diamond, private scope, source order, distinct modules, basis/ imports and diagnostics passed')
+print('WM entry discovery: canonical diamond, private scope, source order, distinct modules, basis/ imports, implicit Basis namespaces and diagnostics passed')
 PY

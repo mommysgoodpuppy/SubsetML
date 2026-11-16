@@ -73,7 +73,11 @@ let keywords = [
   "struct",
   "structure",
   "where",
-  "while"
+  "while",
+  /* Infix at top level in the SML Basis Library, so a native build can't use them as
+     ordinary names; SubsetML itself leaves them unbound. `div` and `mod` are operators. */
+  "before",
+  "o"
 ];
 let member = (names, name) => { SubsetList.exists(names, (n) => { n == name }) };
 let prefix = (sources) => {

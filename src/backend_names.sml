@@ -24,7 +24,10 @@ structure BackendNames = struct
   val keywords = ["abstype", "and", "andalso", "as", "case", "datatype", "do", "else", "end",
     "exception", "fn", "fun", "handle", "if", "in", "infix", "infixr", "let", "local", "nonfix",
     "of", "op", "open", "orelse", "raise", "rec", "then", "type", "val", "with", "withtype",
-    "eqtype", "functor", "include", "sharing", "sig", "signature", "struct", "structure", "where", "while"]
+    "eqtype", "functor", "include", "sharing", "sig", "signature", "struct", "structure", "where", "while",
+    (* Infix at top level in the SML Basis Library, so a native build can't use them as
+       ordinary names; SubsetML itself leaves them unbound. `div` and `mod` are operators. *)
+    "before", "o"]
   val member = fn (names, name) => SubsetList.exists (names, fn n => n = name)
   val prefix = fn sources =>
     let
