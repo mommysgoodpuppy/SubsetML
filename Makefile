@@ -24,42 +24,28 @@ selfcheck: bin/subsetml
 wm-selfcheck: wm
 	wm run src/main.wm -- check-portable src/main.sml
 
+# Every suite script, in its historical order. `make test` runs them in parallel, each with its
+# own temp directory and log; `make test JOBS=1` runs them one at a time.
+TEST_SCRIPTS = run integer roundtrip translation pipes wm-modules \
+  wm-entry native-adapters mlworks-host sml-targets sml-compiler backend-names \
+  no-sml-declarations pattern-lowering selector-scope record-updates record-constructors carrier-lowering \
+  basis char-basis custom-basis text-basis won-basis utf16-source \
+  lexer-bytes doc-portable sml-printer wm-printer kernel-portable io-portable \
+  process-panic process-os panic-lowering cli-portable module-loading
+JOBS ?= $(shell nproc 2>/dev/null || echo 4)
+
 test: bin/subsetml selfcheck
-	sh tests/run.sh
-	sh tests/integer.sh
-	sh tests/roundtrip.sh
-	sh tests/translation.sh
-	sh tests/pipes.sh
-	sh tests/wm-modules.sh
-	sh tests/wm-entry.sh
-	sh tests/native-adapters.sh
-	sh tests/mlworks-host.sh
-	sh tests/sml-targets.sh
-	sh tests/sml-compiler.sh
-	sh tests/backend-names.sh
-	sh tests/no-sml-declarations.sh
-	sh tests/pattern-lowering.sh
-	sh tests/selector-scope.sh
-	sh tests/record-updates.sh
-	sh tests/record-constructors.sh
-	sh tests/carrier-lowering.sh
-	sh tests/basis.sh
-	sh tests/char-basis.sh
-	sh tests/custom-basis.sh
-	sh tests/text-basis.sh
-	sh tests/won-basis.sh
-	sh tests/utf16-source.sh
-	sh tests/lexer-bytes.sh
-	sh tests/doc-portable.sh
-	sh tests/sml-printer.sh
-	sh tests/wm-printer.sh
-	sh tests/kernel-portable.sh
-	sh tests/io-portable.sh
-	sh tests/process-panic.sh
-	sh tests/process-os.sh
-	sh tests/panic-lowering.sh
-	sh tests/cli-portable.sh
-	sh tests/module-loading.sh
+	$(MAKE) wm
+	@rm -rf build/test-logs && mkdir -p build/test-logs
+	@$(MAKE) --no-print-directory -k -j$(JOBS) $(TEST_SCRIPTS:%=test-%)
+	@echo "all $(words $(TEST_SCRIPTS)) suite scripts passed"
+
+# One suite script. `make wm` already ran, so scripts that refresh the generated WM skip it.
+test-%:
+	@mkdir -p build/test-logs
+	@start=$$(date +%s); \
+	if SUBSETML_WM_FRESH=1 sh tests/$*.sh > build/test-logs/$*.log 2>&1; then echo "ok $* ($$(($$(date +%s) - start)) s)"; \
+	else echo "FAILED $* (build/test-logs/$*.log):"; tail -40 build/test-logs/$*.log; exit 1; fi
 
 clean:
 	rm -rf bin build

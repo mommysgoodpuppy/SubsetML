@@ -23,8 +23,10 @@ and a custom portable Basis shared with Workman. The compiler targets MLton and 
 - Host adapters live in `lib/` (`lib/mlworks/`, `lib/sml-basis/`); MLWorks/PS2 staging scripts are
   in `scripts/`. See `docs/sml-targets.md`, `docs/mlworks-ps2.md` and `docs/mlworks-batch.md`.
 - Build: `make` (writes `bin/subsetml` with MLton). Check: `make selfcheck`. Test: `make test`
-  (runs every suite; scope with targets such as `make custom-basis-check`, `make integer-check`
-  or `make native-check`).
+  runs every suite script in parallel (`JOBS=N` to limit), with a log per script in
+  `build/test-logs/`. For an ordinary change, run only the related scripts, such as
+  `make test-translation test-wm-entry` or `sh tests/translation.sh`; the full suite gates
+  releases.
 - `bin/` and `build/` are generated and ignored by Git.
 
 ## Related projects

@@ -2,7 +2,8 @@
 set -eu
 # The generated compiler must match the source under test, including new CLI profiles.
 if command -v wm >/dev/null 2>&1; then
-  make wm
+  # The parallel suite (`make test`) refreshes the generated WM once before any script runs.
+  [ -n "${SUBSETML_WM_FRESH:-}" ] || make wm
 fi
 python <<'PY'
 from pathlib import Path
