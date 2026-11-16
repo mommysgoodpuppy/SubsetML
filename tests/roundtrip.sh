@@ -48,7 +48,7 @@ $bin roundtrip "$@" && echo "wm round trips: ok (unsupported declaration fixture
 mkdir -p "$tmp/wm" "$tmp/sml" "$tmp/wm2"
 # Record source fixtures gain native constructor helpers on reverse translation;
 # syntax/semantic roundtrip above covers them, but they are not a text fixed point.
-$bin wm "$tmp/wm" tests/accept/real_functions.sml tests/accept/structures.sml || exit 1
+$bin wm "$tmp/wm" tests/accept/real_functions.sml tests/accept/structures.sml tests/accept/private_local.sml || exit 1
 $bin sml "$tmp/sml" "$tmp"/wm/*.wm || exit 1
 $bin wm "$tmp/wm2" "$tmp"/sml/*.sml || exit 1
 changed=0

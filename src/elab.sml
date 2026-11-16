@@ -501,12 +501,59 @@ structure Elab = struct
                        end
                    | NONE => Err ("unbound structure " ^ SubsetString.concatWith (path, "."), pos),
                  empty, paths, st)
-    (* Definition §4.10 rule 23: dec2 sees dec1, and only dec2's bindings are declared. *)
-    | DLocal (_, hidden, body) =>
+    (* Definition §4.10 rule 23: dec2 sees dec1, and only dec2's bindings are declared.
+       Restriction (spec §7, L1): a type dec1 declares may not occur in what dec2 makes visible,
+       since Workman's `private` hides it from importers. *)
+    | DLocal (pos, hidden, body) =>
         let val (env, level, scoped) = ctx in
           bind (decs (ctx, hidden, st)) (fn private => fn st =>
-            decs ((plus (env, private), level, scoped), body, st))
+            bind (decs ((plus (env, private), level, scoped), body, st)) (fn visible => fn st =>
+              case localLeak (private, visible, st) of
+                NONE => Ok (visible, st)
+              | SOME (binding, tyName) =>
+                  Err (binding ^ " mentions type " ^ tyName ^ ", which this `local` declares privately; "
+                       ^ "declare the type outside the `local` (spec L1)", pos)))
         end
+
+  (* The first binding of `visible` whose type mentions a datatype or record type declared in
+     `private`, with that type's name. A record type is a label set, as Workman's nominal
+     records are named by their declaration. *)
+  and localLeak = fn (private, visible, st) =>
+    let
+      val Env (_, hiddenTypes, _) = private
+      val Env (_, visibleTypes, visibleValues) = visible
+      val datatypes = SmlList.mapPartial (fn (n, TyStr (_, t, cons)) =>
+        case (t, cons) of (TCon (name, _), _ :: _) => SOME (n, name) | _ => NONE) hiddenTypes
+      val labelsOf = fn fields => SmlList.map (fn (l, _) => l) fields
+      val records = SmlList.mapPartial (fn (n, TyStr (_, t, _)) =>
+        case t of
+          TRecord fields => (case tupleComponents fields of NONE => SOME (n, labelsOf fields) | SOME _ => NONE)
+        | _ => NONE) hiddenTypes
+      val sameLabels = fn (a, b) =>
+        SubsetList.length a = SubsetList.length b andalso SmlList.all (fn l => SmlList.exists (fn m => m = l) b) a
+      val rec mentions = fn t =>
+        case prune (st, t) of
+          TCon (name, args) =>
+            (case SmlList.find (fn (_, hiddenName) => sameName (name, hiddenName)) datatypes of
+               SOME found => let val (n, _) = found in SOME n end
+             | NONE => first args)
+        | TArrow (a, b) => first [a, b]
+        | TRecord fields =>
+            (case (tupleComponents fields, SmlList.find (fn (_, labels) => sameLabels (labels, labelsOf fields)) records) of
+               (NONE, SOME found) => let val (n, _) = found in SOME n end
+             | _ => first (SmlList.map (fn (_, x) => x) fields))
+        | _ => NONE
+      and first = fn ts => case ts of [] => NONE | t :: rest => (case mentions t of SOME n => SOME n | NONE => first rest)
+      val rec scan = fn entries => case entries of
+          [] => NONE
+        | (name, t) :: rest => (case mentions t of SOME n => SOME (name, n) | NONE => scan rest)
+      (* A visible type alias of a hidden type leaks it too. A datatype the visible part
+         declares again has a fresh name, so it never matches. *)
+      val typeEntries = SmlList.map (fn (n, TyStr (_, t, _)) => ("type " ^ n, t)) visibleTypes
+      val valueEntries = SmlList.map (fn (name, ((_, t), _)) => ("`" ^ name ^ "`", t)) visibleValues
+    in
+      scan (SubsetList.append (valueEntries, typeEntries))
+    end
 
   (* `val`: Definition §4.10 rules 15-16 and the closure of §4.8. *)
   and valDec = fn ((env, level, scoped), pos, tyvars, plain, recs, st) =>

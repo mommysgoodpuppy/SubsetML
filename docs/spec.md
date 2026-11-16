@@ -271,7 +271,7 @@ strdec ::= dec
 | structure declarations inside `struct … end` (nesting) | **omitted**, except the alias of M2 |
 | `structure strid = strid` at top level (an alias module) | kept: means `struct open strid end` |
 | any other `strexp` (qualified `longstrid`, `let … in strexp end`, ascription) | **omitted** |
-| `local` around declarations inside a structure | kept (§4.4) |
+| `local` around declarations inside a structure | kept (§4.4), with restriction L1 |
 | `signature`, `sig … end`, `:`/`:>` ascription, `where type`, sharing, `include`, `eqtype` | **omitted** |
 | `functor` declarations and applications | **omitted** |
 
@@ -297,6 +297,13 @@ declares by its unqualified name, and binds one name. It isn't a general structu
 `struct … end` bodies, qualified targets, Basis targets, `and`, and aliases in `let` all stay
 omitted; a top-level alias is an alias module (M1). Each is a compatible restriction of the Definition's `structure strid =
 longstrid`, so a valid program means the same to other SML compilers.
+
+**Restriction L1.** A type that a `local`'s `dec1` declares, a datatype or a record type, may
+not occur in the type of a value or type that its `dec2` makes visible. The Definition allows
+such a type to escape its `local`; SubsetML rejects it, because Workman's `private`, the
+`local`'s counterpart, forbids a public binding that mentions a private type. A record type is
+recognized by its label set, since Workman's records are nominal. This only rejects phrases, so a
+valid program means the same to other SML compilers.
 
 Long identifiers may have several qualifiers when an alias or the supplied library environment
 contains nested structures. `OS.Process.exit` is an example in the current bootstrap layer.

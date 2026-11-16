@@ -838,12 +838,114 @@ and dec = (ctx, d, st) => {
         st
       )
     },
-    // Definition §4.10 rule 23: dec2 sees dec1, and only dec2's bindings are declared.
-    DLocal(_, hidden, body) => {
+    /* Definition §4.10 rule 23: dec2 sees dec1, and only dec2's bindings are declared.
+       Restriction (spec §7, L1): a type dec1 declares may not occur in what dec2 makes visible,
+       since Workman's `private` hides it from importers. */
+    DLocal(pos, hidden, body) => {
       let (env, level, scoped) = ctx;
-      bind(decs(ctx, hidden, st))((private) => (st) => { decs((plus(env, private), level, scoped), body, st) })
+      bind(decs(ctx, hidden, st))((private) => (st) => {
+        bind(decs((plus(env, private), level, scoped), body, st))((visible) => (st) => {
+          match(localLeak(private, visible, st)) {
+            None => { Ok(visible, st) },
+            Some(binding, tyName) => {
+              Err(
+                binding ++ " mentions type " ++ tyName ++ ", which this `local` declares privately; " ++ "declare the type outside the `local` (spec L1)",
+                pos
+              )
+            }
+          }
+        })
+      })
     }
   }
+}
+
+/* The first binding of `visible` whose type mentions a datatype or record type declared in
+   `private`, with that type's name. A record type is a label set, as Workman's nominal
+   records are named by their declaration. */
+and localLeak = (private, visible, st) => {
+  let Env(_, hiddenTypes, _) = private;
+  let Env(_, visibleTypes, visibleValues) = visible;
+  let datatypes = SmlList.mapPartial(match {
+    (Var(n), TyStr(_, t, cons)) => {
+      match(t, cons) {
+        (TCon(name, _), [_, .._]) => { Some(n, name) },
+        _ => { None }
+      }
+    }
+  })(hiddenTypes);
+  let labelsOf = (fields) => { SmlList.map((l, _) => { l })(fields) };
+  let records = SmlList.mapPartial(match {
+    (Var(n), TyStr(_, t, _)) => {
+      match(t) {
+        TRecord(fields) => {
+          match(tupleComponents(fields)) {
+            None => { Some(n, labelsOf(fields)) },
+            Some(_) => { None }
+          }
+        },
+        _ => { None }
+      }
+    }
+  })(hiddenTypes);
+  let sameLabels = (a, b) => {
+    if (SubsetList.length(a) == SubsetList.length(b)) {
+      SmlList.all((l) => { SmlList.exists((m) => { m == l })(b) })(a)
+    } else { false }
+  };
+  let rec mentions = (t) => {
+    match(prune(st, t)) {
+      TCon(name, args) => {
+        match(SmlList.find((_, hiddenName) => { sameName(name, hiddenName) })(datatypes)) {
+          Some(found) => {
+            let (n, _) = found;
+            Some(n)
+          },
+          None => { first(args) }
+        }
+      },
+      TArrow(a, b) => { first([a, b]) },
+      TRecord(fields) => {
+        match(tupleComponents(fields), SmlList.find((_, labels) => { sameLabels(labels, labelsOf(fields)) })(records)) {
+          (None, Some(found)) => {
+            let (n, _) = found;
+            Some(n)
+          },
+          _ => { first(SmlList.map((_, x) => { x })(fields)) }
+        }
+      },
+      _ => { None }
+    }
+  }
+  and first = (ts) => {
+    match(ts) {
+      [] => { None },
+      [t, ..rest] => {
+        match(mentions(t)) {
+          Some(n) => { Some(n) },
+          None => { first(rest) }
+        }
+      }
+    }
+  };
+  let rec scan = (entries) => {
+    match(entries) {
+      [] => { None },
+      [(Var(name), Var(t)), ..rest] => {
+        match(mentions(t)) {
+          Some(n) => { Some(name, n) },
+          None => { scan(rest) }
+        }
+      }
+    }
+  };
+  /* A visible type alias of a hidden type leaks it too. A datatype the visible part
+     declares again has a fresh name, so it never matches. */
+  let typeEntries = SmlList.map(match {
+    (Var(n), TyStr(_, t, _)) => { ("type " ++ n, t) }
+  })(visibleTypes);
+  let valueEntries = SmlList.map((name, ((_, t), _)) => { ("`" ++ name ++ "`", t) })(visibleValues);
+  scan(SubsetList.append(valueEntries, typeEntries))
 }
 
 // `val`: Definition §4.10 rules 15-16 and the closure of §4.8.

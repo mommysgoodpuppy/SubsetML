@@ -1075,18 +1075,52 @@ structure WmParse = struct
       LexError (message, pos) => ParseError (message, pos)
     | Tokens (ts, comments) =>
         let
+          (* `private` is a modifier only in front of a declaration; elsewhere it is a name. *)
+          val privateDecl = fn ts =>
+            case (peek ts, peek (advance ts)) of
+              ((WName ["private"], _), (WKey "let", _)) => true
+            | ((WName ["private"], _), (WKey "type", _)) => true
+            | ((WName ["private"], _), (WKey "record", _)) => true
+            | ((WName ["private"], _), (WOpen _, _)) => true
+            | _ => false
+          (* Each declaration with whether Workman keeps it private: authored `private`
+             declarations, plain `import *` and the bindings of named imports. *)
           val rec items = fn (decs, exps, ts) =>
             case peek ts of
               (WEOF, _) => Done ((SmlList.rev decs, SmlList.rev exps), ts)
             | _ =>
-                if startsDecl ts orelse isKey ("from", ts) orelse startsExport ts
-                then bind (parseDecl ts) (fn ds => fn ts => items (SmlList.revAppend (ds, decs), exps, ts))
-                else
-                  bind (parseExp ts) (fn e => fn ts =>
-                    bind (expect (";", ts)) (fn _ => fn ts => items (DVal (0, [], [(PId (0, ([], "it")), e)], []) :: decs, exps, ts)))
+                let
+                  val p = posOf ts
+                  (* An unresolved plain import is private; `export from` is public. A resolved
+                     one arrives as an open marked `private` when it is private. *)
+                  val plainImport = isKey ("from", ts)
+                  val add = fn (hidden, ds, ts) =>
+                    items (SmlList.revAppend (SmlList.map (fn d => (hidden, p, d)) ds, decs), exps, ts)
+                in
+                  if privateDecl ts
+                  then bind (parseDecl (advance ts)) (fn ds => fn ts => add (true, ds, ts))
+                  else (if startsDecl ts orelse isKey ("from", ts) orelse startsExport ts
+                  then bind (parseDecl ts) (fn ds => fn ts => add (plainImport, ds, ts))
+                  else
+                    bind (parseExp ts) (fn e => fn ts =>
+                      bind (expect (";", ts)) (fn _ => fn ts =>
+                        add (false, [DVal (0, [], [(PId (0, ([], "it")), e)], [])], ts))))
+                end
+          (* A private run becomes `local <run> in <rest> end`, since the rest may use it. *)
+          val rec scope = fn decs =>
+            case decs of
+              [] => []
+            | (false, _, d) :: rest => d :: scope rest
+            | (true, p, d) :: rest =>
+                let
+                  val rec run = fn (acc, xs) => case xs of
+                      (true, _, x) :: more => run (x :: acc, more)
+                    | _ => (SmlList.rev acc, xs)
+                  val (hidden, rest') = run ([d], rest)
+                in [DLocal (p, hidden, scope rest')] end
         in
           case items ([], [], ts) of
-            Done ((decs, exps), _) => Module (SubsetList.append (aliases, decs), exps, comments)
+            Done ((decs, exps), _) => Module (SubsetList.append (aliases, scope decs), exps, comments)
           | Fail (message, pos) => ParseError (message, pos)
         end
     end

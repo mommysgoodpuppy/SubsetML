@@ -272,7 +272,21 @@ structure WmProject = struct
           (WmLexer.WName [n], _) :: (WmLexer.WKey "let", _) :: rest => n = alias orelse boundValue (rest, alias)
         | _ :: rest => boundValue (rest, alias)
         | [] => false
-      val rec imports = fn (tokens, edges, aliases, named, opens, exported) =>
+      (* `import *` opens the module. A plain import is private in Workman, so its open is
+         marked `private`; `export from` keeps it public. *)
+      val rec openAll = fn (specifier, pos, hidden, rest, edges, aliases, named, opens, exported) =>
+        SubsetResult.andThen (dependency (specifier, pos), fn child =>
+          let
+            val marked = if hidden then (WmLexer.WName ["private"], pos) :: opens else opens
+            val opened = (WmLexer.WOpen [[name child]], pos) :: marked
+            val known = SubsetList.exists (edges, fn Edge (_, _, _, target) =>
+              ModuleProject.same (target, identity child))
+          in
+            if known then imports (rest, edges, aliases, named, opened, exported)
+            (* No alias: an open alone doesn't make the module's name usable as a qualifier. *)
+            else imports (rest, Edge (specifier, pos, name child, identity child) :: edges, aliases, named, opened, exported)
+          end)
+      and imports = fn (tokens, edges, aliases, named, opens, exported) =>
         case tokens of
           (WmLexer.WKey "from", pos) ::
           (WmLexer.WScon (Syntax.SString specifier), _) ::
@@ -290,16 +304,13 @@ structure WmProject = struct
           (WmLexer.WScon (Syntax.SString specifier), _) ::
           (WmLexer.WKey "import", _) :: (WmLexer.WKey "*", _) ::
           (WmLexer.WKey ";", _) :: rest =>
-            SubsetResult.andThen (dependency (specifier, pos), fn child =>
-              let
-                val opened = (WmLexer.WOpen [[name child]], pos) :: opens
-                val known = SubsetList.exists (edges, fn Edge (_, _, _, target) =>
-                  ModuleProject.same (target, identity child))
-              in
-                if known then imports (rest, edges, aliases, named, opened, exported)
-                (* No alias: an open alone doesn't make the module's name usable as a qualifier. *)
-                else imports (rest, Edge (specifier, pos, name child, identity child) :: edges, aliases, named, opened, exported)
-              end)
+            openAll (specifier, pos, true, rest, edges, aliases, named, opens, exported)
+        (* `open` already adds to the module's public environment, so this needs nothing further. *)
+        | (WmLexer.WName ["export"], _) :: (WmLexer.WKey "from", pos) ::
+          (WmLexer.WScon (Syntax.SString specifier), _) ::
+          (WmLexer.WKey "import", _) :: (WmLexer.WKey "*", _) ::
+          (WmLexer.WKey ";", _) :: rest =>
+            openAll (specifier, pos, false, rest, edges, aliases, named, opens, exported)
         (* `import { a, B as C }`. A constructor or type is uppercase and can never be a alias
            binding, so its uses are qualified in place. A value may be shadowed, rebound by a
            pattern or spelled like a record label, so it becomes `let a = X.a;` instead. *)
@@ -329,20 +340,13 @@ structure WmProject = struct
                           (WmLexer.WName [target, original], itemPos) ::
                           (WmLexer.WKey "=", itemPos) ::
                           (WmLexer.WName [alias], itemPos) ::
-                          (WmLexer.WKey "let", itemPos) :: opens))
+                          (WmLexer.WKey "let", itemPos) ::
+                          (* A named import is private in Workman. *)
+                          (WmLexer.WName ["private"], itemPos) :: opens))
                 in SubsetResult.andThen (add (items, named, opens), fn (named, opens) =>
                   imports (rest, edges, aliases, named, opens, exported)) end))
         | (WmLexer.WKey "from", pos) :: _ =>
             failure (path, src, "reverse translation currently requires header namespace imports: from \"./file.wm\" import * as Name;", pos)
-        (* `open` already adds to the module's public environment, so this needs nothing further. *)
-        | (WmLexer.WName ["export"], _) :: (WmLexer.WKey "from", pos) ::
-          (WmLexer.WScon (Syntax.SString specifier), specifierPos) ::
-          (WmLexer.WKey "import", importPos) :: (WmLexer.WKey "*", starPos) ::
-          (WmLexer.WKey ";", endPos) :: rest =>
-            imports ((WmLexer.WKey "from", pos) ::
-              (WmLexer.WScon (Syntax.SString specifier), specifierPos) ::
-              (WmLexer.WKey "import", importPos) :: (WmLexer.WKey "*", starPos) ::
-              (WmLexer.WKey ";", endPos) :: rest, edges, aliases, named, opens, exported)
         (* `structure Alias = Target`. The body's uses are rewritten like a private alias's. *)
         | (WmLexer.WName ["export"], _) :: (WmLexer.WKey "from", pos) ::
           (WmLexer.WScon (Syntax.SString specifier), specifierPos) ::

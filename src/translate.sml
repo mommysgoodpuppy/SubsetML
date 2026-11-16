@@ -327,12 +327,15 @@ structure Translate = struct
         | DDatatype _ => []
         | DOpen (_, ids) => if SmlList.all (fn id => SmlList.exists (fn s => [s] = id) structures) ids
             then [] else ["open of a non-project structure"]
-        (* Workman's `private` (0.8.0 step 7) will be its counterpart. *)
-        | DLocal _ => ["`local` declarations"]
+        (* Workman has no local blocks: only a structure-level `local` translates (to `private`). *)
+        | DLocal _ => ["`local` declarations inside expressions"]
+      val rec moduleDeclaration = fn d => case d of
+          DLocal (_, hidden, body) => concatMap (moduleDeclaration, SubsetList.append (hidden, body))
+        | _ => declaration d
       val top = fn td => case td of
           TopExp (_, e) => expression e
-        | TopDecs ds => concatMap (fn SDec d => declaration d
-            | SStructure (_, binds) => concatMap (fn (_, _, ds) => concatMap (declaration, ds), binds), ds)
+        | TopDecs ds => concatMap (fn SDec d => moduleDeclaration d
+            | SStructure (_, binds) => concatMap (fn (_, _, ds) => concatMap (moduleDeclaration, ds), binds), ds)
     in concatMap (top, prog) end
 
   (* SML closes an unresolved numeric class to int; Workman closes it to Number. A program that
@@ -648,15 +651,21 @@ structure Translate = struct
                     in Unify.Ok (EFn [(PId (p, ([], arg)), EApp (e, EId (p, ([], arg))))], st) end
                 | _ => Unify.Ok (e, st)))
         | _ => Unify.Ok (e, st)
-      val declaration = fn (env, d, st) =>
+      val rec declaration = fn (env, d, st) =>
         case d of
           DVal (p, vs, [(pattern, e)], []) =>
             (case pattern of
                PId (_, ([], _)) => Unify.bind (expression (env, p, e, st)) (fn e => fn st =>
                  Unify.Ok (DVal (p, vs, [(pattern, e)], []), st))
              | _ => Unify.Ok (d, st))
+        (* Workman's `private`: rewrite both parts, each in its scope. The probe state is
+           discarded; the caller elaborates the rewritten `local` itself. *)
+        | DLocal (p, hidden, body) =>
+            Unify.bind (declarations (env, hidden, st)) (fn (private, hidden') => fn probe =>
+              Unify.bind (declarations (Env.plus (env, private), body, probe)) (fn (_, body') => fn _ =>
+                Unify.Ok (DLocal (p, hidden', body'), st)))
         | _ => Unify.Ok (d, st)
-      val rec declarations = fn (env, ds, st) =>
+      and declarations = fn (env, ds, st) =>
         case ds of [] => Unify.Ok ((Env.empty, []), st)
         | d :: rest => Unify.bind (declaration (env, d, st)) (fn d => fn st =>
             Unify.bind (Elab.dec ((env, 0, []), d, st)) (fn delta => fn st =>

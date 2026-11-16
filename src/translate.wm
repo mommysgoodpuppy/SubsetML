@@ -524,8 +524,16 @@ let declarationGaps = (structures, prog) => {
       DOpen(_, ids) => {
         if (SmlList.all((id) => { SmlList.exists((s) => { [s] == id })(structures) })(ids)) { [] } else { ["open of a non-project structure"] }
       },
-      // Workman's `private` (0.8.0 step 7) will be its counterpart.
-      DLocal(_) => { ["`local` declarations"] }
+      // Workman has no local blocks: only a structure-level `local` translates (to `private`).
+      DLocal(_) => { ["`local` declarations inside expressions"] }
+    }
+  };
+  let rec moduleDeclaration = (d) => {
+    match(d) {
+      DLocal(_, hidden, body) => {
+        concatMap(moduleDeclaration, SubsetList.append(hidden, body))
+      },
+      _ => { declaration(d) }
     }
   };
   let top = (td) => {
@@ -534,9 +542,9 @@ let declarationGaps = (structures, prog) => {
       TopDecs(ds) => {
         concatMap(
           match {
-            SDec(d) => { declaration(d) },
+            SDec(d) => { moduleDeclaration(d) },
             SStructure(_, binds) => {
-              concatMap((_, _, ds) => { concatMap(declaration, ds) }, binds)
+              concatMap((_, _, ds) => { concatMap(moduleDeclaration, ds) }, binds)
             }
           },
           ds
@@ -1092,7 +1100,7 @@ let portableValues = (env, prog, st) => {
       _ => { Unify.Ok(e, st) }
     }
   };
-  let declaration = (env, d, st) => {
+  let rec declaration = (env, d, st) => {
     match(d) {
       DVal(p, vs, [(Var(pattern), Var(e))], []) => {
         match(pattern) {
@@ -1102,10 +1110,17 @@ let portableValues = (env, prog, st) => {
           _ => { Unify.Ok(d, st) }
         }
       },
+      /* Workman's `private`: rewrite both parts, each in its scope. The probe state is
+         discarded; the caller elaborates the rewritten `local` itself. */
+      DLocal(p, hidden, body) => {
+        Unify.bind(declarations(env, hidden, st))((private, hidden') => (probe) => {
+          Unify.bind(declarations(Env.plus(env, private), body, probe))((_, body') => (_) => { Unify.Ok(DLocal(p, hidden', body'), st) })
+        })
+      },
       _ => { Unify.Ok(d, st) }
     }
-  };
-  let rec declarations = (env, ds, st) => {
+  }
+  and declarations = (env, ds, st) => {
     match(ds) {
       [] => { Unify.Ok((Env.empty, []), st) },
       [d, ..rest] => {

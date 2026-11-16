@@ -700,13 +700,46 @@ and fileName = (name) => {
   CompilerText.stringOf(go(CompilerText.characters(name), true)) ++ ".wm"
 };
 
+let decPosition = (d) => {
+  match(d) {
+    DVal(p, _, _, _) => { p },
+    DType(p, _) => { p },
+    DDatatype(p, _) => { p },
+    DOpen(p, _) => { p },
+    DLocal(p, _, _) => { p }
+  }
+};
+
+/* A structure-level declaration. `local dec1 in dec2 end` is Workman's `private`: dec1's
+   declarations become private, and a `local open` a plain, non-exported import. */
+let rec moduleDec = (structures, hidden, d) => {
+  match(d, hidden) {
+    (DLocal(_, inner, body), _) => {
+      stack(SubsetList.append(
+        SmlList.map((x) => { moduleDec(structures, true, x) })(inner),
+        SmlList.map((x) => { moduleDec(structures, hidden, x) })(body)
+      ))
+    },
+    (DOpen(p, ids), true) => {
+      stack(SmlList.map((id) => {
+        let SubsetResult.Ok(name) = SubsetList.last(id);
+        atom(p, "from \"./" ++ fileName(dotted([], name)) ++ "\" import *;")
+      })(ids))
+    },
+    (_, true) => { cat(atom(decPosition(d), "private "), dec(structures, d)) },
+    (_, false) => { dec(structures, d) }
+  }
+};
+
 let topdec = (structures, td) => {
   match(td) {
     TopDecs(sds) => {
       stack(SmlList.map(match {
-        SDec(d) => { dec(structures, d) },
+        SDec(d) => { moduleDec(structures, false, d) },
         SStructure(_, binds) => {
-          stack(SmlList.map((_, _, ds) => { stack(SmlList.map((d) => { dec(structures, d) })(ds)) })(binds))
+          stack(SmlList.map((_, _, ds) => {
+            stack(SmlList.map((d) => { moduleDec(structures, false, d) })(ds))
+          })(binds))
         }
       })(sds))
     },

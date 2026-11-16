@@ -53,7 +53,8 @@ import stays private: it only resolves qualified names, and emits no SML structu
 `from "./file.wm" import { a, B as C };` brings names in unqualified. An uppercase name, a type
 or constructor, can never be a local binding, so each use is qualified in place (`File.B`, also
 in patterns). A value may be shadowed, rebound by a pattern or spelled like a record label, so it
-becomes `val a = File.a` at the start of the structure instead. Duplicate imported names are
+becomes a private `val a = File.a` at the start of the structure instead (see Private
+declarations below). Duplicate imported names are
 errors. `export from` with a named clause is diagnosed explicitly, as are non-local and later
 imports. Namespace values are not first-class.
 
@@ -67,9 +68,8 @@ meanings below. Workman's `std/` extensions are not part of the Basis and remain
 `before` and `o` are infix in the SML Basis Library, so native output renames bindings with
 those names, as it does SML keywords.
 
-A plain `from "./file.wm" import *;` also lowers to `open`, although in Workman it is private.
-SubsetML omits `local`, so the SML side exposes more than the Workman side does. See
-`markdown/issues/private-imports.md`.
+A plain `from "./file.wm" import *;` is private in Workman, so it lowers to `local open File in
+… end`, which keeps the opened names out of the module's public environment.
 Record modules export hygienic field-type aliases for generated reconstruction checks. This
 lets an imported record retain fields mentioning private dependencies without requiring its
 consumers to import those dependencies or exposing their namespaces.
@@ -123,6 +123,30 @@ ordinary WM labels and go through the shared backend renaming system.
 | `type point = {x : real, y : real}` | `record Point = { x: Real64.Real, y: Real64.Real };` |
 | `datatype 'a t = A \| B of 'a * real` | `type T<a> = A \| B<a, Real64.Real>;` |
 | `datatype t = Only` (one constructor) | `type T = \| Only;` |
+| `local dec1 in dec2 end` in a structure | `dec1` with each declaration `private`, then `dec2` |
+| `local open X in … end` in a structure | `from "./x.wm" import *;` (a plain, private import) |
+
+### Private declarations
+
+Workman's `private let`, `private type` and `private record` hide a declaration from importers;
+SML's `local` does the same, so each translates to the other. Declarations are sequential in
+both languages, and a private declaration is visible to the rest of its module, so reading
+Workman, a run of private declarations wraps the rest of the structure:
+
+```sml
+structure Map = struct
+  local
+    val rotateLeft = fn …
+  in
+    val set = fn …
+  end
+end
+```
+
+Named and plain imports read the same way, since they are private in Workman too. A `local`
+inside a `let` expression has no Workman counterpart and is an untranslatable declaration.
+Restriction L1 (spec §7) matches Workman's rule that a public binding can't mention a private
+type.
 
 ## Expressions
 

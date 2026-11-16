@@ -484,13 +484,33 @@ structure WmPrint = struct
       CompilerText.stringOf (go (CompilerText.characters name, true)) ^ ".wm"
     end
 
+  val decPosition = fn d =>
+    case d of
+      DVal (p, _, _, _) => p | DType (p, _) => p | DDatatype (p, _) => p
+    | DOpen (p, _) => p | DLocal (p, _, _) => p
+
+  (* A structure-level declaration. `local dec1 in dec2 end` is Workman's `private`: dec1's
+     declarations become private, and a `local open` a plain, non-exported import. *)
+  val rec moduleDec = fn (structures, hidden, d) =>
+    case (d, hidden) of
+      (DLocal (_, inner, body), _) =>
+        stack (SubsetList.append (SmlList.map (fn x => moduleDec (structures, true, x)) inner,
+                                  SmlList.map (fn x => moduleDec (structures, hidden, x)) body))
+    | (DOpen (p, ids), true) =>
+        stack (SmlList.map (fn id =>
+          let val SubsetResult.Ok name = SubsetList.last id in
+            atom (p, "from \"./" ^ fileName (dotted ([], name)) ^ "\" import *;")
+          end) ids)
+    | (_, true) => cat (atom (decPosition d, "private "), dec (structures, d))
+    | (_, false) => dec (structures, d)
+
   val topdec = fn (structures, td) =>
     case td of
       TopDecs sds =>
         stack (SmlList.map (fn
-                  SDec d => dec (structures, d)
+                  SDec d => moduleDec (structures, false, d)
                 | SStructure (_, binds) =>
-                    stack (SmlList.map (fn (_, _, ds) => stack (SmlList.map (fn d => dec (structures, d)) ds)) binds))
+                    stack (SmlList.map (fn (_, _, ds) => stack (SmlList.map (fn d => moduleDec (structures, false, d)) ds)) binds))
                 sds)
     | TopExp (_, e) => cat (exp e, text ";")
 

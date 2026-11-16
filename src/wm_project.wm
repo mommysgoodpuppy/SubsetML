@@ -503,7 +503,35 @@ let prepare = (basis, units, unit) => {
       [] => { false }
     }
   };
-  let rec imports = (tokens, edges, aliases, named, opens, exported) => {
+  /* `import *` opens the module. A plain import is private in Workman, so its open is
+     marked `private`; `export from` keeps it public. */
+  let rec openAll = (specifier, pos, hidden, rest, edges, aliases, named, opens, exported) => {
+    SubsetResult.andThen(
+      dependency(specifier, pos),
+      (child) => {
+        let marked = if (hidden) { [(WmLexer.WName(["private"]), pos), ..opens] } else { opens };
+        let opened = [(WmLexer.WOpen([[name(child)]]), pos), ..marked];
+        let known = SubsetList.exists(
+          edges,
+          match {
+            Edge(_, _, _, target) => { ModuleProject.same(target, identity(child)) }
+          }
+        );
+        if (known) { imports(rest, edges, aliases, named, opened, exported) } else {
+          // No alias: an open alone doesn't make the module's name usable as a qualifier.
+          imports(
+            rest,
+            [Edge(specifier, pos, name(child), identity(child)), ..edges],
+            aliases,
+            named,
+            opened,
+            exported
+          )
+        }
+      }
+    )
+  }
+  and imports = (tokens, edges, aliases, named, opens, exported) => {
     match(tokens) {
       [
         (WmLexer.WKey("from"), Var(pos)),
@@ -550,29 +578,19 @@ let prepare = (basis, units, unit) => {
         (WmLexer.WKey(";"), _),
         ..rest
       ] => {
-        SubsetResult.andThen(
-          dependency(specifier, pos),
-          (child) => {
-            let opened = [(WmLexer.WOpen([[name(child)]]), pos), ..opens];
-            let known = SubsetList.exists(
-              edges,
-              match {
-                Edge(_, _, _, target) => { ModuleProject.same(target, identity(child)) }
-              }
-            );
-            if (known) { imports(rest, edges, aliases, named, opened, exported) } else {
-              // No alias: an open alone doesn't make the module's name usable as a qualifier.
-              imports(
-                rest,
-                [Edge(specifier, pos, name(child), identity(child)), ..edges],
-                aliases,
-                named,
-                opened,
-                exported
-              )
-            }
-          }
-        )
+        openAll(specifier, pos, true, rest, edges, aliases, named, opens, exported)
+      },
+      // `open` already adds to the module's public environment, so this needs nothing further.
+      [
+        (WmLexer.WName(["export"]), _),
+        (WmLexer.WKey("from"), Var(pos)),
+        (WmLexer.WScon(Syntax.SString(specifier)), _),
+        (WmLexer.WKey("import"), _),
+        (WmLexer.WKey("*"), _),
+        (WmLexer.WKey(";"), _),
+        ..rest
+      ] => {
+        openAll(specifier, pos, false, rest, edges, aliases, named, opens, exported)
       },
       /* `import { a, B as C }`. A constructor or type is uppercase and can never be a alias
          binding, so its uses are qualified in place. A value may be shadowed, rebound by a
@@ -615,6 +633,8 @@ let prepare = (basis, units, unit) => {
                               (WmLexer.WKey("="), itemPos),
                               (WmLexer.WName([alias]), itemPos),
                               (WmLexer.WKey("let"), itemPos),
+                              // A named import is private in Workman.
+                              (WmLexer.WName(["private"]), itemPos),
                               ..opens
                             ]
                           )
@@ -638,32 +658,6 @@ let prepare = (basis, units, unit) => {
           src,
           "reverse translation currently requires header namespace imports: from \"./file.wm\" import * as Name;",
           pos
-        )
-      },
-      // `open` already adds to the module's public environment, so this needs nothing further.
-      [
-        (WmLexer.WName(["export"]), _),
-        (WmLexer.WKey("from"), Var(pos)),
-        (WmLexer.WScon(Syntax.SString(specifier)), Var(specifierPos)),
-        (WmLexer.WKey("import"), Var(importPos)),
-        (WmLexer.WKey("*"), Var(starPos)),
-        (WmLexer.WKey(";"), Var(endPos)),
-        ..rest
-      ] => {
-        imports(
-          [
-            (WmLexer.WKey("from"), pos),
-            (WmLexer.WScon(Syntax.SString(specifier)), specifierPos),
-            (WmLexer.WKey("import"), importPos),
-            (WmLexer.WKey("*"), starPos),
-            (WmLexer.WKey(";"), endPos),
-            ..rest
-          ],
-          edges,
-          aliases,
-          named,
-          opens,
-          exported
         )
       },
       // `structure Alias = Target`. The body's uses are rewritten like a private alias's.
