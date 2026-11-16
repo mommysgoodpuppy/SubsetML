@@ -37,6 +37,9 @@ structure Unify = struct
   datatype site =
       Operand of Syntax.pos * ty
     | Defaulted of Syntax.pos
+    (* A Workman integer literal and its type: an int-or-real class until context decides,
+       as in Workman, whose integer literals take a real type from their context. *)
+    | Literal of Syntax.pos * ty
 
   (* Variables, the next fresh number (also used for type name stamps), pending selections,
      the label sets of the record type declarations so far (spec R2), and, when translating
@@ -94,6 +97,17 @@ structure Unify = struct
            Bound t' => prune (st, t')
          | Free (_, _) => t)
     | _ => t
+
+  (* Whether a numeric class variable is the type of a Workman integer literal. Its default,
+     int, then agrees with Workman's Int32 literal default. *)
+  val literalVar = fn (st, v) =>
+    let val State (_, _, _, _, sites) = st in
+      case sites of
+        NONE => false
+      | SOME xs => SmlList.exists (fn site => case site of
+          Literal (_, t) => (case prune (st, t) of TVar w => w = v | _ => false)
+        | _ => false) xs
+    end
 
   (* Applies the substitution throughout a type. *)
   val rec resolve = fn (st, t) =>

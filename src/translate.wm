@@ -549,7 +549,7 @@ let defaultedSite = (st) => {
       Types.TCon(_, ts) => { SmlList.exists(unresolved)(ts) },
       Types.TVar(v) => {
         match(Unify.lookup(st, v)) {
-          Unify.Free(Types.KClass(_), _) => { true },
+          Unify.Free(Types.KClass(_), _) => { SubsetBool.not(Unify.literalVar(st, v)) },
           _ => { false }
         }
       },
@@ -564,7 +564,8 @@ let defaultedSite = (st) => {
     Some(xs) => {
       match(SmlList.mapPartial(match {
         Unify.Defaulted(pos) => { Some(pos) },
-        Unify.Operand(pos, t) => { if (unresolved(t)) { Some(pos) } else { None } }
+        Unify.Operand(pos, t) => { if (unresolved(t)) { Some(pos) } else { None } },
+        Unify.Literal(_) => { None }
       })(xs)) {
         [] => { None },
         [pos, .._] => { Some(pos) }
@@ -573,7 +574,7 @@ let defaultedSite = (st) => {
   }
 };
 
-let defaultedMessage = "a numeric operation whose type only a default decides (SML int, Workman Number); annotate it as int or real";
+let defaultedMessage = "a numeric operation whose type only a default decides (SML int, Workman Real64); annotate it as int or real";
 
 let wmNumbers = (st) => {
   match(defaultedSite(st)) {
@@ -722,7 +723,7 @@ let realEquality = (st, prog) => {
         _ => { None }
       }
     },
-    Unify.Defaulted(_) => { None }
+    _ => { None }
   })(match(sites) {
     Some(xs) => { xs },
     None => { [] }
@@ -733,6 +734,38 @@ let realEquality = (st, prog) => {
         if (if (if (opr == "=") { true } else { opr == "<>" }) { SmlList.exists((q) => { p == q })(positions) } else { false }) {
           EApp(EId(p, (["Real"], if (opr == "=") { "==" } else { "!=" })), a)
         } else { e }
+      },
+      _ => { e }
+    }
+  };
+  mapProgram(rewrite, prog)
+};
+
+// A Workman integer literal whose context made it real is printed as an SML real constant.
+let realLiterals = (st, prog) => {
+  let Unify.State(_, _, _, _, sites) = st;
+  let positions = SmlList.mapPartial((site) => {
+    match(site) {
+      Unify.Literal(p, t) => {
+        match(Unify.prune(st, t)) {
+          Types.TCon(n, []) => {
+            if (Unify.sameName(n, Types.realName)) { Some(p) } else { None }
+          },
+          _ => { None }
+        }
+      },
+      _ => { None }
+    }
+  })(match(sites) {
+    Some(xs) => { xs },
+    None => { [] }
+  });
+  let rewrite = (e) => {
+    match(e) {
+      EScon(p, SInt(text)) => {
+        if (if (SmlList.exists((q) => { p == q })(positions)) {
+          SubsetBool.not(SubsetList.exists(CompilerText.characters(text), (c) => { c == 'x' }))
+        } else { false }) { EScon(p, SReal(text ++ ".0")) } else { e }
       },
       _ => { e }
     }
@@ -1101,7 +1134,7 @@ let recover = (modules, target) => {
             env,
             rest,
             st,
-            SubsetList.append(acc, [(path, src, realEquality(st, prog), comments)])
+            SubsetList.append(acc, [(path, src, realLiterals(st, realEquality(st, prog)), comments)])
           )
         })
       })
@@ -1137,6 +1170,16 @@ let recover = (modules, target) => {
 
 /* Modules arrive in resolved dependency order. Each checker sees only direct imports;
    cache owned structure environments, never an importer's ambient environment. */
+/* A project error names its module ahead of the message, so the caller can report it at the
+   module's own source position; `unlocated` splits the two again. */
+let located = (path, message) => { path ++ "\n" ++ message };
+let unlocated = (message) => {
+  match(CompilerText.fields(message, (c) => { c == '\n' })) {
+    [path, first, ..rest] => { Some(path, SubsetString.concatWith([first, ..rest], "\n")) },
+    _ => { None }
+  }
+};
+
 let recoverProjectWithRuntime = (runtime, modules) => {
   let working = (basis, cache, dependencies) => {
     SmlList.foldl((name, result) => {
@@ -1186,19 +1229,29 @@ let recoverProjectWithRuntime = (runtime, modules) => {
       ] => {
         Unify.bind(working(basis, cache, dependencies))((env) => (_) => {
           let Unify.State(vars, next, sels, recs, _) = st;
-          Unify.bind(portableValues(env, prog, Unify.State(vars, next, sels, recs, Some([]))))((exports, rewritten) => (next) => {
+          match(Unify.bind(portableValues(env, prog, Unify.State(vars, next, sels, recs, Some([]))))((exports, rewritten) => (next) => {
             Unify.bind(wmNumbers(next))((_) => (next) => {
-              Unify.bind(own(exports, name))((body) => (_) => {
-                rewrite(
-                  basis,
-                  rest,
-                  [(name, body), ..cache],
-                  next,
-                  [(name, dependencies, (path, src, realEquality(next, rewritten), cs)), ..acc]
-                )
-              })
+              Unify.bind(own(exports, name))((body) => (_) => { Unify.Ok((body, rewritten), next) })
             })
-          })
+          })) {
+            Unify.Err(message, pos) => { Unify.Err(located(path, message), pos) },
+            Unify.Ok((Var(body), Var(rewritten)), next) => {
+              rewrite(
+                basis,
+                rest,
+                [(name, body), ..cache],
+                next,
+                [
+                  (
+                    name,
+                    dependencies,
+                    (path, src, realLiterals(next, realEquality(next, rewritten)), cs)
+                  ),
+                  ..acc
+                ]
+              )
+            }
+          }
         })
       }
     }
@@ -1206,11 +1259,14 @@ let recoverProjectWithRuntime = (runtime, modules) => {
   let rec strict = (basis, remaining, cache, st) => {
     match(remaining) {
       [] => { Unify.Ok(void, st) },
-      [(Var(name), Var(dependencies), (_, _, Var(prog), _)), ..rest] => {
+      [(Var(name), Var(dependencies), (Var(path), _, Var(prog), _)), ..rest] => {
         Unify.bind(working(basis, cache, dependencies))((env) => (_) => {
-          Unify.bind(Elab.programExports(env, prog, st))((exports) => (next) => {
-            Unify.bind(own(exports, name))((body) => (_) => { strict(basis, rest, [(name, body), ..cache], next) })
-          })
+          match(Unify.bind(Elab.programExports(env, prog, st))((exports) => (next) => {
+            Unify.bind(own(exports, name))((body) => (_) => { Unify.Ok(body, next) })
+          })) {
+            Unify.Err(message, pos) => { Unify.Err(located(path, message), pos) },
+            Unify.Ok(body, next) => { strict(basis, rest, [(name, body), ..cache], next) }
+          }
         })
       }
     }

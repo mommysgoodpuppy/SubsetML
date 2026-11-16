@@ -65,7 +65,7 @@ let project = (files) => {
         Some(xs) => {
           match(SmlList.mapPartial(match {
             Unify.Operand(p, t) => { if (p == pos) { Some(p, t) } else { None } },
-            Unify.Defaulted(_) => { None }
+            _ => { None }
           })(xs)) {
             [] => { None },
             [first, .._] => { Some(first) }

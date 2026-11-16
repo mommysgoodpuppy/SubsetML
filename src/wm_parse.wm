@@ -408,7 +408,36 @@ and parseAnnotated = (inMatch, binds, ts) => {
 // ---------------------------------------------------------------------------------------
 // Expressions
 
-// Whether the `(` at the head of ts begins a lambda, i.e. its matching `)` is followed by `=>`.
+/* Whether a result annotation `: T` at the head of ts is followed by `=>`. A type never
+   contains `=>`, and a token no type can contain ends the search. */
+let resultAnnotationAhead = (ts) => {
+  let rec scan = (depth, ts) => {
+    match(peek(ts)) {
+      (WEOF, _) => { false },
+      (WKey(k), _) => {
+        if (k == "=>") { depth == (0: Int32.Int) } else {
+          if (if (k == "(") { true } else { k == "<" }) { scan(depth + (1: Int32.Int), advance(ts)) } else {
+            if (if (k == ")") { true } else { k == ">" }) {
+              if (depth == (0: Int32.Int)) { false } else { scan(depth - (1: Int32.Int), advance(ts)) }
+            } else {
+              if (k == ",") {
+                if (depth == (0: Int32.Int)) { false } else { scan(depth, advance(ts)) }
+              } else {
+                if (if (k == "->") { true } else { k == "." }) { scan(depth, advance(ts)) } else { false }
+              }
+            }
+          }
+        }
+      },
+      (WName(_), _) => { scan(depth, advance(ts)) },
+      _ => { false }
+    }
+  };
+  if (isKey(":", ts)) { scan((0: Int32.Int), advance(ts)) } else { false }
+};
+
+/* Whether the `(` at the head of ts begins a lambda, i.e. its matching `)` is followed by `=>`,
+   or by a result annotation and then `=>`. */
 let lambdaAhead = (ts) => {
   let rec scan = (depth, ts) => {
     match(peek(ts)) {
@@ -416,7 +445,9 @@ let lambdaAhead = (ts) => {
       (WKey(k), _) => {
         if (if (if (if (k == "(") { true } else { k == "[" }) { true } else { k == "{" }) { true } else { k == ".{" }) { scan(depth + (1: Int32.Int), advance(ts)) } else {
           if (if (if (k == ")") { true } else { k == "]" }) { true } else { k == "}" }) {
-            if (depth == (1: Int32.Int)) { isKey("=>", advance(ts)) } else { scan(depth - (1: Int32.Int), advance(ts)) }
+            if (depth == (1: Int32.Int)) {
+              if (isKey("=>", advance(ts))) { true } else { resultAnnotationAhead(advance(ts)) }
+            } else { scan(depth - (1: Int32.Int), advance(ts)) }
           } else { scan(depth, advance(ts)) }
         }
       },
@@ -691,21 +722,10 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
     }
   })(layouts));
 
+  // An `if` is an operand, so `if (c) { a } else { b } >= 0` compares the whole conditional.
   let rec parseExp = (ts) => {
     match(peek(ts)) {
-      (WKey("if"), _) => {
-        bind(expect("(", advance(ts)))((_) => (ts) => {
-          bind(parseExp(ts))((c) => (ts) => {
-            bind(expect(")", ts))((_) => (ts) => {
-              bind(parseBlock(ts))((a) => (ts) => {
-                bind(expect("else", ts))((_) => (ts) => {
-                  bind(parseBlock(ts))((b) => (ts) => { Done(EIf(c, a, b), ts) })
-                })
-              })
-            })
-          })
-        })
-      },
+      (WKey("if"), _) => { parseFallback(ts) },
       (WKey("match"), _) => {
         if (isKey("{", advance(ts))) {
           bind(parseArms(advance(ts)))((rules) => (ts) => { Done(EFn(rules), ts) })
@@ -763,14 +783,26 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
         } else { Done(p, ts) }
       })
     };
+    // `(params): T => body` constrains the body: `fn params => (body : t)`.
+    let result = (ts) => {
+      if (isKey(":", ts)) {
+        bind(parseType(advance(ts)))((t) => (ts) => { Done(Some(t), ts) })
+      } else { Done(None, ts) }
+    };
     bind(delimited("(", param, ",", ")", ts))((ps) => (ts) => {
-      bind(expect("=>", ts))((_) => (ts) => {
-        bind(if (lambdaAhead(ts)) { parseLambda(ts) } else { parseBlock(ts) })((body) => (ts) => {
-          let p = match(ps) {
-            [single] => { single },
-            _ => { PTuple(ps) }
-          };
-          Done(EFn([(p, body)]), ts)
+      bind(result(ts))((annotation) => (ts) => {
+        bind(expect("=>", ts))((_) => (ts) => {
+          bind(if (lambdaAhead(ts)) { parseLambda(ts) } else { parseBlock(ts) })((body) => (ts) => {
+            let p = match(ps) {
+              [single] => { single },
+              _ => { PTuple(ps) }
+            };
+            let constrained = match(annotation) {
+              None => { body },
+              Some(t) => { ETyped(body, t) }
+            };
+            Done(EFn([(p, constrained)]), ts)
+          })
         })
       })
     })
@@ -926,12 +958,22 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
           Fail(message, offset) => { Fail(message, offset) }
         }
       } else {
-        if (startsSpaceArgument(ts)) {
-          match(if (lambdaAhead(ts)) { parseLambda(ts) } else { parsePrimary(ts) }) {
-            Done(arg, rest) => { calls(EApp(callee, arg), None, rest) },
-            Fail(message, offset) => { Fail(message, offset) }
+        if (isKey(".", ts)) {
+          // `f(x).field` reads a field of the call's result: `#field (f x)`.
+          match(peek(advance(ts))) {
+            (WName([label]), Var(p)) => {
+              calls(EApp(ESelect(p, label), callee), None, advance(advance(ts)))
+            },
+            _ => { Done((callee, insertion), ts) }
           }
-        } else { Done((callee, insertion), ts) }
+        } else {
+          if (startsSpaceArgument(ts)) {
+            match(if (lambdaAhead(ts)) { parseLambda(ts) } else { parsePrimary(ts) }) {
+              Done(arg, rest) => { calls(EApp(callee, arg), None, rest) },
+              Fail(message, offset) => { Fail(message, offset) }
+            }
+          } else { Done((callee, insertion), ts) }
+        }
       }
     };
     bind(parsePrimary(ts))((value) => (rest) => { calls(value, None, rest) })
@@ -1012,10 +1054,24 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
           }
         })
       },
-      (WKey("if"), _) => { parseExp(ts) },
+      (WKey("if"), _) => { parseIf(ts) },
       (WKey("match"), _) => { parseExp(ts) },
       _ => { expected("an expression", ts) }
     }
+  }
+
+  and parseIf = (ts) => {
+    bind(expect("(", advance(ts)))((_) => (ts) => {
+      bind(parseExp(ts))((c) => (ts) => {
+        bind(expect(")", ts))((_) => (ts) => {
+          bind(parseBlock(ts))((a) => (ts) => {
+            bind(expect("else", ts))((_) => (ts) => {
+              bind(parseBlock(ts))((b) => (ts) => { Done(EIf(c, a, b), ts) })
+            })
+          })
+        })
+      })
+    })
   }
 
   // Named record layout is explicit; no inference is needed to enumerate copied fields.

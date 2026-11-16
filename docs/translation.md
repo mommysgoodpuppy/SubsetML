@@ -50,7 +50,11 @@ compiler round trips, header `export from "./file.wm" import *;` imports lower t
 back as that form. As in SML, the opened bindings become part of the importing module. A namespace
 import stays private: it only resolves qualified names, and emits no SML structure binding.
 `export from "./file.wm" import * as Name;` lowers to the structure alias of spec restriction M2.
-`export from` with a named clause is diagnosed explicitly, as are other named, non-local and later
+`from "./file.wm" import { a, B as C };` brings names in unqualified. An uppercase name, a type
+or constructor, can never be a local binding, so each use is qualified in place (`File.B`, also
+in patterns). A value may be shadowed, rebound by a pattern or spelled like a record label, so it
+becomes `val a = File.a` at the start of the structure instead. Duplicate imported names are
+errors. `export from` with a named clause is diagnosed explicitly, as are non-local and later
 imports. Namespace values are not first-class.
 
 A plain `from "./file.wm" import *;` also lowers to `open`, although in Workman it is private.
@@ -116,6 +120,7 @@ ordinary WM labels and go through the shared backend renaming system.
 |---|---|
 | `fn x => e`, `fn (x, y) => e`, `fn () => e` | `(x) => { e }`, `(x, y) => { e }`, `() => { e }` |
 | `fn a => fn b => e` | `(a) => (b) => { e }` |
+| `fn (x : t) => (e : u)` | `(x: T): U => { e }`: a result annotation constrains the body |
 | `fn p1 => e1 \| p2 => e2`, or a single rule with a constructor or constant pattern | `match { p1 => { e1 }, p2 => { e2 } }` |
 | `case e of …` / `case (a, b) of …` | `match(e) { … }` / `match(a, b) { … }` |
 | `if c then a else b` | `if (c) { a } else { b }` |
@@ -135,6 +140,7 @@ ordinary WM labels and go through the shared backend renaming system.
 | `()` | `void` |
 | `{x = 1.0}` | `.{ x = 1 }` |
 | `#x r` (r a variable or a selection) | `r.x` |
+| `#x (f a)` | `f(a).x`: a field of a call's result |
 | `(e : t)` | `(e: T)` |
 | `#"c"` | `'c'` |
 
@@ -410,9 +416,9 @@ code translates as described in [Integers](#integers).
 ## Integers
 
 SML `int` and Workman `Int32.Int` have the same range, checked arithmetic and `div`/`mod`
-rounding. Workman integer literals are overloaded and default to `Real64.Real`, while SML
-defaults unresolved numeric operations to `int`, so the translation never relies on
-either default:
+rounding. A Workman integer literal takes its type from context and otherwise defaults to
+`Int32.Int`, as an SML integer constant is `int`. Workman's default for an operation with no
+literal is `Real64.Real`, unlike SML's `int`:
 
 | SML | Workman |
 |---|---|
@@ -422,11 +428,10 @@ either default:
 | `42.0` | `42.0` |
 
 Every int constant is ascribed, and every real keeps its fraction, so `SML → Workman → SML`
-is unchanged. Reading hand-written Workman, a bare integer literal is `int` when it fits in
-`Int32.Int`, and `real` otherwise; `1.0` and `1e3` are `real`. This matches Workman wherever the
-literal's context is `Int32.Int`. Where the context is `Real64.Real`, write the literal as `1.0`, or the
-native build fails to type-check; it never computes a different value. `(n: Int32.Int)` is still
-read as an int constant. A numeric
-operation whose type only the default decides, such as `fn (a, b) => a + b`, is
-rejected in both directions; annotate an operand as `int` or `real`. `Int.*` and
-`abs` have no Workman mapping yet.
+is unchanged. Reading hand-written Workman, a bare integer literal takes its type from context
+during translation, as in Workman: in a `Real64.Real` context, `0` and `-1` become `0.0` and
+`~1.0`. Undecided, it is `int`, which matches Workman's `Int32.Int` default. A literal outside the
+`Int32.Int` range is `real`; `1.0` and `1e3` are `real`. `(n: Int32.Int)` is still read as an int
+constant. A numeric operation that no literal decides, such as `fn (a, b) => a + b`, would default
+to `int` in SML but `Real64.Real` in Workman, so it is rejected in both directions; annotate an
+operand as `int` or `real`. `Int.*` and `abs` have no Workman mapping yet.

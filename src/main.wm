@@ -333,7 +333,21 @@ let fromWmLoaded = (outDir, basis, runtimePath, entryPath, adapterSpecs, sources
                     };
                     match(checked) {
                       Unify.Err(message, pos) => {
-                        WmProject.failure("translation", "", BackendNames.diagnostic(names, message), pos)
+                        match(Translate.unlocated(message)) {
+                          Some(path, message) => {
+                            match(SmlList.find((unit) => { WmProject.pathOf(unit) == path })(units)) {
+                              Some(unit) => {
+                                WmProject.failure(path, WmProject.textOf(unit), BackendNames.diagnostic(names, message), pos)
+                              },
+                              None => {
+                                WmProject.failure(path, "", BackendNames.diagnostic(names, message), pos)
+                              }
+                            }
+                          },
+                          None => {
+                            WmProject.failure("translation", "", BackendNames.diagnostic(names, message), pos)
+                          }
+                        }
                       },
                       Unify.Ok(recovered, _) => {
                         SubsetResult.andThen(

@@ -13,6 +13,8 @@ fi
 $bin sml "$tmp/sml" "$tmp/wm/real_functions.wm"
 $bin sml "$tmp/sml" tests/wm/accept/*.wm
 $bin check "$tmp/sml/z_numbers.sml" "$tmp/sml/a_use.sml"
+$bin check "$tmp/sml/lambda_results.sml"
+$bin check "$tmp/sml/real_literals.sml"
 cat > "$tmp/assert.sml" <<'SML'
 val _ = if RealFunctions.same andalso RealFunctions.passed
   andalso RealFunctions.equal (2.0, 2.0) andalso RealFunctions.unequal (2.0, 3.0)

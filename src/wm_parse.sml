@@ -301,7 +301,28 @@ structure WmParse = struct
   (* --------------------------------------------------------------------------------------- *)
   (* Expressions *)
 
-  (* Whether the `(` at the head of ts begins a lambda, i.e. its matching `)` is followed by `=>`. *)
+  (* Whether a result annotation `: T` at the head of ts is followed by `=>`. A type never
+     contains `=>`, and a token no type can contain ends the search. *)
+  val resultAnnotationAhead = fn ts =>
+    let
+      val rec scan = fn (depth, ts) =>
+        case peek ts of
+          (WEOF, _) => false
+        | (WKey k, _) =>
+            if k = "=>" then depth = 0
+            else (if k = "(" orelse k = "<" then scan (depth + 1, advance ts)
+            else (if k = ")" orelse k = ">" then
+              (if depth = 0 then false else scan (depth - 1, advance ts))
+            else (if k = "," then (if depth = 0 then false else scan (depth, advance ts))
+            else (if k = "->" orelse k = "." then scan (depth, advance ts) else false))))
+        | (WName _, _) => scan (depth, advance ts)
+        | _ => false
+    in
+      isKey (":", ts) andalso scan (0, advance ts)
+    end
+
+  (* Whether the `(` at the head of ts begins a lambda, i.e. its matching `)` is followed by `=>`,
+     or by a result annotation and then `=>`. *)
   val lambdaAhead = fn ts =>
     let
       val rec scan = fn (depth, ts) =>
@@ -311,7 +332,9 @@ structure WmParse = struct
             if k = "(" orelse k = "[" orelse k = "{" orelse k = ".{" then scan (depth + 1, advance ts)
             else
               (if k = ")" orelse k = "]" orelse k = "}" then
-                 (if (depth = 1) then isKey ("=>", advance ts) else scan (depth - 1, advance ts))
+                 (if (depth = 1) then
+                    isKey ("=>", advance ts) orelse resultAnnotationAhead (advance ts)
+                  else scan (depth - 1, advance ts))
                else scan (depth, advance ts))
         | _ => scan (depth, advance ts)
     in
@@ -492,15 +515,10 @@ structure WmParse = struct
               SubsetString.concatWith (qs, ".") = moduleName andalso decapitalize n = name
             end) referenced) layouts)
 
+  (* An `if` is an operand, so `if (c) { a } else { b } >= 0` compares the whole conditional. *)
   val rec parseExp = fn ts =>
     case peek ts of
-      (WKey "if", _) =>
-        bind (expect ("(", advance ts)) (fn _ => fn ts =>
-          bind (parseExp ts) (fn c => fn ts =>
-            bind (expect (")", ts)) (fn _ => fn ts =>
-              bind (parseBlock ts) (fn a => fn ts =>
-                bind (expect ("else", ts)) (fn _ => fn ts =>
-                  bind (parseBlock ts) (fn b => fn ts => Done (EIf (c, a, b), ts)))))))
+      (WKey "if", _) => parseFallback ts
     | (WKey "match", _) =>
         if isKey ("{", advance ts) then
           bind (parseArms (advance ts)) (fn rules => fn ts => Done (EFn rules, ts))
@@ -547,8 +565,13 @@ structure WmParse = struct
         bind (parsePat (false, true, ts)) (fn p => fn ts =>
           if isKey (":", ts) then bind (parseType (advance ts)) (fn t => fn ts => Done (PTyped (p, t), ts))
           else Done (p, ts))
+      (* `(params): T => body` constrains the body: `fn params => (body : t)`. *)
+      val result = fn ts =>
+        if isKey (":", ts) then bind (parseType (advance ts)) (fn t => fn ts => Done (SOME t, ts))
+        else Done (NONE, ts)
     in
       bind (delimited ("(", param, ",", ")", ts)) (fn ps => fn ts =>
+        bind (result ts) (fn annotation => fn ts =>
         bind (expect ("=>", ts)) (fn _ => fn ts =>
           bind (if lambdaAhead ts then parseLambda ts else parseBlock ts) (fn body => fn ts =>
             let
@@ -556,9 +579,13 @@ structure WmParse = struct
                 case ps of
                   [single] => single
                 | _ => PTuple ps
+              val constrained =
+                case annotation of
+                  NONE => body
+                | SOME t => ETyped (body, t)
             in
-              Done (EFn [(p, body)], ts)
-            end)))
+              Done (EFn [(p, constrained)], ts)
+            end))))
     end
 
   and parseArms = fn ts =>
@@ -676,11 +703,16 @@ structure WmParse = struct
           (case delimited ("(", parseExp, ",", ")", ts) of
              Done (args, rest) => calls (apply (callee, args), SOME (callee, args), rest)
            | Fail (message, offset) => Fail (message, offset))
+        else (if isKey (".", ts) then
+          (* `f(x).field` reads a field of the call's result: `#field (f x)`. *)
+          (case peek (advance ts) of
+             (WName [label], p) => calls (EApp (ESelect (p, label), callee), NONE, advance (advance ts))
+           | _ => Done ((callee, insertion), ts))
         else (if startsSpaceArgument ts then
           (case (if lambdaAhead ts then parseLambda ts else parsePrimary ts) of
              Done (arg, rest) => calls (EApp (callee, arg), NONE, rest)
            | Fail (message, offset) => Fail (message, offset))
-        else Done ((callee, insertion), ts))
+        else Done ((callee, insertion), ts)))
     in
       bind (parsePrimary ts) (fn value => fn rest => calls (value, NONE, rest))
     end
@@ -736,9 +768,17 @@ structure WmParse = struct
               bind (separated (parseExp, ";", ")", advance rest)) (fn more => fn ts =>
                 bind (expect (")", ts)) (fn _ => fn ts => Done (ESeq (first :: more), ts)))
           | _ => bind (expect (")", rest)) (fn _ => fn ts => Done (first, ts)))
-    | (WKey "if", _) => parseExp ts
+    | (WKey "if", _) => parseIf ts
     | (WKey "match", _) => parseExp ts
     | _ => expected ("an expression", ts)
+
+  and parseIf = fn ts =>
+    bind (expect ("(", advance ts)) (fn _ => fn ts =>
+      bind (parseExp ts) (fn c => fn ts =>
+        bind (expect (")", ts)) (fn _ => fn ts =>
+          bind (parseBlock ts) (fn a => fn ts =>
+            bind (expect ("else", ts)) (fn _ => fn ts =>
+              bind (parseBlock ts) (fn b => fn ts => Done (EIf (c, a, b), ts)))))))
 
   (* Named record layout is explicit; no inference is needed to enumerate copied fields. *)
   and parseNamedRecord = fn (p, path, ts) =>

@@ -313,7 +313,19 @@ structure Elab = struct
   val rec exp = fn (ctx, e, st) =>
     let val (env, level, _) = ctx in
       case e of
-        EScon (q, c) => checkConst (q, c, st)
+        EScon (q, SInt text) =>
+          (case st of
+             State (_, _, _, _, SOME _) =>
+               (* From Workman: an in-range integer literal is int or real by context; a larger
+                  one is real, as Workman's default makes it. *)
+               let
+                 val (t, st') = if CompilerText.int32Literal text
+                   then fresh (st, KClass [intName, realName], level) else (realTy, st)
+                 val State (vs, nx, sels, recs, sites) = st'
+               in Ok (t, State (vs, nx, sels, recs,
+                   SOME (Literal (q, t) :: (case sites of SOME xs => xs | NONE => [])))) end
+           | _ => checkConst (q, SInt text, st))
+      | EScon (q, c) => checkConst (q, c, st)
       | EId (q, id) =>
           (case Env.value (env, id) of
              SOME entry =>
@@ -594,7 +606,8 @@ structure Elab = struct
         [] => Ok ((), st)
       | v :: rest => bind (unifyAt (st, pos, "integer default", TVar v, intTy))
           (fn _ => fn st => settle (rest, st))
-      val noteDefault = fn st => case (defaults, st) of
+      (* Only a default no Workman literal decides is recorded: Workman would choose Real64. *)
+      val noteDefault = fn st => case (SmlList.filter (fn v => SubsetBool.not (literalVar (st, v))) defaults, st) of
           ([], _) => st
         | (_, State (vs, nx, sels, recs, SOME xs)) => State (vs, nx, sels, recs, SOME (Defaulted pos :: xs))
         | (_, _) => st

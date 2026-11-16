@@ -79,6 +79,18 @@ structure WmProject = struct
           | SOME tail => if SubsetBool.not (validSpecifier specifier) then
               failure (path, src, "imports require explicit relative .wm paths or basis/ modules in the local source profile", pos)
             else SubsetResult.map (scan tail, fn paths => (specifier, pos) :: paths) end
+      | (WmLexer.WKey "from", pos) :: (WmLexer.WScon (Syntax.SString specifier), _) ::
+        (WmLexer.WKey "import", _) :: (WmLexer.WKey "{", _) :: rest =>
+          let val rec close = fn tokens => case tokens of
+              (WmLexer.WKey "}", _) :: (WmLexer.WKey ";", _) :: tail => SOME tail
+            | (WmLexer.WKey "}", _) :: _ => NONE
+            | [] => NONE
+            | _ :: tail => close tail
+          in case close rest of
+            NONE => failure (path, src, "unterminated `import { ... }`", pos)
+          | SOME tail => if SubsetBool.not (validSpecifier specifier) then
+              failure (path, src, "imports require explicit relative .wm paths or basis/ modules in the local source profile", pos)
+            else SubsetResult.map (scan tail, fn paths => (specifier, pos) :: paths) end
       | (WmLexer.WKey "from", pos) :: _ =>
           failure (path, src, "reverse discovery requires header namespace imports", pos)
       | (WmLexer.WName ["export"], _) :: (WmLexer.WKey "from", pos) :: rest =>
@@ -178,7 +190,29 @@ structure WmProject = struct
             case SubsetList.find (units, fn child => ModuleProject.same (identity child, target)) of
               NONE => failure (path, src, "import dependency is not in the supplied source list: " ^ specifier, pos)
             | SOME child => SubsetResult.Ok child
-      val rec imports = fn (tokens, edges, aliases, opens, exported) =>
+      (* The items of `{ a, B as C, }` after its `{`, as (original, alias, position), and the
+         tokens after the closing `};`. *)
+      val rec namedItems = fn (tokens, items) =>
+        case tokens of
+          (WmLexer.WKey "}", _) :: (WmLexer.WKey ";", _) :: rest =>
+            SubsetResult.Ok (SubsetList.reverse items, rest)
+        | (WmLexer.WName [original], pos) :: (WmLexer.WKey "as", _) :: (WmLexer.WName [alias], _) :: rest =>
+            namedItem (rest, (original, alias, pos) :: items)
+        | (WmLexer.WName [original], pos) :: rest => namedItem (rest, (original, original, pos) :: items)
+        | (_, pos) :: _ => failure (path, src, "expected an imported name in `import { ... }`", pos)
+        | [] => failure (path, src, "unterminated `import { ... }`", 0)
+      and namedItem = fn (tokens, items) =>
+        case tokens of
+          (WmLexer.WKey ",", _) :: rest => namedItems (rest, items)
+        | _ => namedItems (tokens, items)
+      (* Whether an earlier named import already bound this value: `opens` holds the injected
+         `let name = X.original;` tokens in reverse. *)
+      val rec boundValue = fn (opens, alias) =>
+        case opens of
+          (WmLexer.WName [n], _) :: (WmLexer.WKey "let", _) :: rest => n = alias orelse boundValue (rest, alias)
+        | _ :: rest => boundValue (rest, alias)
+        | [] => false
+      val rec imports = fn (tokens, edges, aliases, named, opens, exported) =>
         case tokens of
           (WmLexer.WKey "from", pos) ::
           (WmLexer.WScon (Syntax.SString specifier), _) ::
@@ -191,7 +225,7 @@ structure WmProject = struct
               failure (path, src, "duplicate namespace alias " ^ alias, pos)
             else SubsetResult.andThen (dependency (specifier, pos), fn child =>
               imports (rest, Edge (specifier, pos, alias, identity child) :: edges,
-                (alias, name child) :: aliases, opens, exported)))
+                (alias, name child) :: aliases, named, opens, exported)))
         | (WmLexer.WKey "from", pos) ::
           (WmLexer.WScon (Syntax.SString specifier), _) ::
           (WmLexer.WKey "import", _) :: (WmLexer.WKey "*", _) ::
@@ -202,10 +236,42 @@ structure WmProject = struct
                 val known = SubsetList.exists (edges, fn Edge (_, _, _, target) =>
                   ModuleProject.same (target, identity child))
               in
-                if known then imports (rest, edges, aliases, opened, exported)
+                if known then imports (rest, edges, aliases, named, opened, exported)
                 (* No alias: an open alone doesn't make the module's name usable as a qualifier. *)
-                else imports (rest, Edge (specifier, pos, name child, identity child) :: edges, aliases, opened, exported)
+                else imports (rest, Edge (specifier, pos, name child, identity child) :: edges, aliases, named, opened, exported)
               end)
+        (* `import { a, B as C }`. A constructor or type is uppercase and can never be a alias
+           binding, so its uses are qualified in place. A value may be shadowed, rebound by a
+           pattern or spelled like a record label, so it becomes `let a = X.a;` instead. *)
+        | (WmLexer.WKey "from", pos) ::
+          (WmLexer.WScon (Syntax.SString specifier), _) ::
+          (WmLexer.WKey "import", _) :: (WmLexer.WKey "{", _) :: rest =>
+            SubsetResult.andThen (dependency (specifier, pos), fn child =>
+              SubsetResult.andThen (namedItems (rest, []), fn (items, rest) =>
+                let
+                  val target = name child
+                  val known = SubsetList.exists (edges, fn Edge (_, _, _, key) =>
+                    ModuleProject.same (key, identity child))
+                  val edges = if known then edges
+                    else Edge (specifier, pos, target, identity child) :: edges
+                  val rec add = fn (items, named, opens) =>
+                    case items of
+                      [] => SubsetResult.Ok (named, opens)
+                    | (original, alias, itemPos) :: more =>
+                        if SubsetList.exists (named, fn (n, _) => n = alias) orelse
+                           SubsetList.exists (aliases, fn (a, _) => a = alias) orelse
+                           boundValue (opens, alias) then
+                          failure (path, src, "duplicate imported name " ^ alias, itemPos)
+                        else (if CompilerText.firstIs (alias, SubsetChar.isUpper) then
+                          add (more, (alias, [target, original]) :: named, opens)
+                        else add (more, named,
+                          (WmLexer.WKey ";", itemPos) ::
+                          (WmLexer.WName [target, original], itemPos) ::
+                          (WmLexer.WKey "=", itemPos) ::
+                          (WmLexer.WName [alias], itemPos) ::
+                          (WmLexer.WKey "let", itemPos) :: opens))
+                in SubsetResult.andThen (add (items, named, opens), fn (named, opens) =>
+                  imports (rest, edges, aliases, named, opens, exported)) end))
         | (WmLexer.WKey "from", pos) :: _ =>
             failure (path, src, "reverse translation currently requires header namespace imports: from \"./file.wm\" import * as Name;", pos)
         (* `open` already adds to the module's public environment, so this needs nothing further. *)
@@ -216,7 +282,7 @@ structure WmProject = struct
             imports ((WmLexer.WKey "from", pos) ::
               (WmLexer.WScon (Syntax.SString specifier), specifierPos) ::
               (WmLexer.WKey "import", importPos) :: (WmLexer.WKey "*", starPos) ::
-              (WmLexer.WKey ";", endPos) :: rest, edges, aliases, opens, exported)
+              (WmLexer.WKey ";", endPos) :: rest, edges, aliases, named, opens, exported)
         (* `structure Alias = Target`. The body's uses are rewritten like a private alias's. *)
         | (WmLexer.WName ["export"], _) :: (WmLexer.WKey "from", pos) ::
           (WmLexer.WScon (Syntax.SString specifier), specifierPos) ::
@@ -228,7 +294,7 @@ structure WmProject = struct
                 (WmLexer.WScon (Syntax.SString specifier), specifierPos) ::
                 (WmLexer.WKey "import", importPos) :: (WmLexer.WKey "*", starPos) ::
                 (WmLexer.WKey "as", asPos) :: (WmLexer.WName [alias], aliasPos) ::
-                (WmLexer.WKey ";", endPos) :: rest, edges, aliases, opens, (pos, alias, name child) :: exported))
+                (WmLexer.WKey ";", endPos) :: rest, edges, aliases, named, opens, (pos, alias, name child) :: exported))
         | (WmLexer.WName ["export"], _) :: (WmLexer.WKey "from", pos) :: _ =>
             failure (path, src, "only `export from \"./file.wm\" import *;` and `import * as Name;` have an SML counterpart", pos)
         | _ =>
@@ -239,7 +305,11 @@ structure WmProject = struct
                 | (WmLexer.WKey "from", pos) :: _ =>
                     failure (path, src, "imports must precede ordinary declarations in the initial translation profile", pos)
                 | (WmLexer.WName (head :: tail), pos) :: rest =>
-                    (case SubsetList.find (aliases, fn (alias, _) => alias = head) of
+                    (case SubsetList.find (named, fn (alias, _) => alias = head) of
+                       SOME (_, qualified) =>
+                         rewrite (rest, (WmLexer.WName (SubsetList.append (qualified, tail)), pos) :: acc)
+                     | NONE =>
+                    case SubsetList.find (aliases, fn (alias, _) => alias = head) of
                        NONE =>
                          if SubsetBool.not (SubsetList.isEmpty tail) andalso SubsetList.exists (units, fn u => name u = head) then
                            failure (path, src, "namespace " ^ head ^ " is not explicitly imported under that name", pos)
@@ -254,7 +324,7 @@ structure WmProject = struct
       case WmLexer.lex src of
         WmLexer.LexError (message, pos) => failure (path, src, message, pos)
       | WmLexer.Tokens (tokens, comments) =>
-          SubsetResult.map (imports (tokens, [], [], [], []), fn (edges, exported, body) =>
+          SubsetResult.map (imports (tokens, [], [], [], [], []), fn (edges, exported, body) =>
             Source (unit, edges, exported, WmLexer.Tokens (body,
               SubsetList.filter (comments, fn (_, body, _) =>
                 (case ModuleImports.marked body of NONE => true | SOME _ => false) andalso

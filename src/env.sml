@@ -62,8 +62,13 @@ structure Env = struct
   val withTypes = fn tys => Env ([], tys, [])
   val withStructure = fn (name, env, basis) => Env ([(name, (env, basis))], [], [])
 
-  (* The label sets of the record type declarations in scope (spec R3). *)
-  val recordLabelSets = fn Env (_, tys, _) =>
-    SmlList.concat (SmlList.map (fn (_, TyStr (_, TRecord fields, _)) => [SmlList.map (fn (l, _) => l) fields] | _ => []) tys)
+  (* The label sets of the record type declarations in scope (spec R3), including those of the
+     program structures this module imports: a Workman named import brings a record type into
+     scope unqualified, and its translation refers to it through the structure. Basis
+     structures are excluded. *)
+  val rec recordLabelSets = fn Env (strs, tys, _) =>
+    SubsetList.append (
+      SmlList.concat (SmlList.map (fn (_, TyStr (_, TRecord fields, _)) => [SmlList.map (fn (l, _) => l) fields] | _ => []) tys),
+      SmlList.concat (SmlList.map (fn (_, (inner, basis)) => if basis then [] else recordLabelSets inner) strs))
 
 end

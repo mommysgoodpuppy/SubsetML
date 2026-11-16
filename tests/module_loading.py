@@ -65,28 +65,28 @@ case(module(hidden, 'private', 'Private', 'val value = B.A.token', 'let value = 
             [('./b', 'B')]), False, 'unbound identifier')
 
 directory = root / 'shadow'
-module(directory / 'one', 'foo', 'Foo', 'val value = 1.0', 'let value = 1;')
+module(directory / 'one', 'foo', 'Foo', 'val value = 1.0', 'let value = 1.0;')
 module(directory / 'two', 'foo', 'Foo', 'val value = "later"', 'let value = "later";')
 case(module(directory, 'root', 'Root', 'val value : string = Foo.value',
             'let value: String = Foo.value;', [('./one/foo', 'Foo'), ('./two/foo', 'Foo')]))
 
 directory = root / 'cycle'
-entry = module(directory, 'a', 'A', 'val value = 1.0', 'let value = 1;', [('./b', 'B')])
-module(directory, 'b', 'B', 'val value = 1.0', 'let value = 1;', [('./a', 'A')])
+entry = module(directory, 'a', 'A', 'val value = 1.0', 'let value = 1.0;', [('./b', 'B')])
+module(directory, 'b', 'B', 'val value = 1.0', 'let value = 1.0;', [('./a', 'A')])
 case(entry, False, 'import cycle:')
 
 directory = root / 'self-cycle'
-entry = module(directory, 'root', 'Root', 'val value = 1.0', 'let value = 1;', [('./link', 'Root')])
+entry = module(directory, 'root', 'Root', 'val value = 1.0', 'let value = 1.0;', [('./link', 'Root')])
 (directory / 'link.sml').symlink_to('root.sml')
 (directory / 'link.wm').symlink_to('root.wm')
 case(entry, False, 'import cycle:')
 
-case(module(root / 'missing', 'root', 'Root', 'val value = 1.0', 'let value = 1;',
+case(module(root / 'missing', 'root', 'Root', 'val value = 1.0', 'let value = 1.0;',
             [('./missing', 'Missing')]), False, 'cannot resolve import')
 
 # URL-style dot-segment cleanup must precede filesystem symlink resolution.
 directory = root / 'dot-before-symlink'
-module(directory, 'a', 'A', 'val value = 1.0', 'let value = 1;')
+module(directory, 'a', 'A', 'val value = 1.0', 'let value = 1.0;')
 module(directory / 'other', 'a', 'A', 'val value = "wrong"', 'let value = "wrong";')
 (directory / 'other' / 'nested').mkdir()
 (directory / 'link').symlink_to('other/nested', target_is_directory=True)
@@ -94,15 +94,15 @@ case(module(directory, 'root', 'Root', 'val value : real = A.value',
             'let value: Real64.Real = A.value;', [('./link/../a', 'A')]))
 
 directory = root / 'unreachable'
-entry = module(directory, 'root', 'Root', 'val value = 1.0', 'let value = 1;')
+entry = module(directory, 'root', 'Root', 'val value = 1.0', 'let value = 1.0;')
 (directory / 'unused.sml').write_text('THIS IS NOT A PROGRAM')
 (directory / 'unused.wm').write_text('THIS IS NOT A PROGRAM')
 case(entry)
 
 # These are intentional first-profile restrictions, not Workman resolution differences.
 directory = root / 'metadata'
-module(directory, 'a', 'A', 'val value = 1.0', 'let value = 1;')
-case(module(directory, 'wrong', 'Wrong', 'val value = 1.0', 'let value = 1;',
+module(directory, 'a', 'A', 'val value = 1.0', 'let value = 1.0;')
+case(module(directory, 'wrong', 'Wrong', 'val value = 1.0', 'let value = 1.0;',
             [('./a', 'Other')]), False, 'must match', common=False)
 bad = directory / 'bad.sml'
 bad.write_text('(* @subsetml\nfrom "./a.sml" import { value };\n*)\nval x = 1.0\n')

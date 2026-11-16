@@ -84,7 +84,7 @@ let leaked = Records.make(1);' 'not explicitly imported' "$tmp/records.wm"
 reject 'from "./records.wm" import * as Records;
 let a = 1;
 from "./middle.wm" import * as Middle;' 'precede ordinary declarations' "$tmp/records.wm" "$tmp/middle.wm"
-reject 'from "./records.wm" import {make};' 'header namespace imports' "$tmp/records.wm"
+reject 'from "./records.wm" import {make;' 'imported name' "$tmp/records.wm"
 reject 'from "./records.wm" import * as Records;' 'not in the supplied source list'
 reject 'from "./records.wm" import * as Alias;
 val explicit = Alias.make 1.0;' 'expected|unbound' "$tmp/records.wm"
@@ -186,4 +186,36 @@ if "$compiler" sml "$tmp/reject" "$tmp/open/base.wm" "$tmp/open/qualified.wm" > 
   echo 'FAIL: an open made its module name usable as a qualifier'
   exit 1
 fi
+# Named imports qualify constructors and types in place and bind values with `val`, so a
+# pattern binder or record label spelled like an imported value keeps its own meaning.
+mkdir "$tmp/named" "$tmp/named-out"
+cat > "$tmp/named/lib.wm" <<'WM'
+type Shape = | Circle<Int32.Int> | Square<Int32.Int>;
+record Pair = { first: Int32.Int, second: Int32.Int };
+let area = (s: Shape) => { match(s) { Circle(r) => { r * r * 3 }, Square(w) => { w * w } } };
+let double = (n: Int32.Int) => { n + n };
+WM
+cat > "$tmp/named/main.wm" <<'WM'
+from "./lib.wm" import { Shape, Circle, Square as Box, Pair, area, double as twice, };
+let size = (s: Shape) => { area(s) };
+let first = match(s) => { Circle(area) => { area }, Box(w) => { twice(w) } };
+let p = Pair { first = twice(2), second = size(Circle(1)) };
+let answer = first(Box(5)) + p.first + p.second;
+WM
+"$compiler" sml-entry "$tmp/named-out" "$tmp/named/main.wm"
+cat > "$tmp/named-run.sml" <<'SML'
+val _ = if Main.answer = 17 then () else OS.Process.exit OS.Process.failure
+SML
+printf '$(SML_LIB)/basis/basis.mlb\n%s\n%s\n%s\n' \
+  "$tmp/named-out/lib.sml" "$tmp/named-out/main.sml" "$tmp/named-run.sml" > "$tmp/named.mlb"
+mlton -output "$tmp/named-test" "$tmp/named.mlb"
+"$tmp/named-test"
+cat > "$tmp/named/duplicate.wm" <<'WM'
+from "./lib.wm" import { area, double as area };
+WM
+if "$compiler" sml "$tmp/reject" "$tmp/named/duplicate.wm" "$tmp/named/lib.wm" > "$tmp/named-error" 2>&1; then
+  echo 'FAIL: a duplicate imported name was accepted'
+  exit 1
+fi
+grep -q 'duplicate imported name area' "$tmp/named-error"
 echo 'WM module identities and aliases: ok'

@@ -45,7 +45,7 @@ structure NativeInt = struct
           val Unify.State (_, _, _, _, sites) = st
           val site = fn pos => case sites of NONE => NONE | SOME xs =>
             (case SmlList.mapPartial (fn Unify.Operand (p, t) => if p = pos then SOME (p, t) else NONE
-                                       | Unify.Defaulted _ => NONE) xs of
+                                       | _ => NONE) xs of
                [] => NONE
              | first :: _ => SOME first)
           val rec integer = fn t => case Unify.prune (st, t) of

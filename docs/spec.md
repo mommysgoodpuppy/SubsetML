@@ -231,8 +231,9 @@ makes the structural and nominal readings agree.
   `type 'a cell = { value : 'a, label : string }`. These are *record type declarations*.
 * **R2.** No two record type declarations in a program may have the same set of labels.
 * **R3.** Every record expression and record pattern must have exactly the label set of a record
-  type declaration in scope. The elaborated type is still the structural record type of the
-  Definition; R3 is a check, not a reinterpretation.
+  type declaration in scope, including one declared in a program structure the module imports.
+  The elaborated type is still the structural record type of the Definition; R3 is a check, not
+  a reinterpretation.
 * **R4.** Numeric labels and the empty record are not written in record syntax. Tuples and `()`
   are written with tuple syntax. Tuple selectors `#1`, `#2`, … are omitted: take tuples apart
   with patterns such as `(_, x)`. (Workman has no tuple projection, and the tuple's width, which

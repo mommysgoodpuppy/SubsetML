@@ -206,7 +206,13 @@ structure Main = struct
                     NONE => Translate.recoverProjectWithRuntime (runtime, renamed)
                   | SOME (_, pos, message) => Unify.Err (message, pos)
                 in case checked of
-                  Unify.Err (message, pos) => WmProject.failure ("translation", "", BackendNames.diagnostic (names, message), pos)
+                  Unify.Err (message, pos) =>
+                    (case Translate.unlocated message of
+                       SOME (path, message) =>
+                         (case SmlList.find (fn unit => WmProject.pathOf unit = path) units of
+                            SOME unit => WmProject.failure (path, WmProject.textOf unit, BackendNames.diagnostic (names, message), pos)
+                          | NONE => WmProject.failure (path, "", BackendNames.diagnostic (names, message), pos))
+                     | NONE => WmProject.failure ("translation", "", BackendNames.diagnostic (names, message), pos))
                 | Unify.Ok (recovered, _) =>
                     SubsetResult.andThen (traverse (SmlListPair.zip (ordered, recovered),
                       fn (WmProject.Source (unit, _, _, _), (_, src, prog, cs)) =>

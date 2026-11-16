@@ -336,7 +336,7 @@ structure Translate = struct
       val rec unresolved = fn t => case Unify.prune (st, t) of
           Types.TCon (_, ts) => SmlList.exists unresolved ts
         | Types.TVar v => (case Unify.lookup (st, v) of
-            Unify.Free (Types.KClass _, _) => true
+            Unify.Free (Types.KClass _, _) => SubsetBool.not (Unify.literalVar (st, v))
           | _ => false)
         | Types.TArrow (a, b) => unresolved a orelse unresolved b
         | Types.TRecord fs => SmlList.exists (fn (_, t) => unresolved t) fs
@@ -345,12 +345,13 @@ structure Translate = struct
     in
       case sites of NONE => NONE | SOME xs =>
         (case SmlList.mapPartial (fn Unify.Defaulted pos => SOME pos
-                                   | Unify.Operand (pos, t) => if unresolved t then SOME pos else NONE) xs of
+                                   | Unify.Operand (pos, t) => if unresolved t then SOME pos else NONE
+                                   | Unify.Literal _ => NONE) xs of
            [] => NONE
          | pos :: _ => SOME pos)
     end
 
-  val defaultedMessage = "a numeric operation whose type only a default decides (SML int, Workman Number); annotate it as int or real"
+  val defaultedMessage = "a numeric operation whose type only a default decides (SML int, Workman Real64); annotate it as int or real"
 
   val wmNumbers = fn st => case defaultedSite st of
     NONE => Unify.Ok ((), st)
@@ -455,13 +456,33 @@ structure Translate = struct
           Unify.Operand (p, t) => (case Unify.prune (st, t) of
              Types.TCon (n, []) => if Unify.sameName (n, Types.realName) then SOME p else NONE
            | _ => NONE)
-        | Unify.Defaulted _ => NONE) (case sites of SOME xs => xs | NONE => [])
+        | _ => NONE) (case sites of SOME xs => xs | NONE => [])
       val rewrite = fn e =>
         case e of
           EApp (EId (p, ([], opr)), a) =>
             if (opr = "=" orelse opr = "<>") andalso SmlList.exists (fn q => (p = q)) positions
             then EApp (EId (p, (["Real"], if opr = "=" then "==" else "!=")), a)
             else e
+        | _ => e
+    in
+      mapProgram (rewrite, prog)
+    end
+
+  (* A Workman integer literal whose context made it real is printed as an SML real constant. *)
+  val realLiterals = fn (st, prog) =>
+    let
+      val Unify.State (_, _, _, _, sites) = st
+      val positions = SmlList.mapPartial (fn site => case site of
+          Unify.Literal (p, t) => (case Unify.prune (st, t) of
+             Types.TCon (n, []) => if Unify.sameName (n, Types.realName) then SOME p else NONE
+           | _ => NONE)
+        | _ => NONE) (case sites of SOME xs => xs | NONE => [])
+      val rewrite = fn e =>
+        case e of
+          EScon (p, SInt text) =>
+            if SmlList.exists (fn q => (p = q)) positions andalso
+               SubsetBool.not (SubsetList.exists (CompilerText.characters text, fn c => c = #"x"))
+            then EScon (p, SReal (text ^ ".0")) else e
         | _ => e
     in
       mapProgram (rewrite, prog)
@@ -638,7 +659,7 @@ structure Translate = struct
             let val Unify.State (vars, next, sels, recs, _) = st in
               Unify.bind (portableValues (env, prog, Unify.State (vars, next, sels, recs, SOME [])))
                 (fn (env, prog) => fn st => Unify.bind (wmNumbers st) (fn _ => fn st =>
-                  elaborate (env, rest, st, SubsetList.append (acc, [(path, src, realEquality (st, prog), comments)]))))
+                  elaborate (env, rest, st, SubsetList.append (acc, [(path, src, realLiterals (st, realEquality (st, prog)), comments)]))))
             end
       val rec strict = fn
           (_, [], st) => Unify.Ok ((), st)
@@ -663,6 +684,14 @@ structure Translate = struct
 
   (* Modules arrive in resolved dependency order. Each checker sees only direct imports;
      cache owned structure environments, never an importer's ambient environment. *)
+  (* A project error names its module ahead of the message, so the caller can report it at the
+     module's own source position; `unlocated` splits the two again. *)
+  val located = fn (path, message) => path ^ "\n" ^ message
+  val unlocated = fn message =>
+    case CompilerText.fields (message, fn c => c = #"\n") of
+      path :: first :: rest => SOME (path, SubsetString.concatWith (first :: rest, "\n"))
+    | _ => NONE
+
   val recoverProjectWithRuntime = fn (runtime, modules) =>
     let
       val working = fn (basis, cache, dependencies) =>
@@ -689,20 +718,24 @@ structure Translate = struct
         | (name, dependencies, (path, src, prog, cs)) :: rest =>
             Unify.bind (working (basis, cache, dependencies)) (fn env => fn _ =>
               let val Unify.State (vars, next, sels, recs, _) = st in
-                Unify.bind (portableValues (env, prog, Unify.State (vars, next, sels, recs, SOME [])))
+                case Unify.bind (portableValues (env, prog, Unify.State (vars, next, sels, recs, SOME [])))
                   (fn (exports, rewritten) => fn next => Unify.bind (wmNumbers next) (fn _ => fn next =>
                     Unify.bind (own (exports, name)) (fn body => fn _ =>
-                      rewrite (basis, rest, (name, body) :: cache, next,
-                        (name, dependencies, (path, src, realEquality (next, rewritten), cs)) :: acc))))
+                      Unify.Ok ((body, rewritten), next)))) of
+                  Unify.Err (message, pos) => Unify.Err (located (path, message), pos)
+                | Unify.Ok ((body, rewritten), next) =>
+                    rewrite (basis, rest, (name, body) :: cache, next,
+                      (name, dependencies, (path, src, realLiterals (next, realEquality (next, rewritten)), cs)) :: acc)
               end)
       val rec strict = fn (basis, remaining, cache, st) =>
         case remaining of
           [] => Unify.Ok ((), st)
-        | (name, dependencies, (_, _, prog, _)) :: rest =>
+        | (name, dependencies, (path, _, prog, _)) :: rest =>
             Unify.bind (working (basis, cache, dependencies)) (fn env => fn _ =>
-              Unify.bind (Elab.programExports (env, prog, st)) (fn exports => fn next =>
-                Unify.bind (own (exports, name)) (fn body => fn _ =>
-                  strict (basis, rest, (name, body) :: cache, next))))
+              case Unify.bind (Elab.programExports (env, prog, st)) (fn exports => fn next =>
+                Unify.bind (own (exports, name)) (fn body => fn _ => Unify.Ok (body, next))) of
+                Unify.Err (message, pos) => Unify.Err (located (path, message), pos)
+              | Unify.Ok (body, next) => strict (basis, rest, (name, body) :: cache, next))
     in
       Unify.bind Basis.initial (fn basis => fn _ =>
         Unify.bind (rewrite (basis, modules, [], Unify.lenient, [])) (fn rewritten => fn _ =>

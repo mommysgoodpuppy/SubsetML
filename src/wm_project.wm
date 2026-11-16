@@ -153,6 +153,37 @@ let headerPaths = (path, src, tokens) => {
           }
         }
       },
+      [
+        (WmLexer.WKey("from"), Var(pos)),
+        (WmLexer.WScon(Syntax.SString(specifier)), _),
+        (WmLexer.WKey("import"), _),
+        (WmLexer.WKey("{"), _),
+        ..rest
+      ] => {
+        let rec close = (tokens) => {
+          match(tokens) {
+            [(WmLexer.WKey("}"), _), (WmLexer.WKey(";"), _), ..tail] => { Some(tail) },
+            [(WmLexer.WKey("}"), _), .._] => { None },
+            [] => { None },
+            [_, ..tail] => { close(tail) }
+          }
+        };
+        match(close(rest)) {
+          None => { failure(path, src, "unterminated `import { ... }`", pos) },
+          Some(tail) => {
+            if (SubsetBool.not(validSpecifier(specifier))) {
+              failure(
+                path,
+                src,
+                "imports require explicit relative .wm paths or basis/ modules in the local source profile",
+                pos
+              )
+            } else {
+              SubsetResult.map(scan(tail), (paths) => { [(specifier, pos), ..paths] })
+            }
+          }
+        }
+      },
       [(WmLexer.WKey("from"), Var(pos)), .._] => {
         failure(path, src, "reverse discovery requires header namespace imports", pos)
       },
@@ -347,7 +378,42 @@ let prepare = (basis, units, unit) => {
       }
     }
   };
-  let rec imports = (tokens, edges, aliases, opens, exported) => {
+  /* The items of `{ a, B as C, }` after its `{`, as (original, alias, position), and the
+     tokens after the closing `};`. */
+  let rec namedItems = (tokens, items) => {
+    match(tokens) {
+      [(WmLexer.WKey("}"), _), (WmLexer.WKey(";"), _), ..rest] => { SubsetResult.Ok(SubsetList.reverse(items), rest) },
+      [
+        (WmLexer.WName([original]), Var(pos)),
+        (WmLexer.WKey("as"), _),
+        (WmLexer.WName([alias]), _),
+        ..rest
+      ] => { namedItem(rest, [(original, alias, pos), ..items]) },
+      [(WmLexer.WName([original]), Var(pos)), ..rest] => { namedItem(rest, [(original, original, pos), ..items]) },
+      [(_, Var(pos)), .._] => {
+        failure(path, src, "expected an imported name in `import { ... }`", pos)
+      },
+      [] => {
+        failure(path, src, "unterminated `import { ... }`", (0: Int32.Int))
+      }
+    }
+  }
+  and namedItem = (tokens, items) => {
+    match(tokens) {
+      [(WmLexer.WKey(","), _), ..rest] => { namedItems(rest, items) },
+      _ => { namedItems(tokens, items) }
+    }
+  };
+  /* Whether an earlier named import already bound this value: `opens` holds the injected
+     `let name = X.original;` tokens in reverse. */
+  let rec boundValue = (opens, alias) => {
+    match(opens) {
+      [(WmLexer.WName([n]), _), (WmLexer.WKey("let"), _), ..rest] => { if (n == alias) { true } else { boundValue(rest, alias) } },
+      [_, ..rest] => { boundValue(rest, alias) },
+      [] => { false }
+    }
+  };
+  let rec imports = (tokens, edges, aliases, named, opens, exported) => {
     match(tokens) {
       [
         (WmLexer.WKey("from"), Var(pos)),
@@ -377,6 +443,7 @@ let prepare = (basis, units, unit) => {
                   rest,
                   [Edge(specifier, pos, alias, identity(child)), ..edges],
                   [(alias, name(child)), ..aliases],
+                  named,
                   opens,
                   exported
                 )
@@ -403,16 +470,75 @@ let prepare = (basis, units, unit) => {
                 Edge(_, _, _, target) => { ModuleProject.same(target, identity(child)) }
               }
             );
-            if (known) { imports(rest, edges, aliases, opened, exported) } else {
+            if (known) { imports(rest, edges, aliases, named, opened, exported) } else {
               // No alias: an open alone doesn't make the module's name usable as a qualifier.
               imports(
                 rest,
                 [Edge(specifier, pos, name(child), identity(child)), ..edges],
                 aliases,
+                named,
                 opened,
                 exported
               )
             }
+          }
+        )
+      },
+      /* `import { a, B as C }`. A constructor or type is uppercase and can never be a alias
+         binding, so its uses are qualified in place. A value may be shadowed, rebound by a
+         pattern or spelled like a record label, so it becomes `let a = X.a;` instead. */
+      [
+        (WmLexer.WKey("from"), Var(pos)),
+        (WmLexer.WScon(Syntax.SString(specifier)), _),
+        (WmLexer.WKey("import"), _),
+        (WmLexer.WKey("{"), _),
+        ..rest
+      ] => {
+        SubsetResult.andThen(
+          dependency(specifier, pos),
+          (child) => {
+            SubsetResult.andThen(
+              namedItems(rest, []),
+              (items, rest) => {
+                let target = name(child);
+                let known = SubsetList.exists(
+                  edges,
+                  match {
+                    Edge(_, _, _, key) => { ModuleProject.same(key, identity(child)) }
+                  }
+                );
+                let edges = if (known) { edges } else { [Edge(specifier, pos, target, identity(child)), ..edges] };
+                let rec add = (items, named, opens) => {
+                  match(items) {
+                    [] => { SubsetResult.Ok(named, opens) },
+                    [(Var(original), Var(alias), Var(itemPos)), ..more] => {
+                      if (if (if (SubsetList.exists(named, (n, _) => { n == alias })) { true } else { SubsetList.exists(aliases, (a, _) => { a == alias }) }) { true } else { boundValue(opens, alias) }) {
+                        failure(path, src, "duplicate imported name " ++ alias, itemPos)
+                      } else {
+                        if (CompilerText.firstIs(alias, SubsetChar.isUpper)) { add(more, [(alias, [target, original]), ..named], opens) } else {
+                          add(
+                            more,
+                            named,
+                            [
+                              (WmLexer.WKey(";"), itemPos),
+                              (WmLexer.WName([target, original]), itemPos),
+                              (WmLexer.WKey("="), itemPos),
+                              (WmLexer.WName([alias]), itemPos),
+                              (WmLexer.WKey("let"), itemPos),
+                              ..opens
+                            ]
+                          )
+                        }
+                      }
+                    }
+                  }
+                };
+                SubsetResult.andThen(
+                  add(items, named, opens),
+                  (named, opens) => { imports(rest, edges, aliases, named, opens, exported) }
+                )
+              }
+            )
           }
         )
       },
@@ -445,6 +571,7 @@ let prepare = (basis, units, unit) => {
           ],
           edges,
           aliases,
+          named,
           opens,
           exported
         )
@@ -477,6 +604,7 @@ let prepare = (basis, units, unit) => {
               ],
               edges,
               aliases,
+              named,
               opens,
               [(pos, alias, name(child)), ..exported]
             )
@@ -504,20 +632,27 @@ let prepare = (basis, units, unit) => {
               )
             },
             [(WmLexer.WName([head, ..tail]), Var(pos)), ..rest] => {
-              match(SubsetList.find(aliases, (alias, _) => { alias == head })) {
-                None => {
-                  if (if (SubsetBool.not(SubsetList.isEmpty(tail))) { SubsetList.exists(units, (u) => { name(u) == head }) } else { false }) {
-                    failure(
-                      path,
-                      src,
-                      "namespace " ++ head ++ " is not explicitly imported under that name",
-                      pos
-                    )
-                  } else { rewrite(rest, [(WmLexer.WName([head, ..tail]), pos), ..acc]) }
+              match(SubsetList.find(named, (alias, _) => { alias == head })) {
+                Some(_, qualified) => {
+                  rewrite(rest, [(WmLexer.WName(SubsetList.append(qualified, tail)), pos), ..acc])
                 },
-                Some(_, target) => {
-                  if (SubsetList.isEmpty(tail)) { rewrite(rest, [(WmLexer.WName([head]), pos), ..acc]) } else {
-                    rewrite(rest, [(WmLexer.WName([target, ..tail]), pos), ..acc])
+                None => {
+                  match(SubsetList.find(aliases, (alias, _) => { alias == head })) {
+                    None => {
+                      if (if (SubsetBool.not(SubsetList.isEmpty(tail))) { SubsetList.exists(units, (u) => { name(u) == head }) } else { false }) {
+                        failure(
+                          path,
+                          src,
+                          "namespace " ++ head ++ " is not explicitly imported under that name",
+                          pos
+                        )
+                      } else { rewrite(rest, [(WmLexer.WName([head, ..tail]), pos), ..acc]) }
+                    },
+                    Some(_, target) => {
+                      if (SubsetList.isEmpty(tail)) { rewrite(rest, [(WmLexer.WName([head]), pos), ..acc]) } else {
+                        rewrite(rest, [(WmLexer.WName([target, ..tail]), pos), ..acc])
+                      }
+                    }
                   }
                 }
               }
@@ -542,7 +677,7 @@ let prepare = (basis, units, unit) => {
     WmLexer.LexError(message, pos) => { failure(path, src, message, pos) },
     WmLexer.Tokens(tokens, comments) => {
       SubsetResult.map(
-        imports(tokens, [], [], [], []),
+        imports(tokens, [], [], [], [], []),
         (edges, exported, body) => {
           Source(
             unit,

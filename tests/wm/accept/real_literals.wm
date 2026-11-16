@@ -1,0 +1,8 @@
+// An integer literal takes its type from context, as in Workman: real here, int otherwise.
+let half = (x: Real64.Real) => { if (x >= 0) { x / 2 } else { -1 } };
+let mixed = (x: Real64.Real): Real64.Real => { x * 2 + 1 };
+let count = 3;
+let next = (n) => { n + 1 };
+// Beyond Int32, a literal is real.
+let big = 3000000000;
+let answer = half(mixed(4.0)) + big;

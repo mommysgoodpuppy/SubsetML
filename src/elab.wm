@@ -507,6 +507,33 @@ let rec nonExpansive = (env, e) => {
 let rec exp = (ctx, e, st) => {
   let (env, level, _) = ctx;
   match(e) {
+    EScon(q, SInt(text)) => {
+      match(st) {
+        State(_, _, _, _, Some(_)) => {
+          /* From Workman: an in-range integer literal is int or real by context; a larger
+             one is real, as Workman's default makes it. */
+          let (t, st') = if (CompilerText.int32Literal(text)) { fresh(st, KClass([intName, realName]), level) } else { (realTy, st) };
+          let State(vs, nx, sels, recs, sites) = st';
+          Ok(
+            t,
+            State(
+              vs,
+              nx,
+              sels,
+              recs,
+              Some([
+                Literal(q, t),
+                ..match(sites) {
+                  Some(xs) => { xs },
+                  None => { [] }
+                }
+              ])
+            )
+          )
+        },
+        _ => { checkConst(q, SInt(text), st) }
+      }
+    },
     EScon(q, c) => { checkConst(q, c, st) },
     EId(q, id) => {
       match(Env.value(env, id)) {
@@ -968,8 +995,9 @@ and closeBinding = (level, explicit, generalizable, pos, x, t, st) => {
       }
     }
   };
+  // Only a default no Workman literal decides is recorded: Workman would choose Real64.
   let noteDefault = (st) => {
-    match(defaults, st) {
+    match(SmlList.filter((v) => { SubsetBool.not(literalVar(st, v)) })(defaults), st) {
       ([], _) => { st },
       (_, State(vs, nx, sels, recs, Some(xs))) => { State(vs, nx, sels, recs, Some([Defaulted(pos), ..xs])) },
       (_, _) => { st }

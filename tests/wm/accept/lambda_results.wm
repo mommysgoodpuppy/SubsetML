@@ -1,0 +1,13 @@
+// A lambda's result annotation constrains its body.
+let add = (a: Int32.Int, b: Int32.Int): Int32.Int => { a + b };
+let wrap = (x: Int32.Int): List<Option<Int32.Int>> => { [Some(x)] };
+let curried = (a: Int32.Int): (Int32.Int -> Int32.Int) => (b: Int32.Int): Int32.Int => { a + b };
+// A parenthesized expression followed by an annotation is not a lambda.
+let pair = ((1, 2): (Int32.Int, Int32.Int));
+let answer = add(curried(1)(2), 3);
+// A conditional is an operand of the operator that follows it.
+let clamp = (n: Int32.Int): Int32.Int => { if (if (n >= 0) { n } else { -1 } >= 0) { n } else { 0 } };
+record Boxed = { inner: Int32.Int };
+let box = (n: Int32.Int): Boxed => { Boxed { inner = n } };
+// A field of a call's result.
+let unboxed = box(4).inner + box(5).inner;

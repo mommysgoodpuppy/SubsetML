@@ -77,7 +77,7 @@ let value = readA(A.value) + readB(B.value);
   ('from "./left.wm" import * as Left;\nlet value = Core.value;\n', b'not explicitly imported'),
   ('from "./missing.wm" import * as Missing;\n', b'cannot resolve import'),
   ('let value = 1;\nfrom "./core.wm" import * as Core;\n', b'imports must precede'),
-  ('from "./core.wm" import { value };\n', b'header namespace imports'),
+  ('from "./core.wm" import { value;\n', b'unterminated'),
   ('from "./cycle.wm" import * as Cycle;\n', b'import cycle'),
   ('from "basis/result.wm" import * as R;\n', b'basis/ imports need --basis DIR'),
  ]:
