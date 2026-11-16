@@ -103,15 +103,15 @@ let lineCol = (src, offset) => {
           let newline = c == '\n';
           go(
             rest,
-            i + (1: Int32.Int),
-            if (newline) { line + (1: Int32.Int) } else { line },
-            if (newline) { (1: Int32.Int) } else { col + (1: Int32.Int) }
+            i + 1,
+            if (newline) { line + 1 } else { line },
+            if (newline) { 1 } else { col + 1 }
           )
         }
       }
     }
   };
-  go(CompilerText.characters(src), (0: Int32.Int), (1: Int32.Int), (1: Int32.Int))
+  go(CompilerText.characters(src), 0, 1, 1)
 };
 
 let errorLineKind = (path, src, kind, msg, pos) => {
@@ -257,7 +257,7 @@ let fromWmLoaded = (outDir, basis, runtimePath, entryPath, adapterSpecs, sources
         (name) => {
           match(SubsetList.find(units, (unit) => { WmProject.name(unit) == name })) {
             None => {
-              WmProject.failure("translation", "", "missing runtime dependency " ++ name, (0: Int32.Int))
+              WmProject.failure("translation", "", "missing runtime dependency " ++ name, 0)
             },
             Some(unit) => { SubsetResult.Ok(unit) }
           }
@@ -312,8 +312,8 @@ let fromWmLoaded = (outDir, basis, runtimePath, entryPath, adapterSpecs, sources
                                     WmProject.pathOf(unit),
                                     WmProject.textOf(unit),
                                     [
-                                      Syntax.TopDecs([Syntax.SStructure((0: Int32.Int), [(WmProject.name(unit), aliases, ds)])]),
-                                      ..SmlList.map((e) => { Syntax.TopExp((0: Int32.Int), e) })(es)
+                                      Syntax.TopDecs([Syntax.SStructure(0, [(WmProject.name(unit), aliases, ds)])]),
+                                      ..SmlList.map((e) => { Syntax.TopExp(0, e) })(es)
                                     ],
                                     cs
                                   )
@@ -374,14 +374,10 @@ let fromWmLoaded = (outDir, basis, runtimePath, entryPath, adapterSpecs, sources
                               None => { SubsetResult.Ok(results) },
                               Some(path) => {
                                 match(ModuleProject.identify(path)) {
-                                  SubsetResult.Err(error) => {
-                                    WmProject.failure(path, "", SubsetIo.errorText(error), (0: Int32.Int))
-                                  },
+                                  SubsetResult.Err(error) => { WmProject.failure(path, "", SubsetIo.errorText(error), 0) },
                                   SubsetResult.Ok(ModuleProject.Resolved(id, _)) => {
                                     match(SubsetList.find(units, (unit) => { ModuleProject.same(WmProject.identity(unit), id) })) {
-                                      None => {
-                                        WmProject.failure(path, "", "missing build entry", (0: Int32.Int))
-                                      },
+                                      None => { WmProject.failure(path, "", "missing build entry", 0) },
                                       Some(entry) => {
                                         SubsetResult.map(
                                           WmProject.mlb(units, ordered, renamed, entry, adapters),
@@ -466,12 +462,9 @@ let roundTrip = (parsed) => {
               text,
               [
                 Syntax.TopDecs([
-                  Syntax.SStructure(
-                    (0: Int32.Int),
-                    [(WmParse.structureName(name), WmParse.structureAliases(text), ds)]
-                  )
+                  Syntax.SStructure(0, [(WmParse.structureName(name), WmParse.structureAliases(text), ds)])
                 ]),
-                ..SmlList.map((e) => { Syntax.TopExp((0: Int32.Int), e) })(es)
+                ..SmlList.map((e) => { Syntax.TopExp(0, e) })(es)
               ],
               cs
             )
@@ -553,7 +546,7 @@ let checkProjectWith = (initial, path) => {
     (graph) => {
       match(initial) {
         Unify.Err(message, _) => {
-          SubsetResult.Err(ModuleProject.CheckFailure(path, "", "internal error in the basis: " ++ message, (0: Int32.Int)))
+          SubsetResult.Err(ModuleProject.CheckFailure(path, "", "internal error in the basis: " ++ message, 0))
         },
         Unify.Ok(basis, _) => { ModuleProject.check(graph, basis) }
       }

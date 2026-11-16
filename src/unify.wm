@@ -88,26 +88,20 @@ let fresh = match {
   (State(vars, next, sels, recs, eqs), Var(kind), Var(level)) => {
     (
       TVar(next),
-      State(
-        IntMap.insert(vars, next, Free(kind, level)),
-        next + (1: Int32.Int),
-        sels,
-        recs,
-        eqs
-      )
+      State(IntMap.insert(vars, next, Free(kind, level)), next + 1, sels, recs, eqs)
     )
   }
 };
 
 let freshStamp = match {
-  State(vars, next, sels, recs, eqs) => { (next, State(vars, next + (1: Int32.Int), sels, recs, eqs)) }
+  State(vars, next, sels, recs, eqs) => { (next, State(vars, next + 1, sels, recs, eqs)) }
 };
 
 let lookup = match {
   (State(vars, _, _, _, _), Var(v)) => {
     match(IntMap.find(vars, v)) {
       Some(info) => { info },
-      None => { Free(KPlain, (0: Int32.Int)) }
+      None => { Free(KPlain, 0) }
     }
   }
 };
@@ -183,8 +177,8 @@ let freeVars = (st, t) => {
 // Printing
 
 let varName = (i) => {
-  "'" ++ (if (i < (26: Int32.Int)) {
-    match(SubsetChar.fromCode((97: Int32.Int) + i)) {
+  "'" ++ (if (i < 26) {
+    match(SubsetChar.fromCode(97 + i)) {
       SubsetResult.Ok(c) => { CompilerText.str(c) },
       SubsetResult.Err(error) => { "t" ++ CompilerText.natural(i) }
     }
@@ -201,10 +195,8 @@ let showAll = (st, ts) => {
     )
   })([])(ts');
   let rec indexOf = match {
-    (_, [], _) => { (0: Int32.Int) },
-    (Var(v), [w, ..rest], Var(i)) => {
-      if (v == w) { i } else { indexOf(v, rest, i + (1: Int32.Int)) }
-    }
+    (_, [], _) => { 0 },
+    (Var(v), [w, ..rest], Var(i)) => { if (v == w) { i } else { indexOf(v, rest, i + 1) } }
   };
   // Explicit type variables keep their names, so free variables avoid them.
   let rec rigids = match {
@@ -216,12 +208,12 @@ let showAll = (st, ts) => {
   };
   let taken = SmlList.concat(SmlList.map(rigids)(ts'));
   let rec nth = (i, candidate) => {
-    if (SmlList.exists((r) => { r == varName(candidate) })(taken)) { nth(i, candidate + (1: Int32.Int)) } else {
-      if (i == (0: Int32.Int)) { varName(candidate) } else { nth(i - (1: Int32.Int), candidate + (1: Int32.Int)) }
+    if (SmlList.exists((r) => { r == varName(candidate) })(taken)) { nth(i, candidate + 1) } else {
+      if (i == 0) { varName(candidate) } else { nth(i - 1, candidate + 1) }
     }
   };
   let varText = (v) => {
-    let name = nth(indexOf(v, vars, (0: Int32.Int)), (0: Int32.Int));
+    let name = nth(indexOf(v, vars, 0), 0);
     match(lookup(st, v)) {
       Free(KEq, _) => { "'" ++ name },
       Free(KClass(names), _) => {
@@ -238,30 +230,25 @@ let showAll = (st, ts) => {
       TGen(i) => { varName(i) },
       TRigid(name) => { name },
       TCon(n, []) => { nameOf(n) },
-      TCon(n, [a]) => { show((2: Int32.Int), a) ++ " " ++ nameOf(n) },
+      TCon(n, [a]) => { show(2, a) ++ " " ++ nameOf(n) },
       TCon(n, args) => {
-        "(" ++ SubsetString.concatWith(SmlList.map((a) => { show((0: Int32.Int), a) })(args), ", ") ++ ") " ++ nameOf(n)
+        "(" ++ SubsetString.concatWith(SmlList.map((a) => { show(0, a) })(args), ", ") ++ ") " ++ nameOf(n)
       },
-      TArrow(a, b) => {
-        paren((0: Int32.Int), show((1: Int32.Int), a) ++ " -> " ++ show((0: Int32.Int), b))
-      },
+      TArrow(a, b) => { paren(0, show(1, a) ++ " -> " ++ show(0, b)) },
       TRecord([]) => { "unit" },
       TRecord(fields) => {
         match(tupleComponents(fields)) {
           Some(parts) => {
-            paren(
-              (1: Int32.Int),
-              SubsetString.concatWith(SmlList.map((a) => { show((2: Int32.Int), a) })(parts), " * ")
-            )
+            paren(1, SubsetString.concatWith(SmlList.map((a) => { show(2, a) })(parts), " * "))
           },
           None => {
-            "{" ++ SubsetString.concatWith(SmlList.map((l, a) => { l ++ " : " ++ show((0: Int32.Int), a) })(fields), ", ") ++ "}"
+            "{" ++ SubsetString.concatWith(SmlList.map((l, a) => { l ++ " : " ++ show(0, a) })(fields), ", ") ++ "}"
           }
         }
       }
     }
   };
-  SmlList.map((t) => { show((0: Int32.Int), t) })(ts')
+  SmlList.map((t) => { show(0, t) })(ts')
 };
 
 let show = (st, t) => {
@@ -450,11 +437,9 @@ let generalize = (st, level, rigid, t) => {
   let indexIn = (same, x, xs) => {
     let rec go = match {
       ([], _) => { None },
-      ([y, ..rest], Var(i)) => {
-        if (same(x, y)) { Some(i) } else { go(rest, i + (1: Int32.Int)) }
-      }
+      ([y, ..rest], Var(i)) => { if (same(x, y)) { Some(i) } else { go(rest, i + 1) } }
     };
-    go(xs, (0: Int32.Int))
+    go(xs, 0)
   };
   let rec go = (t) => {
     match(t) {

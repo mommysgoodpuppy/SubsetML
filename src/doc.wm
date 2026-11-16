@@ -42,11 +42,11 @@ type Line = (Int32.Int, String, Option<Pos>);
 type Doc = List<Line>;
 
 // Lines up to this width stay on one line where the printers have a choice.
-let width = (80: Int32.Int);
+let width = 80;
 
-let text = (s) => { [((0: Int32.Int), s, None)] };
+let text = (s) => { [(0, s, None)] };
 
-let atom = (p, s) => { [((0: Int32.Int), s, Some(p))] };
+let atom = (p, s) => { [(0, s, Some(p))] };
 
 let empty = text("");
 
@@ -114,17 +114,10 @@ let group = (openD, sep, closeD, ds) => {
     let rec items = match {
       (_, []) => { [] },
       (Var(i), [d, ..rest]) => {
-        [
-          if (i < count - (1: Int32.Int)) { cat(d, text(sep)) } else { d },
-          ..items(i + (1: Int32.Int), rest)
-        ]
+        [if (i < count - 1) { cat(d, text(sep)) } else { d }, ..items(i + 1, rest)]
       }
     };
-    stack([
-      text(openD),
-      indent((2: Int32.Int), stack(items((0: Int32.Int), ds))),
-      text(closeD)
-    ])
+    stack([text(openD), indent(2, stack(items(0, ds))), text(closeD)])
   }
 };
 
@@ -145,8 +138,8 @@ let isBlankText = (s) => { SmlList.all(SubsetChar.isSpace)(CompilerText.characte
 // Offset of the start of the line containing offset i.
 let lineStart = (src, i) => {
   let rec back = (k) => {
-    if (k <= (0: Int32.Int)) { (0: Int32.Int) } else {
-      if (CompilerText.sub(src, k - (1: Int32.Int)) == '\n') { k } else { back(k - (1: Int32.Int)) }
+    if (k <= 0) { 0 } else {
+      if (CompilerText.sub(src, k - 1) == '\n') { k } else { back(k - 1) }
     }
   };
   back(if (i <= SubsetSource.length(src)) { i } else { SubsetSource.length(src) })
@@ -155,9 +148,9 @@ let lineStart = (src, i) => {
 // Whether the source line before the one containing offset i is blank.
 let blankLineBefore = (src, i) => {
   let start = lineStart(src, i);
-  if (start > (0: Int32.Int)) {
-    let prev = lineStart(src, start - (1: Int32.Int));
-    let SubsetResult.Ok(bytes) = SubsetSource.slice(src, prev, start - (1: Int32.Int) - prev);
+  if (start > 0) {
+    let prev = lineStart(src, start - 1);
+    let SubsetResult.Ok(bytes) = SubsetSource.slice(src, prev, start - 1 - prev);
     SubsetList.all(bytes, SubsetChar.isSpace)
   } else { false }
 };
@@ -169,7 +162,7 @@ let commentLines = (src, (p, body, _), style) => {
     let rec drop = match {
       ([], Var(remaining)) => { [] },
       ([c, ..rest], Var(remaining)) => {
-        if (if (remaining > (0: Int32.Int)) { c == ' ' } else { false }) { drop(rest, remaining - (1: Int32.Int)) } else { [c, ..rest] }
+        if (if (remaining > 0) { c == ' ' } else { false }) { drop(rest, remaining - 1) } else { [c, ..rest] }
       }
     };
     CompilerText.stringOf(drop(bytes, column))
@@ -242,7 +235,7 @@ let render = (src, comments, style, lines) => {
   let rec go = (ls, acc, lastTag, cs, seenCode) => {
     match(ls) {
       [] => {
-        let (acc', _, _) = flush(acc, lastTag, (0: Int32.Int), SubsetSource.length(src) + (1: Int32.Int), cs);
+        let (acc', _, _) = flush(acc, lastTag, 0, SubsetSource.length(src) + 1, cs);
         acc'
       },
       [(Var(ind), Var(t), None), ..rest] => {
@@ -261,5 +254,5 @@ let render = (src, comments, style, lines) => {
       }
     }
   };
-  SubsetString.concat(SmlList.map((t, _) => { t ++ "\n" })(SmlList.rev(go(lines, [], (-1: Int32.Int), comments, false))))
+  SubsetString.concat(SmlList.map((t, _) => { t ++ "\n" })(SmlList.rev(go(lines, [], -1, comments, false))))
 };

@@ -45,7 +45,7 @@ let tyStr = (tn) => { TyStr(arityOf(tn), TCon(tn, arguments(tn)), []) };
 
 let conEntry = (name, scheme) => { (name, (scheme, SCon)) };
 
-let alpha = TGen((0: Int32.Int));
+let alpha = TGen(0);
 
 let boolCons = [("true", ([], boolTy)), ("false", ([], boolTy))];
 let listCons = [
@@ -63,7 +63,7 @@ let orderCons = [("LESS", ([], orderTy)), ("EQUAL", ([], orderTy)), ("GREATER", 
 let withCons = (tn, cons) => { TyStr(arityOf(tn), TCon(tn, arguments(tn)), cons) };
 
 let topTypes = [
-  ("unit", TyStr((0: Int32.Int), unitTy, [])),
+  ("unit", TyStr(0, unitTy, [])),
   ("bool", withCons(boolName, boolCons)),
   ("int", tyStr(intName)),
   ("real", tyStr(realName)),
@@ -76,10 +76,10 @@ let topTypes = [
 
 /* Abstract Basis types. None is declared to admit equality: claiming equality the Basis
    does not grant would accept programs SML rejects. */
-let instreamName = ((9: Int32.Int), "instream", (0: Int32.Int), false);
-let outstreamName = ((10: Int32.Int), "outstream", (0: Int32.Int), false);
-let statusName = ((11: Int32.Int), "status", (0: Int32.Int), false);
-let substringName = ((12: Int32.Int), "substring", (0: Int32.Int), false);
+let instreamName = (9, "instream", 0, false);
+let outstreamName = (10, "outstream", 0, false);
+let statusName = (11, "status", 0, false);
+let substringName = (12, "substring", 0, false);
 
 // ---------------------------------------------------------------------------------------
 // Values, as (structure path, types the structure declares, values)
@@ -324,7 +324,7 @@ let special = [
 // The scheme of a type written in SubsetML syntax, or the reason it is malformed.
 let scheme = (env, text) => {
   match(Lexer.lex(text)) {
-    Lexer.LexError(msg, _) => { Unify.Err(msg, (0: Int32.Int)) },
+    Lexer.LexError(msg, _) => { Unify.Err(msg, 0) },
     Lexer.Tokens(ts, _) => {
       match(Parser.parseTy(ts)) {
         Parser.Fail(message, pos) => { Unify.Err(message, pos) },
@@ -332,17 +332,9 @@ let scheme = (env, text) => {
           let vars = Elab.distinct(Elab.tyVarsOf(t));
           let rec index = match {
             (_, [], _) => { None },
-            (Var(v), [w, ..rest], Var(i)) => {
-              if (v == w) { Some(TGen(i)) } else { index(v, rest, i + (1: Int32.Int)) }
-            }
+            (Var(v), [w, ..rest], Var(i)) => { if (v == w) { Some(TGen(i)) } else { index(v, rest, i + 1) } }
           };
-          Unify.bind(Elab.elabTy(
-            env,
-            (v) => { index(v, vars, (0: Int32.Int)) },
-            (0: Int32.Int),
-            t,
-            Unify.initial
-          ))((body) => (st) => { Unify.Ok((SmlList.map((_) => { KPlain })(vars), body), st) })
+          Unify.bind(Elab.elabTy(env, (v) => { index(v, vars, 0) }, 0, t, Unify.initial))((body) => (st) => { Unify.Ok((SmlList.map((_) => { KPlain })(vars), body), st) })
         }
       }
     }
@@ -398,9 +390,7 @@ let build = (
         Unify.Ok(vals, st) => {
           match(scheme(scope, text)) {
             Unify.Ok(s, _) => { Unify.Ok(SubsetList.append(vals, [(name, (s, SValue))]), st) },
-            Unify.Err(msg, _) => {
-              Unify.Err("basis entry " ++ name ++ ": " ++ msg, (0: Int32.Int))
-            }
+            Unify.Err(msg, _) => { Unify.Err("basis entry " ++ name ++ ": " ++ msg, 0) }
           }
         }
       }

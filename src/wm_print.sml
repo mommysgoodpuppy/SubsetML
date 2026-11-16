@@ -105,11 +105,11 @@ structure WmPrint = struct
         if c = quote then "\\" ^ CompilerText.str c
         else (if SubsetChar.isPrint c then CompilerText.str c else "\\u00" ^ hex2 (let val SubsetResult.Ok code = SubsetChar.toCode c in code end))
 
-  (* Workman integer literals are overloaded and default to Real64, so an SML int constant is
-     ascribed. The reader turns `(n: Int32.Int)` back into the constant. A real keeps its fraction,
-     since the reader takes a bare integer literal as int. *)
+  (* An SML int constant is a bare Workman literal: Workman types an integer literal by context and
+     defaults it to Int32, and an SML int constant is always in Int32 range. A real keeps its
+     fraction, since a bare integer literal in an undecided context is int. *)
   val scon = fn
-      SInt s => "(" ^ minus s ^ ": Int32.Int)"
+      SInt s => minus s
     | SReal s => minus s
     | SString s => "\"" ^ SubsetString.concat (SubsetList.map (CompilerText.characters s,
         fn c => escapeChar (#"\"", c))) ^ "\""
@@ -117,6 +117,7 @@ structure WmPrint = struct
 
   val isNegative = fn
       SReal s => (case CompilerText.characters s of #"~" :: rest => true | bytes => false)
+    | SInt s => (case CompilerText.characters s of #"~" :: rest => true | bytes => false)
     | _ => false
 
   (* --------------------------------------------------------------------------------------- *)
@@ -316,8 +317,7 @@ structure WmPrint = struct
           (* `-3` would read back as a negative literal, so a literal operand keeps parentheses. *)
           (7, cat (atom (p, "-"),
                    case (e, level >= 9) of
-                     (EScon (_, SInt _), _) => d
-                   | (EScon (_, _), _) => cats [text "(", d, text ")"]
+                     (EScon (_, _), _) => cats [text "(", d, text ")"]
                    | (_, true) => d
                    | (_, false) => cats [text "(", d, text ")"]))
         end

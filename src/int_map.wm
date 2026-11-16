@@ -18,10 +18,7 @@ let rec find = (tree, key) => {
     Empty => { None },
     Leaf(stored, value) => { if (stored == key) { Some(value) } else { None } },
     Branch(left, right) => {
-      find(
-        if (Int32.mod(key, (2: Int32.Int)) == (0: Int32.Int)) { left } else { right },
-        Int32.div(key, (2: Int32.Int))
-      )
+      find(if (Int32.mod(key, 2) == 0) { left } else { right }, Int32.div(key, 2))
     }
   }
 };
@@ -34,11 +31,7 @@ let rec insert = (tree, key, value) => {
       }
     },
     Branch(left, right) => {
-      if (Int32.mod(key, (2: Int32.Int)) == (0: Int32.Int)) {
-        Branch(insert(left, Int32.div(key, (2: Int32.Int)), value), right)
-      } else {
-        Branch(left, insert(right, Int32.div(key, (2: Int32.Int)), value))
-      }
+      if (Int32.mod(key, 2) == 0) { Branch(insert(left, Int32.div(key, 2), value), right) } else { Branch(left, insert(right, Int32.div(key, 2), value)) }
     }
   }
 };

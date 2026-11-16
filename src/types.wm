@@ -46,15 +46,15 @@ let arityOf = (_, _, a, _) => { a };
 // ---------------------------------------------------------------------------------------
 // The type names of the initial basis. Program type names get stamps from `firstStamp`.
 
-let boolName = ((1: Int32.Int), "bool", (0: Int32.Int), true);
-let intName = ((2: Int32.Int), "int", (0: Int32.Int), true);
-let realName = ((3: Int32.Int), "real", (0: Int32.Int), false);
-let stringName = ((4: Int32.Int), "string", (0: Int32.Int), true);
-let charName = ((5: Int32.Int), "char", (0: Int32.Int), true);
-let listName = ((6: Int32.Int), "list", (1: Int32.Int), true);
-let optionName = ((7: Int32.Int), "option", (1: Int32.Int), true);
-let orderName = ((8: Int32.Int), "order", (0: Int32.Int), true);
-let firstStamp = (100: Int32.Int);
+let boolName = (1, "bool", 0, true);
+let intName = (2, "int", 0, true);
+let realName = (3, "real", 0, false);
+let stringName = (4, "string", 0, true);
+let charName = (5, "char", 0, true);
+let listName = (6, "list", 1, true);
+let optionName = (7, "option", 1, true);
+let orderName = (8, "order", 0, true);
+let firstStamp = 100;
 
 let boolTy = TCon(boolName, []);
 let intTy = TCon(intName, []);
@@ -131,7 +131,7 @@ let tupleComponents = (fields) => {
       if (l == tupleLabel(digits)) { check(nextTupleLabel(digits), rest) } else { false }
     }
   };
-  if (if (SubsetList.length(fields) >= (2: Int32.Int)) { check(['1'], fields) } else { false }) { Some(SmlList.map((_, t) => { t })(fields)) } else { None }
+  if (if (SubsetList.length(fields) >= 2) { check(['1'], fields) } else { false }) { Some(SmlList.map((_, t) => { t })(fields)) } else { None }
 };
 
 // Replaces TGen i by the i-th argument.

@@ -433,13 +433,15 @@ literal is `Real64.Real`, unlike SML's `int`:
 | SML | Workman |
 |---|---|
 | `int` | `Int32.Int` |
-| `42`, `~5`, `0x7f` (expression or pattern) | `(42: Int32.Int)`, `(-5: Int32.Int)`, `(0x7f: Int32.Int)` |
+| `42`, `~5`, `0x7f` (expression or pattern) | `42`, `-5`, `0x7f` |
+| `~ 5` (negation applied to a constant) | `-(5)` |
 | `a div b`, `a mod b`, `div` | `Int32.div(a, b)`, `Int32.mod(a, b)`, `Int32.div` |
 | `Int.rem (a, b)` | `a % b`: both truncate toward zero, so the remainder has the dividend's sign |
 | `42.0` | `42.0` |
 
-Every int constant is ascribed, and every real keeps its fraction, so `SML → Workman → SML`
-is unchanged. Reading hand-written Workman, a bare integer literal takes its type from context
+An int constant prints as a bare literal, which Workman types as `Int32.Int` wherever SML has
+`int`, and every real keeps its fraction, so `SML → Workman → SML` is unchanged. Reading
+hand-written Workman, a bare integer literal takes its type from context
 during translation, as in Workman: in a `Real64.Real` context, `0` and `-1` become `0.0` and
 `~1.0`. Undecided, it is `int`, which matches Workman's `Int32.Int` default. A literal outside the
 `Int32.Int` range is `real`; `1.0` and `1e3` are `real`. `(n: Int32.Int)` is still read as an int

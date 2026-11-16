@@ -112,9 +112,9 @@ let int32Literal = (text) => {
   let alphabet = characters("0123456789abcdef");
   let rec digit = (c, cs, n) => {
     match(cs) {
-      [] => { (16: Int32.Int) },
+      [] => { 16 },
       [d, ..rest] => {
-        if (SubsetChar.toLower(c) == d) { n } else { digit(c, rest, n + (1: Int32.Int)) }
+        if (SubsetChar.toLower(c) == d) { n } else { digit(c, rest, n + 1) }
       }
     }
   };
@@ -123,8 +123,8 @@ let int32Literal = (text) => {
     match(cs, bs) {
       ([], []) => { true },
       ([c, ..rest], [b, ..limit]) => {
-        let x = digit(c, alphabet, (0: Int32.Int));
-        let y = digit(b, alphabet, (0: Int32.Int));
+        let x = digit(c, alphabet, 0);
+        let y = digit(b, alphabet, 0);
         if (x < y) { true } else { if (x == y) { within(rest, limit) } else { false } }
       },
       _ => { false }

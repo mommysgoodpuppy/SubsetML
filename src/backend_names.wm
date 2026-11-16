@@ -167,7 +167,7 @@ let fresh = match {
     let symbol = Symbol(next, owner, pos, space, name, target);
     (
       Binding(name, target, constructor),
-      Supply(prefix, next + (1: Int32.Int), [symbol, ..symbols])
+      Supply(prefix, next + 1, [symbol, ..symbols])
     )
   }
 };
@@ -180,7 +180,7 @@ let generated = match {
       target,
       Supply(
         prefix,
-        next + (1: Int32.Int),
+        next + 1,
         [Symbol(next, owner, pos, "generated", hint, target), ..symbols]
       )
     )
@@ -270,7 +270,7 @@ let validate = match {
               match {
                 Binding(other, _, _) => { source == other }
               }
-            )) > (1: Int32.Int)
+            )) > 1
           }
         }
       )
@@ -298,7 +298,7 @@ let flatMap = (items, f) => { SubsetList.concat(SubsetList.map(items, f)) };
 let pathUnder = (key, name) => {
   let prefix = name ++ ".";
   if (if (CompilerText.size(key) > CompilerText.size(prefix)) {
-    CompilerText.slice(key, (0: Int32.Int), CompilerText.size(prefix)) == prefix
+    CompilerText.slice(key, 0, CompilerText.size(prefix)) == prefix
   } else { false }) { Some(CompilerText.drop(key, CompilerText.size(prefix))) } else { None }
 };
 let nestedScopes = (imports, target) => {
@@ -483,7 +483,7 @@ let moduleWithRuntime = (runtime, owner, imports, prog, initial) => {
         (
           [p, ..rest],
           plus(bindings, more),
-          validate(next, owner, (0: Int32.Int), plus(bindings, more))
+          validate(next, owner, 0, plus(bindings, more))
         )
       }
     }
@@ -576,28 +576,22 @@ let moduleWithRuntime = (runtime, owner, imports, prog, initial) => {
         [] => { (Syntax.ECase(subject, []), supply) },
         [(Var(pat), Var(body)), ..rest] => {
           let (pat, guards, aliases, next) = checks(pat, supply);
-          let (name, next) = generated(next, owner, (0: Int32.Int), "next");
+          let (name, next) = generated(next, owner, 0, "next");
           let (fallback, next) = match(rest) {
             [] => {
-              let (result, next) = generated(next, owner, (0: Int32.Int), "unmatched");
+              let (result, next) = generated(next, owner, 0, "unmatched");
               (
-                Syntax.ECase(
-                  Syntax.EList([]),
-                  [(Syntax.PList([variable((0: Int32.Int), result)]), id((0: Int32.Int), result))]
-                ),
+                Syntax.ECase(Syntax.EList([]), [(Syntax.PList([variable(0, result)]), id(0, result))]),
                 next
               )
             },
             _ => { matchRules(subject, rest, next) }
           };
-          let call = Syntax.EApp(id((0: Int32.Int), name), Syntax.ETuple([]));
+          let call = Syntax.EApp(id(0, name), Syntax.ETuple([]));
           let branch = Syntax.ECase(subject, [(pat, conditions(guards, body, call)), (Syntax.PWild, call)]);
           (
             Syntax.ELet(
-              [
-                binding((0: Int32.Int), name, Syntax.EFn([(Syntax.PTuple([]), fallback)])),
-                ..aliases
-              ],
+              [binding(0, name, Syntax.EFn([(Syntax.PTuple([]), fallback)])), ..aliases],
               [branch]
             ),
             next
@@ -608,9 +602,9 @@ let moduleWithRuntime = (runtime, owner, imports, prog, initial) => {
   };
   let matchCase = (subject, rs, supply) => {
     if (SubsetList.exists(rs, (p, _) => { guarded(p) })) {
-      let (name, next) = generated(supply, owner, (0: Int32.Int), "subject");
-      let (body, next) = matchRules(id((0: Int32.Int), name), rs, next);
-      (Syntax.ELet([binding((0: Int32.Int), name, subject)], [body]), next)
+      let (name, next) = generated(supply, owner, 0, "subject");
+      let (body, next) = matchRules(id(0, name), rs, next);
+      (Syntax.ELet([binding(0, name, subject)], [body]), next)
     } else { (Syntax.ECase(subject, rs), supply) }
   };
 
@@ -702,9 +696,9 @@ let moduleWithRuntime = (runtime, owner, imports, prog, initial) => {
       Syntax.EFn(rs) => {
         let (rs, next) = rules(env, rs, supply);
         if (SubsetList.exists(rs, (p, _) => { guarded(p) })) {
-          let (name, next) = generated(next, owner, (0: Int32.Int), "argument");
-          let (body, next) = matchRules(id((0: Int32.Int), name), rs, next);
-          (Syntax.EFn([(variable((0: Int32.Int), name), body)]), next)
+          let (name, next) = generated(next, owner, 0, "argument");
+          let (body, next) = matchRules(id(0, name), rs, next);
+          (Syntax.EFn([(variable(0, name), body)]), next)
         } else { (Syntax.EFn(rs), next) }
       },
       Syntax.ECopy(p, a, b, t) => {
@@ -957,7 +951,7 @@ let projectWithRuntime = (runtime, prefix, modules) => {
                   [
                     Invalid(
                       name,
-                      (0: Int32.Int),
+                      0,
                       "panic runtime dependency cycle involving " ++ name ++ " and " ++ runtimeName
                     ),
                     ..symbols
@@ -985,7 +979,7 @@ let projectWithRuntime = (runtime, prefix, modules) => {
       }
     }
   };
-  loop(modules, [], Supply(prefix, (0: Int32.Int), []))
+  loop(modules, [], Supply(prefix, 0, []))
 };
 
 let project = (prefix, modules) => { projectWithRuntime(None, prefix, modules) };
