@@ -28,7 +28,7 @@ for f in tests/accept/*.sml; do
       fi
       rg -q 'only a default decides' "$tmp/unsupported" || exit 1
       ;;
-    tests/accept/core.sml|tests/accept/types.sml)
+    tests/accept/core.sml|tests/accept/types.sml|tests/accept/local.sml)
       # These checker fixtures intentionally contain declarations outside the WM profile.
       if $bin roundtrip "$f" > "$tmp/unsupported" 2>&1; then
         echo "FAIL: accepted unsupported WM translation $f"; exit 1

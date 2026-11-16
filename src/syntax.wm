@@ -68,7 +68,9 @@ and Dec =
   | DVal<Pos, List<String>, List<(Pat, Exp)>, List<(Pat, Exp)>>
   | DType<Pos, List<(List<String>, String, Ty)>>
   | DDatatype<Pos, List<(List<String>, String, List<(Pos, String, Option<Ty>)>)>>
-  | DOpen<Pos, List<List<String>>>;
+  | DOpen<Pos, List<List<String>>>
+  // local dec1 in dec2 end: dec1's bindings are visible only in dec2 (Definition §4.10 rule 23).
+  | DLocal<Pos, List<Dec>, List<Dec>>;
 
 /* `structure Name = Target` at the start of a `struct`: position, name, target. It lives here
    rather than in `dec`, so no other declaration context can hold one (spec restriction M2). */

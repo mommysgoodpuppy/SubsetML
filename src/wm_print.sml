@@ -453,6 +453,7 @@ structure WmPrint = struct
             atom (p, "export from \"./" ^ fileName (dotted ([], name)) ^ "\" import *;")
           end) ids)
         else unsupportedDeclaration ()
+    | DLocal _ => unsupportedDeclaration ()
 
   (* Translate.declarationGaps checks the complete tree before invoking this printer. *)
   and unsupportedDeclaration = fn () => SubsetProcess.panic "unsupported declaration reached WM printer"

@@ -123,14 +123,16 @@ and decQuals = match {
       binds
     )
   },
-  DOpen(_, ids) => { concatMap(head, ids) }
+  DOpen(_, ids) => { concatMap(head, ids) },
+  DLocal(_, hidden, body) => { concatMap(decQuals, SubsetList.append(hidden, body)) }
 };
 
 let decPos = match {
   DVal(p, _, _, _) => { p },
   DType(p, _) => { p },
   DDatatype(p, _) => { p },
-  DOpen(p, _) => { p }
+  DOpen(p, _) => { p },
+  DLocal(p, _, _) => { p }
 };
 
 // ---------------------------------------------------------------------------------------
@@ -219,7 +221,14 @@ and decStrip = (self, d) => {
         })(binds)
       )
     },
-    DOpen(_, _) => { d }
+    DOpen(_, _) => { d },
+    DLocal(pos, hidden, body) => {
+      DLocal(
+        pos,
+        SmlList.map((d) => { decStrip(self, d) })(hidden),
+        SmlList.map((d) => { decStrip(self, d) })(body)
+      )
+    }
   }
 };
 
@@ -284,7 +293,8 @@ and decNames = match {
       binds
     )
   },
-  DOpen(_, _) => { [] }
+  DOpen(_, _) => { [] },
+  DLocal(_, hidden, body) => { concatMap(decNames, SubsetList.append(hidden, body)) }
 };
 
 // Warnings for one module's declarations and expressions.
@@ -513,7 +523,9 @@ let declarationGaps = (structures, prog) => {
       DDatatype(_) => { [] },
       DOpen(_, ids) => {
         if (SmlList.all((id) => { SmlList.exists((s) => { [s] == id })(structures) })(ids)) { [] } else { ["open of a non-project structure"] }
-      }
+      },
+      // Workman's `private` (0.8.0 step 7) will be its counterpart.
+      DLocal(_) => { ["`local` declarations"] }
     }
   };
   let top = (td) => {
@@ -673,6 +685,13 @@ and mapDec = (f, d) => {
     DVal(p, vs, plain, recs) => {
       let rules = (rs) => { SmlList.map((pat, e) => { (pat, mapExp(f, e)) })(rs) };
       DVal(p, vs, rules(plain), rules(recs))
+    },
+    DLocal(p, hidden, body) => {
+      DLocal(
+        p,
+        SmlList.map((d) => { mapDec(f, d) })(hidden),
+        SmlList.map((d) => { mapDec(f, d) })(body)
+      )
     },
     _ => { d }
   }

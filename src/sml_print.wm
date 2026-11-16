@@ -323,6 +323,15 @@ and dec = match {
       p,
       "open " ++ SubsetString.concatWith(SubsetList.map(ids, (id) => { SubsetString.concatWith(id, ".") }), " ")
     )
+  },
+  DLocal(p, hidden, body) => {
+    stack([
+      atom(p, "local"),
+      indent(2, stack(SmlList.map(dec)(hidden))),
+      text("in"),
+      indent(2, stack(SmlList.map(dec)(body))),
+      text("end")
+    ])
   }
 }
 

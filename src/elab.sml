@@ -482,6 +482,12 @@ structure Elab = struct
                        end
                    | NONE => Err ("unbound structure " ^ SubsetString.concatWith (path, "."), pos),
                  empty, paths, st)
+    (* Definition §4.10 rule 23: dec2 sees dec1, and only dec2's bindings are declared. *)
+    | DLocal (_, hidden, body) =>
+        let val (env, level, scoped) = ctx in
+          bind (decs (ctx, hidden, st)) (fn private => fn st =>
+            decs ((plus (env, private), level, scoped), body, st))
+        end
 
   (* `val`: Definition §4.10 rules 15-16 and the closure of §4.8. *)
   and valDec = fn ((env, level, scoped), pos, tyvars, plain, recs, st) =>

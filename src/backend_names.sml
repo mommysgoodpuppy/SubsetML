@@ -362,6 +362,12 @@ structure BackendNames = struct
               case path of [name] => (case SubsetList.find (imports, fn (key, _) => key = name) of
                 SOME (_, body) => plus (acc, body) | NONE => acc) | _ => acc)
             in (d, delta, supply) end
+        (* The body sees the hidden declarations; only the body's bindings are declared. *)
+        | Syntax.DLocal (p, hidden, body) =>
+            let
+              val (hidden, _, hiddenDelta, next) = declarations (env, hidden, supply)
+              val (body, _, bodyDelta, next) = declarations (plus (env, hiddenDelta), body, next)
+            in (Syntax.DLocal (p, hidden, body), bodyDelta, next) end
       and typeBindings = fn (p, bs, supply) => case bs of
           [] => ([], empty, supply)
         | (_, name, _) :: rest => let val (binding, next) = fresh (supply, owner, p, "type", name, false)

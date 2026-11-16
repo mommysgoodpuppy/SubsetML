@@ -98,6 +98,7 @@ and decs = (ds) => {
       [DVal(pos, vs, rules(pat, exp, plain), rules(pat, exp, recs))]
     },
     DOpen(pos, ids) => { SmlList.map((id) => { DOpen(pos, [id]) })(ids) },
+    DLocal(pos, hidden, body) => { [DLocal(pos, decs(hidden), decs(body))] },
     Var(d) => { [d] }
   })(ds))
 };

@@ -71,6 +71,8 @@ structure Syntax = struct
     | DType of pos * (string list * string * ty) list
     | DDatatype of pos * (string list * string * (pos * string * ty option) list) list
     | DOpen of pos * string list list
+    (* local dec1 in dec2 end: dec1's bindings are visible only in dec2 (Definition §4.10 rule 23). *)
+    | DLocal of pos * dec list * dec list
 
   (* `structure Name = Target` at the start of a `struct`: position, name, target. It lives here
      rather than in `dec`, so no other declaration context can hold one (spec restriction M2). *)

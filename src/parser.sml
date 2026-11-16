@@ -100,7 +100,6 @@ structure Parser = struct
     | "infixr" => SOME "fixity declarations are"
     | "nonfix" => SOME "fixity declarations are"
     | "op" => SOME "`op` is"
-    | "local" => SOME "`local` declarations are"
     | "while" => SOME "`while` loops are"
     | "do" => SOME "`while` loops are"
     | "withtype" => SOME "`withtype` is"
@@ -452,7 +451,7 @@ structure Parser = struct
 
   val startsDec = fn ts =>
     isKey ("val", ts) orelse isKey ("type", ts) orelse isKey ("datatype", ts)
-    orelse isKey ("open", ts)
+    orelse isKey ("open", ts) orelse isKey ("local", ts)
 
   val rec parseExp = fn ts =>
     case peek ts of
@@ -641,6 +640,11 @@ structure Parser = struct
             bind (longStrId (advance ts)) (fn first => fn ts =>
               bind (more ([first], ts)) (fn ids => fn ts => Done (DOpen (p, ids), ts)))
           end
+      | (TKey "local", _) =>
+          bind (parseDecs (advance ts)) (fn hidden => fn ts =>
+            bind (expect ("in", ts)) (fn _ => fn ts =>
+              bind (parseDecs ts) (fn body => fn ts =>
+                bind (expect ("end", ts)) (fn _ => fn ts => Done (DLocal (p, hidden, body), ts)))))
       | _ => expected ("a declaration", ts)
     end
 

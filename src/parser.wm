@@ -131,7 +131,6 @@ let unsupported = match {
   "infixr" => { Some("fixity declarations are") },
   "nonfix" => { Some("fixity declarations are") },
   "op" => { Some("`op` is") },
-  "local" => { Some("`local` declarations are") },
   "while" => { Some("`while` loops are") },
   "do" => { Some("`while` loops are") },
   "withtype" => { Some("`withtype` is") },
@@ -608,7 +607,7 @@ let startsLowExp = (ts) => {
 };
 
 let startsDec = (ts) => {
-  if (if (if (isKey("val", ts)) { true } else { isKey("type", ts) }) { true } else { isKey("datatype", ts) }) { true } else { isKey("open", ts) }
+  if (if (if (if (isKey("val", ts)) { true } else { isKey("type", ts) }) { true } else { isKey("datatype", ts) }) { true } else { isKey("open", ts) }) { true } else { isKey("local", ts) }
 };
 
 let rec parseExp = (ts) => {
@@ -849,6 +848,15 @@ and parseDec = (ts) => {
       };
       bind(longStrId(advance(ts)))((first) => (ts) => {
         bind(more([first], ts))((ids) => (ts) => { Done(DOpen(p, ids), ts) })
+      })
+    },
+    (TKey("local"), _) => {
+      bind(parseDecs(advance(ts)))((hidden) => (ts) => {
+        bind(expect("in", ts))((_) => (ts) => {
+          bind(parseDecs(ts))((body) => (ts) => {
+            bind(expect("end", ts))((_) => (ts) => { Done(DLocal(p, hidden, body), ts) })
+          })
+        })
       })
     },
     _ => { expected("a declaration", ts) }

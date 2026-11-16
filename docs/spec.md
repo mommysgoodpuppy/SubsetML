@@ -56,7 +56,7 @@ as unsupported features.
 Reserved words SubsetML uses:
 
 ```
-and andalso case datatype else end fn if in let of open orelse rec
+and andalso case datatype else end fn if in let local of open orelse rec
 struct structure then type val
 ( ) [ ] { } , : ; _ | = => -> #
 ```
@@ -64,7 +64,7 @@ struct structure then type val
 Reserved words for omitted features:
 
 ```
-abstype as do eqtype exception fun functor handle include infix infixr local
+abstype as do eqtype exception fun functor handle include infix infixr
 nonfix op raise sharing sig signature where while with withtype :> ...
 ```
 
@@ -185,7 +185,7 @@ when its equivalent form uses only kept features.
 | `datatype … withtype …` | **omitted** |
 | `abstype … with … end` | **omitted** |
 | `exception exbind` | **omitted** |
-| `local dec1 in dec2 end` | **omitted** |
+| `local dec1 in dec2 end` | kept: `dec2` sees `dec1`, and only `dec2`'s bindings are declared |
 | `infix`, `infixr`, `nonfix` | **omitted** |
 
 **Restriction C1 (no `else if`).** The `else` branch of a conditional may not start with `if`.
@@ -259,7 +259,7 @@ strdec ::= dec
 | `structure strid = struct dec end` at top level | kept |
 | structure declarations inside `struct … end` (nesting) | **omitted**, except the alias of M2 |
 | any other `strexp` (`longstrid`, `let … in strexp end`, ascription) | **omitted** |
-| `local` at structure level | **omitted** |
+| `local` around declarations inside a structure | kept (§4.4) |
 | `signature`, `sig … end`, `:`/`:>` ascription, `where type`, sharing, `include`, `eqtype` | **omitted** |
 | `functor` declarations and applications | **omitted** |
 

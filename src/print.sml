@@ -80,6 +80,7 @@ structure Print = struct
         node ("datatype",
               SmlList.map (fn (vs, tycon, cs) => node (tycon, tyvars vs :: SmlList.map con cs)) bs)
     | DOpen (_, ids) => node ("open", SubsetList.map (ids, fn id => SubsetString.concatWith (id, ".")))
+    | DLocal (_, hidden, body) => node ("local", [node ("hidden", SmlList.map dec hidden), node ("body", SmlList.map dec body)])
 
   val strdec = fn
       SDec d => dec d

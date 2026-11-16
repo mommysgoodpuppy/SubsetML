@@ -660,7 +660,8 @@ and dec = (structures, d) => {
           atom(p, "export from \"./" ++ fileName(dotted([], name)) ++ "\" import *;")
         })(ids))
       } else { unsupportedDeclaration() }
-    }
+    },
+    DLocal(_) => { unsupportedDeclaration() }
   }
 }
 

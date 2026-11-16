@@ -85,6 +85,7 @@ structure NativeInt = struct
             DVal (q, vs, plain, recs) =>
               let val rules = fn rs => SmlList.map (fn (p, e) => (lowerPat p, exp e)) rs
               in DVal (q, vs, rules plain, rules recs) end
+          | DLocal (q, hidden, body) => DLocal (q, SmlList.map dec hidden, SmlList.map dec body)
           | _ => d
           val top = fn td => case td of
             TopExp (q, e) => TopExp (q, exp e)

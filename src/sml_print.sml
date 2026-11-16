@@ -206,6 +206,9 @@ structure SmlPrint = struct
           andGroup (atom (p, "datatype "), SmlList.map bind binds)
         end
     | DOpen (p, ids) => atom (p, "open " ^ SubsetString.concatWith (SubsetList.map (ids, fn id => SubsetString.concatWith (id, ".")), " "))
+    | DLocal (p, hidden, body) =>
+        stack [atom (p, "local"), indent (2, stack (SmlList.map dec hidden)), text "in",
+               indent (2, stack (SmlList.map dec body)), text "end"]
 
   (* `keyword b1 and b2 ...` with each binding on its own line. *)
   and andGroup = fn (keyword, bindings) =>

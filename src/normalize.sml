@@ -68,6 +68,7 @@ structure Normalize = struct
     SmlList.concat (SmlList.map (fn
         DVal (pos, vs, plain, recs) => [DVal (pos, vs, rules (pat, exp, plain), rules (pat, exp, recs))]
       | DOpen (pos, ids) => SmlList.map (fn id => DOpen (pos, [id])) ids
+      | DLocal (pos, hidden, body) => [DLocal (pos, decs hidden, decs body)]
       | d => [d]) ds)
 
 end

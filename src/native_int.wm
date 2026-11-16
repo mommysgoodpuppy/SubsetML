@@ -130,6 +130,7 @@ let project = (files) => {
           let rules = (rs) => { SmlList.map((p, e) => { (lowerPat(p), exp(e)) })(rs) };
           DVal(q, vs, rules(plain), rules(recs))
         },
+        DLocal(q, hidden, body) => { DLocal(q, SmlList.map(dec)(hidden), SmlList.map(dec)(body)) },
         _ => { d }
       }
     };

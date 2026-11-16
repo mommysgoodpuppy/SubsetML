@@ -799,6 +799,12 @@ let moduleWithRuntime = (runtime, owner, imports, prog, initial) => {
           }
         );
         (d, delta, supply)
+      },
+      // The body sees the hidden declarations; only the body's bindings are declared.
+      Syntax.DLocal(p, hidden, body) => {
+        let (hidden, _, hiddenDelta, next) = declarations(env, hidden, supply);
+        let (body, _, bodyDelta, next) = declarations(plus(env, hiddenDelta), body, next);
+        (Syntax.DLocal(p, hidden, body), bodyDelta, next)
       }
     }
   }

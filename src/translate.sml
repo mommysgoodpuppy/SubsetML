@@ -82,12 +82,14 @@ structure Translate = struct
         concatMap (fn (_, _, cons) =>
                      concatMap (fn (_, _, NONE) => [] | (_, _, SOME t) => tyQuals t, cons), binds)
     | DOpen (_, ids) => concatMap (head, ids)
+    | DLocal (_, hidden, body) => concatMap (decQuals, SubsetList.append (hidden, body))
 
   val decPos = fn
       DVal (p, _, _, _) => p
     | DType (p, _) => p
     | DDatatype (p, _) => p
     | DOpen (p, _) => p
+    | DLocal (p, _, _) => p
 
   (* --------------------------------------------------------------------------------------- *)
   (* Dropping a qualifier. Outside its structure, `Main.main` refers to a binding of the same
@@ -151,6 +153,8 @@ structure Translate = struct
             (vs, n, SmlList.map (fn (cp, c, NONE) => (cp, c, NONE)
                                | (cp, c, SOME t) => (cp, c, SOME (tyStrip (self, t)))) cons)) binds)
       | DOpen (_, _) => d
+      | DLocal (pos, hidden, body) =>
+          DLocal (pos, SmlList.map (fn d => decStrip (self, d)) hidden, SmlList.map (fn d => decStrip (self, d)) body)
     end
 
   (* --------------------------------------------------------------------------------------- *)
@@ -202,6 +206,7 @@ structure Translate = struct
     | DDatatype (pos, binds) =>
         concatMap (fn (_, tycon, cons) => (pos, tycon) :: SmlList.map (fn (cp, c, _) => (cp, c)) cons, binds)
     | DOpen (_, _) => []
+    | DLocal (_, hidden, body) => concatMap (decNames, SubsetList.append (hidden, body))
 
   (* Warnings for one module's declarations and expressions. *)
   val conventionWarnings = fn (decs, exps) =>
@@ -322,6 +327,8 @@ structure Translate = struct
         | DDatatype _ => []
         | DOpen (_, ids) => if SmlList.all (fn id => SmlList.exists (fn s => [s] = id) structures) ids
             then [] else ["open of a non-project structure"]
+        (* Workman's `private` (0.8.0 step 7) will be its counterpart. *)
+        | DLocal _ => ["`local` declarations"]
       val top = fn td => case td of
           TopExp (_, e) => expression e
         | TopDecs ds => concatMap (fn SDec d => declaration d
@@ -428,6 +435,8 @@ structure Translate = struct
         let val rules = fn rs => SmlList.map (fn (pat, e) => (pat, mapExp (f, e))) rs in
           DVal (p, vs, rules plain, rules recs)
         end
+    | DLocal (p, hidden, body) =>
+        DLocal (p, SmlList.map (fn d => mapDec (f, d)) hidden, SmlList.map (fn d => mapDec (f, d)) body)
     | _ => d
 
   val mapProgram = fn (f, prog) =>

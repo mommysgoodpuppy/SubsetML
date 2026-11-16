@@ -790,6 +790,11 @@ and dec = (ctx, d, st) => {
         paths,
         st
       )
+    },
+    // Definition §4.10 rule 23: dec2 sees dec1, and only dec2's bindings are declared.
+    DLocal(_, hidden, body) => {
+      let (env, level, scoped) = ctx;
+      bind(decs(ctx, hidden, st))((private) => (st) => { decs((plus(env, private), level, scoped), body, st) })
     }
   }
 }

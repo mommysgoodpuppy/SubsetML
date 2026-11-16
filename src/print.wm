@@ -116,6 +116,12 @@ and dec = match {
   },
   DOpen(_, ids) => {
     node("open", SubsetList.map(ids, (id) => { SubsetString.concatWith(id, ".") }))
+  },
+  DLocal(_, hidden, body) => {
+    node(
+      "local",
+      [node("hidden", SmlList.map(dec)(hidden)), node("body", SmlList.map(dec)(body))]
+    )
   }
 };
 

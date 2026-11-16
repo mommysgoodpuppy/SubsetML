@@ -67,7 +67,8 @@ structure ModuleProject = struct
            Syntax.SStructure (pos, _) :: _ => pos
          | Syntax.SDec dec :: _ =>
              (case dec of Syntax.DVal (pos, _, _, _) => pos | Syntax.DType (pos, _) => pos
-              | Syntax.DDatatype (pos, _) => pos | Syntax.DOpen (pos, _) => pos)
+              | Syntax.DDatatype (pos, _) => pos | Syntax.DOpen (pos, _) => pos
+              | Syntax.DLocal (pos, _, _) => pos)
          | [] => CompilerText.size src)
 
   val cycle = fn (active, repeated) =>
