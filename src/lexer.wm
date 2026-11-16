@@ -260,7 +260,12 @@ let lex = (src) => {
         } else { false };
         let isHex = if (if (at(i) == '0') { has(i + 1, 'x') } else { false }) { hexAt(i + 2) } else { false };
         match(isWord, isHex) {
-          (true, _) => { Err("word constants are not part of SubsetML", start) },
+          (true, _) => {
+            if (start != i) { Err("a word constant cannot be negative", start) } else {
+              let j = if (has(i + 2, 'x')) { skipWhile(SubsetChar.isHexDigit, i + 3) } else { skipWhile(SubsetChar.isDigit, i + 2) };
+              Ok(TScon(SWord(text(j))), j)
+            }
+          },
           (false, true) => {
             let j = skipWhile(SubsetChar.isHexDigit, i + 2);
             Ok(TScon(SInt(text(j))), j)

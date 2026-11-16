@@ -81,7 +81,9 @@ let numNames = SubsetList.concat([
     ("CharVector", ["tabulate"])
   ])),
   SmlList.map((x) => { ((["Num"], x), (["Real64"], x)) })(["div", "mod", "toString", "fromString"]),
-  SmlList.map((x) => { (([], x), (["Int32"], x)) })(["div", "mod"])
+  SmlList.map((x) => { (([], x), (["Int32"], x)) })(["div", "mod"]),
+  // Read back only: Workman's per-type division is SML's overloaded `div` and `mod`.
+  SmlList.concat(SmlList.map((q) => { SmlList.map((x) => { (([], x), ([q], x)) })(["div", "mod"]) })(["Int64", "Word8", "Word16", "Word32", "Word64"]))
 ]);
 
 // Basis constructors spelled differently in Workman.
@@ -160,6 +162,10 @@ let escapeChar = (quote, c) => {
    fraction, since a bare integer literal in an undecided context is int. */
 let scon = match {
   SInt(s) => { minus(s) },
+  // A Workman integer literal takes a word type from context: `0w7` is 7, `0wx1F` 0x1F.
+  SWord(s) => {
+    if (CompilerText.slice(s, 0, 3) == "0wx") { "0" ++ CompilerText.drop(s, 2) } else { CompilerText.drop(s, 2) }
+  },
   SReal(s) => { minus(s) },
   SString(s) => {
     "\"" ++ SubsetString.concat(SubsetList.map(CompilerText.characters(s), (c) => { escapeChar('"', c) })) ++ "\""

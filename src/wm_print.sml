@@ -56,7 +56,10 @@ structure WmPrint = struct
          ("Char", ["ord", "chr"]), ("CharVector", ["tabulate"])]),
       SmlList.map (fn x => ((["Num"], x), (["Real64"], x)))
         ["div", "mod", "toString", "fromString"],
-      SmlList.map (fn x => (([], x), (["Int32"], x))) ["div", "mod"]]
+      SmlList.map (fn x => (([], x), (["Int32"], x))) ["div", "mod"],
+      (* Read back only: Workman's per-type division is SML's overloaded `div` and `mod`. *)
+      SmlList.concat (SmlList.map (fn q => SmlList.map (fn x => (([], x), ([q], x))) ["div", "mod"])
+        ["Int64", "Word8", "Word16", "Word32", "Word64"])]
 
   (* Basis constructors spelled differently in Workman. *)
   val valueName = fn
@@ -110,6 +113,8 @@ structure WmPrint = struct
      fraction, since a bare integer literal in an undecided context is int. *)
   val scon = fn
       SInt s => minus s
+    (* A Workman integer literal takes a word type from context: `0w7` is 7, `0wx1F` 0x1F. *)
+    | SWord s => if CompilerText.slice (s, 0, 3) = "0wx" then "0" ^ CompilerText.drop (s, 2) else CompilerText.drop (s, 2)
     | SReal s => minus s
     | SString s => "\"" ^ SubsetString.concat (SubsetList.map (CompilerText.characters s,
         fn c => escapeChar (#"\"", c))) ^ "\""

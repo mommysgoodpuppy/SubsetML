@@ -34,10 +34,10 @@ from "./subset_char.wm" import * as SubsetChar;
 from "./subset_bool.wm" import * as SubsetBool;
 from "./unify.wm" import * as Unify;
 from "./types.wm" import * as Types;
-from "./doc.wm" import * as Doc;
-from "./wm_print.wm" import * as WmPrint;
 from "./basis.wm" import * as Basis;
 from "./elab.wm" import * as Elab;
+from "./doc.wm" import * as Doc;
+from "./wm_print.wm" import * as WmPrint;
 from "./subset_string.wm" import * as SubsetString;
 from "./wm_lexer.wm" import * as WmLexer;
 from "./backend_names.wm" import * as BackendNames;
@@ -590,8 +590,151 @@ let wmNumbers = (st) => {
   }
 };
 
+// Bottom-up rewrites of a program's expressions (f) and patterns (g).
+let rec mapPat = (g, p) => {
+  let go = (x) => { mapPat(g, x) };
+  g(match(p) {
+    PRecord(q, fs) => { PRecord(q, SmlList.map((l, x) => { (l, go(x)) })(fs)) },
+    PTuple(ps) => { PTuple(SmlList.map(go)(ps)) },
+    PList(ps) => { PList(SmlList.map(go)(ps)) },
+    PApp(q, id, x) => { PApp(q, id, go(x)) },
+    PTyped(x, t) => { PTyped(go(x), t) },
+    _ => { p }
+  })
+};
+
+let rec mapExp = (f, g, e) => {
+  let go = (x) => { mapExp(f, g, x) };
+  let rules = (rs) => { SmlList.map((p, x) => { (mapPat(g, p), go(x)) })(rs) };
+  f(match(e) {
+    ERecord(p, fs) => { ERecord(p, SmlList.map((l, x) => { (l, go(x)) })(fs)) },
+    ETuple(es) => { ETuple(SmlList.map(go)(es)) },
+    EList(es) => { EList(SmlList.map(go)(es)) },
+    ESeq(es) => { ESeq(SmlList.map(go)(es)) },
+    ELet(ds, es) => {
+      ELet(SmlList.map((d) => { mapDec(f, g, d) })(ds), SmlList.map(go)(es))
+    },
+    EApp(a, b) => { EApp(go(a), go(b)) },
+    ETyped(x, t) => { ETyped(go(x), t) },
+    ECopy(p, source, target, t) => { ECopy(p, go(source), go(target), t) },
+    EAndalso(a, b) => { EAndalso(go(a), go(b)) },
+    EOrelse(a, b) => { EOrelse(go(a), go(b)) },
+    EIf(c, a, b) => { EIf(go(c), go(a), go(b)) },
+    ECase(x, rs) => { ECase(go(x), rules(rs)) },
+    EFn(rs) => { EFn(rules(rs)) },
+    _ => { e }
+  })
+}
+
+and mapDec = (f, g, d) => {
+  match(d) {
+    DVal(p, vs, plain, recs) => {
+      let rules = (rs) => {
+        SmlList.map((pat, e) => { (mapPat(g, pat), mapExp(f, g, e)) })(rs)
+      };
+      DVal(p, vs, rules(plain), rules(recs))
+    },
+    DLocal(p, hidden, body) => {
+      DLocal(
+        p,
+        SmlList.map((d) => { mapDec(f, g, d) })(hidden),
+        SmlList.map((d) => { mapDec(f, g, d) })(body)
+      )
+    },
+    _ => { d }
+  }
+};
+
+let mapProgramWith = (f, g, prog) => {
+  SmlList.map(match {
+    TopDecs(sds) => {
+      TopDecs(SmlList.map(match {
+        SDec(d) => { SDec(mapDec(f, g, d)) },
+        SStructure(p, binds) => {
+          SStructure(
+            p,
+            SmlList.map((n, aliases, ds) => { (n, aliases, SmlList.map((d) => { mapDec(f, g, d) })(ds)) })(binds)
+          )
+        }
+      })(sds))
+    },
+    TopExp(p, e) => { TopExp(p, mapExp(f, g, e)) }
+  })(prog)
+};
+
+let mapProgram = (f, prog) => { mapProgramWith(f, (p) => { p }, prog) };
+
+// The structure that owns a sized numeric type: `Word16` for `Word16.word`.
+let sizedStructure = (t) => {
+  match(t) {
+    Types.TCon(n, []) => {
+      if (SmlList.exists((m) => { Unify.sameName(n, m) })([Types.int64Name, ..Types.wordNames])) {
+        Some(CompilerText.slice(Types.nameOf(n), 0, CompilerText.size(Types.nameOf(n)) - 5))
+      } else { None }
+    },
+    _ => { None }
+  }
+};
+
+/* Workman spells `div` and `mod` per type: an operation the elaboration resolved to a word
+   type or Int64.int names that structure's function, `Word16.div`. */
+let sizedDivision = (st, prog) => {
+  let Unify.State(_, _, _, _, sites) = st;
+  let resolved = SmlList.mapPartial((site) => {
+    match(site) {
+      Unify.Operand(p, t) => {
+        match(Unify.prune(st, t)) {
+          Types.TArrow(_, result) => {
+            match(sizedStructure(Unify.prune(st, result))) {
+              Some(q) => { Some(p, q) },
+              None => { None }
+            }
+          },
+          _ => { None }
+        }
+      },
+      _ => { None }
+    }
+  })(match(sites) {
+    Some(xs) => { xs },
+    None => { [] }
+  });
+  let rewrite = (e) => {
+    match(e) {
+      EId(p, ([], Var(opr))) => {
+        if (if (opr == "div") { true } else { opr == "mod" }) {
+          match(SmlList.find((q, _) => { p == q })(resolved)) {
+            Some(found) => {
+              let (_, owner) = found;
+              EId(p, ([owner], opr))
+            },
+            None => { e }
+          }
+        } else { e }
+      },
+      _ => { e }
+    }
+  };
+  mapProgram(rewrite, prog)
+};
+
 // Translates one parsed file. `structures` names every structure of the program.
-let toWm = (structures, path, src, prog, comments) => {
+let toWm = (structures, path, src, source, comments) => {
+  /* The file's standalone elaboration, when its environment can be resolved, decides
+     numeric defaults and the per-type spelling of `div` and `mod`. */
+  let lenient = match(Basis.initial) {
+    Unify.Err(_) => { None },
+    Unify.Ok(basis, _) => {
+      match(Elab.program(basis, source, Unify.lenient)) {
+        Unify.Err(_) => { None },
+        Unify.Ok(_, st) => { Some(st) }
+      }
+    }
+  };
+  let prog = match(lenient) {
+    Some(st) => { sizedDivision(st, source) },
+    None => { source }
+  };
   let (self, phrases) = module(prog);
   let (decs, exps) = parts(phrases);
   let used = distinct(SubsetList.append(concatMap(decQuals, decs), concatMap(expQuals, exps)));
@@ -615,17 +758,12 @@ let toWm = (structures, path, src, prog, comments) => {
     })(aliases)
   );
   // Reject a numeric default when the file's standalone environment can be resolved.
-  let defaulted = match(Basis.initial) {
-    Unify.Err(_) => { false },
-    Unify.Ok(basis, _) => {
-      match(Elab.program(basis, prog, Unify.lenient)) {
-        Unify.Err(_) => { false },
-        Unify.Ok(_, st) => {
-          match(defaultedSite(st)) {
-            Some(_) => { true },
-            None => { false }
-          }
-        }
+  let defaulted = match(lenient) {
+    None => { false },
+    Some(st) => {
+      match(defaultedSite(st)) {
+        Some(_) => { true },
+        None => { false }
       }
     }
   };
@@ -657,62 +795,6 @@ let toWm = (structures, path, src, prog, comments) => {
 };
 
 // Traverse expressions without changing source positions or declaration layout.
-let rec mapExp = (f, e) => {
-  let go = (x) => { mapExp(f, x) };
-  let rules = (rs) => { SmlList.map((p, x) => { (p, go(x)) })(rs) };
-  f(match(e) {
-    ERecord(p, fs) => { ERecord(p, SmlList.map((l, x) => { (l, go(x)) })(fs)) },
-    ETuple(es) => { ETuple(SmlList.map(go)(es)) },
-    EList(es) => { EList(SmlList.map(go)(es)) },
-    ESeq(es) => { ESeq(SmlList.map(go)(es)) },
-    ELet(ds, es) => {
-      ELet(SmlList.map((d) => { mapDec(f, d) })(ds), SmlList.map(go)(es))
-    },
-    EApp(a, b) => { EApp(go(a), go(b)) },
-    ETyped(x, t) => { ETyped(go(x), t) },
-    ECopy(p, source, target, t) => { ECopy(p, go(source), go(target), t) },
-    EAndalso(a, b) => { EAndalso(go(a), go(b)) },
-    EOrelse(a, b) => { EOrelse(go(a), go(b)) },
-    EIf(c, a, b) => { EIf(go(c), go(a), go(b)) },
-    ECase(x, rs) => { ECase(go(x), rules(rs)) },
-    EFn(rs) => { EFn(rules(rs)) },
-    _ => { e }
-  })
-}
-
-and mapDec = (f, d) => {
-  match(d) {
-    DVal(p, vs, plain, recs) => {
-      let rules = (rs) => { SmlList.map((pat, e) => { (pat, mapExp(f, e)) })(rs) };
-      DVal(p, vs, rules(plain), rules(recs))
-    },
-    DLocal(p, hidden, body) => {
-      DLocal(
-        p,
-        SmlList.map((d) => { mapDec(f, d) })(hidden),
-        SmlList.map((d) => { mapDec(f, d) })(body)
-      )
-    },
-    _ => { d }
-  }
-};
-
-let mapProgram = (f, prog) => {
-  SmlList.map(match {
-    TopDecs(sds) => {
-      TopDecs(SmlList.map(match {
-        SDec(d) => { SDec(mapDec(f, d)) },
-        SStructure(p, binds) => {
-          SStructure(
-            p,
-            SmlList.map((n, aliases, ds) => { (n, aliases, SmlList.map((d) => { mapDec(f, d) })(ds)) })(binds)
-          )
-        }
-      })(sds))
-    },
-    TopExp(p, e) => { TopExp(p, mapExp(f, e)) }
-  })(prog)
-};
 
 /* Native source spelling is a backend mapping, not a change to WM names or FFI keys.
    One project-wide prefix is absent from every input byte string. */
@@ -755,15 +837,22 @@ let realEquality = (st, prog) => {
   mapProgram(rewrite, prog)
 };
 
-// A Workman integer literal whose context made it real is printed as an SML real constant.
+/* A Workman integer literal whose context made it real or a word is printed as an SML real or
+   word constant: `1` as `1.0`, `0x1F` as `0wx1F`. */
 let realLiterals = (st, prog) => {
   let Unify.State(_, _, _, _, sites) = st;
-  let positions = SmlList.mapPartial((site) => {
+  let isWord = (n) => {
+    SmlList.exists((m) => { Unify.sameName(n, m) })(Types.wordNames)
+  };
+  let isReal = (n) => {
+    if (Unify.sameName(n, Types.realName)) { true } else { Unify.sameName(n, Types.real32Name) }
+  };
+  let kinds = SmlList.mapPartial((site) => {
     match(site) {
       Unify.Literal(p, t) => {
         match(Unify.prune(st, t)) {
           Types.TCon(n, []) => {
-            if (Unify.sameName(n, Types.realName)) { Some(p) } else { None }
+            if (isReal(n)) { Some(p, true) } else { if (isWord(n)) { Some(p, false) } else { None } }
           },
           _ => { None }
         }
@@ -774,17 +863,33 @@ let realLiterals = (st, prog) => {
     Some(xs) => { xs },
     None => { [] }
   });
+  let hex = (text) => {
+    SubsetList.exists(CompilerText.characters(text), (c) => { c == 'x' })
+  };
+  let constant = (p, c) => {
+    match(c, SmlList.find((q, _) => { p == q })(kinds)) {
+      (SInt(text), Some(_, true)) => { if (hex(text)) { c } else { SReal(text ++ ".0") } },
+      (SInt(text), Some(_, false)) => {
+        if (if (CompilerText.size(text) > 0) { CompilerText.slice(text, 0, 1) == "~" } else { false }) { c } else {
+          if (hex(text)) { SWord("0wx" ++ CompilerText.drop(text, 2)) } else { SWord("0w" ++ text) }
+        }
+      },
+      _ => { c }
+    }
+  };
   let rewrite = (e) => {
     match(e) {
-      EScon(p, SInt(text)) => {
-        if (if (SmlList.exists((q) => { p == q })(positions)) {
-          SubsetBool.not(SubsetList.exists(CompilerText.characters(text), (c) => { c == 'x' }))
-        } else { false }) { EScon(p, SReal(text ++ ".0")) } else { e }
-      },
+      EScon(p, c) => { EScon(p, constant(p, c)) },
       _ => { e }
     }
   };
-  mapProgram(rewrite, prog)
+  let pattern = (pat) => {
+    match(pat) {
+      PScon(p, c) => { PScon(p, constant(p, c)) },
+      _ => { pat }
+    }
+  };
+  mapProgramWith(rewrite, pattern, prog)
 };
 
 /* WM can generalize a pure function-field alias; SML selector applications cannot.

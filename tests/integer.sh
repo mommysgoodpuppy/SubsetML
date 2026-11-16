@@ -50,7 +50,7 @@ for index, literal in enumerate(bad):
     source = root / 'bad.sml'
     source.write_text('val x = ' + literal + '\n')
     result = subprocess.run(['bin/subsetml', 'native', root / 'reject', source], capture_output=True)
-    assert result.returncode and b'outside signed 32-bit range' in result.stdout + result.stderr
+    assert result.returncode and b'outside signed' in result.stdout + result.stderr
     assert not list((root / 'reject').iterdir())
 for text in ['val x = 1 + 1.0', 'val x = 1 / 2', 'val x = 1.0 div 2.0']:
     source.write_text(text + '\n')

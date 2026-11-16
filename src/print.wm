@@ -27,6 +27,7 @@ let longid = (quals, id) => { SubsetString.concatWith(SubsetList.append(quals, [
 
 let scon = match {
   SInt(s) => { s },
+  SWord(s) => { s },
   SReal(s) => { s },
   SString(s) => { "\"" ++ CompilerText.escapeSmlString(s) ++ "\"" },
   SChar(c) => { "#\"" ++ CompilerText.escapeSmlChar(c) ++ "\"" }

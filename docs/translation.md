@@ -439,13 +439,17 @@ literal is `Real64.Real`, unlike SML's `int`:
 | `a div b`, `a mod b`, `div` | `Int32.div(a, b)`, `Int32.mod(a, b)`, `Int32.div` |
 | `Int.rem (a, b)` | `a % b`: both truncate toward zero, so the remainder has the dividend's sign |
 | `42.0` | `42.0` |
+| `Int64.int`, `Word8.word`–`Word64.word`, `Real32.real` | `Int64.Int`, `Word8.Word`–`Word64.Word`, `Real32.Real` |
+| `0w7`, `0wx1F` | `7`, `0x1F`: a Workman literal takes the word type from context |
+| `a div b` on a word or `Int64.int` | `Word16.div(a, b)`, `Int64.div(a, b)`: the type the file's elaboration resolved |
 
 An int constant prints as a bare literal, which Workman types as `Int32.Int` wherever SML has
 `int`, and every real keeps its fraction, so `SML → Workman → SML` is unchanged. Reading
 hand-written Workman, a bare integer literal takes its type from context
 during translation, as in Workman: in a `Real64.Real` context, `0` and `-1` become `0.0` and
-`~1.0`. Undecided, it is `int`, which matches Workman's `Int32.Int` default. A literal outside the
-`Int32.Int` range is `real`; `1.0` and `1e3` are `real`. `(n: Int32.Int)` is still read as an int
+`~1.0`; in a word context, `7` becomes `0w7`. Undecided, it is `int`, which matches Workman's
+`Int32.Int` default. A literal outside the `Int32.Int` range is `Int64.int` or a word by context
+and `real` otherwise; `1.0` and `1e3` are `real` or `Real32.real` by context. `(n: Int32.Int)` is still read as an int
 constant. A numeric operation that no literal decides, such as `fn (a, b) => a + b`, would default
 to `int` in SML but `Real64.Real` in Workman, so it is rejected in both directions; annotate an
 operand as `int` or `real`. `Int.*` and `abs` have no Workman mapping yet.

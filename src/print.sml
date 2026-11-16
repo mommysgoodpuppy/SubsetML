@@ -19,6 +19,7 @@ structure Print = struct
 
   val scon = fn
       SInt s => s
+    | SWord s => s
     | SReal s => s
     | SString s => "\"" ^ CompilerText.escapeSmlString s ^ "\""
     | SChar c => "#\"" ^ CompilerText.escapeSmlChar c ^ "\""

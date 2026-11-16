@@ -23,7 +23,12 @@ type Comment = (Pos, String, Bool);
 // Structure qualifiers and the final identifier.
 type Longid = (List<String>, String);
 
-type Scon = SInt<String> | SReal<String> | SString<String> | SChar<Char>; // source text, e.g. "~0x1F" // source text // decoded contents
+type Scon =
+  | SInt<String> // source text, e.g. "~0x1F"
+  | SWord<String> // source text, e.g. "0w7", "0wx1F"
+  | SReal<String> // source text
+  | SString<String> // decoded contents
+  | SChar<Char>;
 
 type Ty =
   | TyVar<String>

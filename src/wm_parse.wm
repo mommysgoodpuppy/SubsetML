@@ -224,22 +224,10 @@ and typeName = (quals, name, ts) => {
 /* Patterns. As in WmPrint, `inMatch` marks a match arm and `binds` whether a bare name binds
    at this position. */
 
-/* A bare Workman integer literal is an SML int when it fits in Int32 and real otherwise, so
-   `1` is int and `1.0` is real. Workman itself types `1` from context and defaults it to
-   Real64, so Real64 code read here must spell its integral constants `1.0`. */
-let number = (c) => {
-  match(c) {
-    SInt(s) => {
-      if (CompilerText.int32Literal(s)) { c } else { SReal(s ++ ".0") }
-    },
-    _ => { c }
-  }
-};
-
 let negativeLiteral = (minusPos, ts) => {
   match(peek(ts)) {
     (WScon(SInt(s)), Var(p)) => {
-      if (p == minusPos + 1) { Some(number(SInt("~" ++ s))) } else { None }
+      if (p == minusPos + 1) { Some(SInt("~" ++ s)) } else { None }
     },
     (WScon(SReal(s)), Var(p)) => {
       if (p == minusPos + 1) { Some(SReal("~" ++ s)) } else { None }
@@ -309,7 +297,7 @@ let rec parsePat = (inMatch, binds, ts) => {
     (WKey("void"), _) => { Done(PTuple([]), advance(ts)) },
     (WKey("true"), Var(p)) => { Done(PId(p, ([], "true")), advance(ts)) },
     (WKey("false"), Var(p)) => { Done(PId(p, ([], "false")), advance(ts)) },
-    (WScon(SInt(s)), Var(p)) => { Done(PScon(p, number(SInt(s))), advance(ts)) },
+    (WScon(SInt(s)), Var(p)) => { Done(PScon(p, SInt(s)), advance(ts)) },
     (WScon(SReal(s)), Var(p)) => { Done(PScon(p, SReal(s)), advance(ts)) },
     (WScon(c), Var(p)) => { Done(PScon(p, c), advance(ts)) },
     (WKey("-"), Var(p)) => {
@@ -973,7 +961,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
 
   and parsePrimary = (ts) => {
     match(peek(ts)) {
-      (WScon(c), Var(p)) => { Done(EScon(p, number(c)), advance(ts)) },
+      (WScon(c), Var(p)) => { Done(EScon(p, c), advance(ts)) },
       (WKey("true"), Var(p)) => { Done(EId(p, ([], "true")), advance(ts)) },
       (WKey("false"), Var(p)) => { Done(EId(p, ([], "false")), advance(ts)) },
       (WKey("void"), _) => { Done(ETuple([]), advance(ts)) },

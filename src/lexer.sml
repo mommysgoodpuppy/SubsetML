@@ -174,7 +174,12 @@ structure Lexer = struct
           val isHex = at i = #"0" andalso has (i + 1, #"x") andalso hexAt (i + 2)
         in
           case (isWord, isHex) of
-            (true, _) => Err ("word constants are not part of SubsetML", start)
+            (true, _) =>
+              if start <> i then Err ("a word constant cannot be negative", start)
+              else
+                let val j = if has (i + 2, #"x") then skipWhile (SubsetChar.isHexDigit, i + 3)
+                            else skipWhile (SubsetChar.isDigit, i + 2)
+                in Ok (TScon (SWord (text j)), j) end
           | (false, true) =>
               let val j = skipWhile (SubsetChar.isHexDigit, i + 2) in Ok (TScon (SInt (text j)), j) end
           | (false, false) =>

@@ -22,6 +22,7 @@ structure Syntax = struct
 
   datatype scon =
       SInt of string      (* source text, e.g. "~0x1F" *)
+    | SWord of string     (* source text, e.g. "0w7", "0wx1F" *)
     | SReal of string     (* source text *)
     | SString of string   (* decoded contents *)
     | SChar of char

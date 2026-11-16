@@ -85,13 +85,30 @@ structure Basis = struct
      ("tl", "'a list -> 'a list"),
      ("null", "'a list -> bool"),
      ("valOf", "'a option -> 'a"),
-     ("isSome", "'a option -> bool"),
-     ("/", "real * real -> real"),
-     ("div", "int * int -> int"),
-     ("mod", "int * int -> int")]
+     ("isSome", "'a option -> bool")]
+
+  (* The word structures share their operations; `word` is each structure's own type. The
+     entries are those Workman's std also has, so a program using them translates. *)
+  val wordValues =
+    [("div", "word * word -> word"),
+     ("mod", "word * word -> word"),
+     ("andb", "word * word -> word"),
+     ("orb", "word * word -> word"),
+     ("xorb", "word * word -> word"),
+     ("notb", "word -> word")]
 
   val structures =
-    [(["Int"], [],
+    [(["Word8"], [("word", word8Name)], wordValues),
+     (["Word16"], [("word", word16Name)], wordValues),
+     (["Word32"], [("word", word32Name)], wordValues),
+     (["Word64"], [("word", word64Name)], wordValues),
+     (["Int64"], [("int", int64Name)],
+      [("toString", "int -> string"),
+       ("div", "int * int -> int"),
+       ("mod", "int * int -> int")]),
+     (["Real32"], [("real", real32Name)],
+      []),
+     (["Int"], [],
       [("toString", "int -> string"),
        ("fromString", "string -> int option"),
        ("rem", "int * int -> int"),
@@ -218,8 +235,13 @@ structure Basis = struct
      (["Num", "CharVector"], [],
       [("tabulate", "real * (real -> char) -> string")])]
 
-  (* Appendix E numeric classes. Unresolved classes default to int; / stays real-only. *)
-  val numClass = KClass [intName, realName]
+  (* Appendix E's overloading classes over the sized types. An unresolved class defaults to int,
+     or to real when it has no int (Elab.closeBinding). *)
+  val realintNames = [intName, int64Name, realName, real32Name]
+  val numClass = KClass (SubsetList.append (realintNames, wordNames))
+  val realintClass = KClass realintNames
+  val wordintClass = KClass (intName :: int64Name :: wordNames)
+  val realClass = KClass [realName, real32Name]
   val binary = fn result => TArrow (tupleTy [alpha, alpha], result)
 
   val special =
@@ -232,8 +254,11 @@ structure Basis = struct
      (">", (([numClass], binary boolTy), SValue)),
      ("<=", (([numClass], binary boolTy), SValue)),
      (">=", (([numClass], binary boolTy), SValue)),
-     ("~", (([numClass], TArrow (alpha, alpha)), SValue)),
-     ("abs", (([numClass], TArrow (alpha, alpha)), SValue))]
+     ("~", (([realintClass], TArrow (alpha, alpha)), SValue)),
+     ("abs", (([realintClass], TArrow (alpha, alpha)), SValue)),
+     ("/", (([realClass], binary alpha), SValue)),
+     ("div", (([wordintClass], binary alpha), SValue)),
+     ("mod", (([wordintClass], binary alpha), SValue))]
 
   (* --------------------------------------------------------------------------------------- *)
   (* Building the environment *)
@@ -324,8 +349,8 @@ structure Basis = struct
     in build (
       select (["unit", "bool", "int", "real", "string", "char", "list"], topTypes),
       SubsetList.append (boolCons, listCons),
-      select (["=", "<>", "+", "-", "*", "<", ">", "<=", ">=", "~"], special),
-      select (["^", "/", "div", "mod"], topValues),
+      select (["=", "<>", "+", "-", "*", "<", ">", "<=", ">=", "~", "/", "div", "mod"], special),
+      select (["^"], topValues),
       [])
     end
 

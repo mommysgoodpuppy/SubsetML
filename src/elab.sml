@@ -204,20 +204,51 @@ structure Elab = struct
 
   val constTy = fn
       SInt _ => intTy
+    | SWord _ => intTy
     | SReal _ => realTy
     | SString _ => stringTy
     | SChar _ => charTy
 
-  val checkConst = fn (pos, c, st) =>
+  (* Appendix E: an integer constant is int or Int64.int by context and defaults to int; beyond
+     the int range only Int64.int remains. A word constant is one of the word types; SubsetML
+     has no `word` type to default to, so context must decide it. *)
+  val checkConst = fn (pos, c, level, st) =>
     case c of
-      SInt text => if CompilerText.int32Literal text then Ok (intTy, st)
-        else Err ("integer constant outside signed 32-bit range: " ^ text, pos)
+      SInt text =>
+        if CompilerText.int32Literal text then Ok (fresh (st, KClass [intName, int64Name], level))
+        else (if CompilerText.int64Literal text then Ok (fresh (st, KClass [int64Name], level))
+        else Err ("integer constant outside signed 64-bit range: " ^ text, pos))
+    | SWord _ => let val (t, st') = fresh (st, KClass wordNames, level) in Ok (t, st') end
+    | SReal _ => let val (t, st') = fresh (st, KClass [realName, real32Name], level) in Ok (t, st') end
     | _ => Ok (constTy c, st)
 
   val mergeVars = fn (pos, a, b, st) =>
     case SmlList.find (fn (x, _) => SmlList.exists (fn (y, _) => x = y) a) b of
       SOME entry => let val (x, _) = entry in Err ("variable " ^ x ^ " is bound twice in a pattern", pos) end
     | NONE => Ok (SubsetList.append (a, b), st)
+
+  (* A constant in an expression or pattern. Read from Workman, an in-range integer literal takes
+     any numeric type by context and a larger one any but int, and a decimal literal real or
+     Real32.real; the site is recorded, since Workman's own default decides it. *)
+  val literalConst = fn (q, c, level, inPattern, st) =>
+    case (c, st) of
+      (SInt text, State (_, _, _, _, SOME _)) =>
+        let
+          (* A real constant is no pattern (SML's real does not admit equality). *)
+          val numeric = SubsetList.append ((if inPattern then [intName, int64Name] else [intName, int64Name, realName, real32Name]), wordNames)
+          val (t, st') = if CompilerText.int32Literal text
+            then fresh (st, KClass numeric, level)
+            else fresh (st, KClass (SmlList.filter (fn n => SubsetBool.not (sameName (n, intName))) numeric), level)
+          val State (vs, nx, sels, recs, sites) = st'
+        in Ok (t, State (vs, nx, sels, recs,
+            SOME (Literal (q, t) :: (case sites of SOME xs => xs | NONE => [])))) end
+    | (SReal _, State (_, _, _, _, SOME _)) =>
+        let
+          val (t, st') = fresh (st, KClass [realName, real32Name], level)
+          val State (vs, nx, sels, recs, sites) = st'
+        in Ok (t, State (vs, nx, sels, recs,
+            SOME (Literal (q, t) :: (case sites of SOME xs => xs | NONE => [])))) end
+    | _ => checkConst (q, c, level, st)
 
   val constructorScheme = fn entry =>
     case entry of NONE => NONE | SOME value =>
@@ -229,7 +260,7 @@ structure Elab = struct
     let val (env, level, _) = ctx in
       case p of
         PWild => let val (t, st') = fresh (st, KPlain, level) in Ok ((t, []), st') end
-      | PScon (q, c) => bind (checkConst (q, c, st)) (fn t => fn st => Ok ((t, []), st))
+      | PScon (q, c) => bind (literalConst (q, c, level, true, st)) (fn t => fn st => Ok ((t, []), st))
       | PPinned (q, _) => Err ("internal pinned pattern was not lowered", q)
       | PId (q, id) =>
           (case (constructorScheme (Env.value (env, id)), id) of
@@ -313,19 +344,7 @@ structure Elab = struct
   val rec exp = fn (ctx, e, st) =>
     let val (env, level, _) = ctx in
       case e of
-        EScon (q, SInt text) =>
-          (case st of
-             State (_, _, _, _, SOME _) =>
-               (* From Workman: an in-range integer literal is int or real by context; a larger
-                  one is real, as Workman's default makes it. *)
-               let
-                 val (t, st') = if CompilerText.int32Literal text
-                   then fresh (st, KClass [intName, realName], level) else (realTy, st)
-                 val State (vs, nx, sels, recs, sites) = st'
-               in Ok (t, State (vs, nx, sels, recs,
-                   SOME (Literal (q, t) :: (case sites of SOME xs => xs | NONE => [])))) end
-           | _ => checkConst (q, SInt text, st))
-      | EScon (q, c) => checkConst (q, c, st)
+        EScon (q, c) => literalConst (q, c, level, false, st)
       | EId (q, id) =>
           (case Env.value (env, id) of
              SOME entry =>
@@ -610,8 +629,19 @@ structure Elab = struct
         Free (KClass _, l) => l > level | _ => false) (freeVars (st, t))
       val rec settle = fn (vars, st) => case vars of
         [] => Ok ((), st)
-      | v :: rest => bind (unifyAt (st, pos, "integer default", TVar v, intTy))
-          (fn _ => fn st => settle (rest, st))
+      | v :: rest =>
+          let val names = case lookup (st, v) of Free (KClass ns, _) => ns | _ => [intName]
+              val has = fn n => SmlList.exists (fn m => sameName (m, n)) names
+          in
+            if has intName then bind (unifyAt (st, pos, "integer default", TVar v, intTy)) (fn _ => fn st => settle (rest, st))
+            else (if has realName then bind (unifyAt (st, pos, "real default", TVar v, realTy)) (fn _ => fn st => settle (rest, st))
+            else (case names of
+                [only] => if sameName (only, int64Name)
+                  then Err ("integer constant outside signed 32-bit range; annotate it as Int64.int", pos)
+                  else Err ("the type of this numeric constant or operation is undecided; annotate it as " ^ nameOf only, pos)
+              | _ => Err ("the type of this numeric constant or operation is undecided; annotate it as one of "
+                      ^ SubsetString.concatWith (SmlList.map nameOf names, ", "), pos)))
+          end
       (* Only a default no Workman literal decides is recorded: Workman would choose Real64. *)
       val noteDefault = fn st => case (SmlList.filter (fn v => SubsetBool.not (literalVar (st, v))) defaults, st) of
           ([], _) => st

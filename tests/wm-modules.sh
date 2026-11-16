@@ -175,7 +175,7 @@ reject_sml 'structure Case = struct structure P = Target.Inner end' 'structure'
 reject_sml 'structure Case = struct structure P = Target structure P = Target end' 'duplicate structure alias'
 reject_sml 'structure Case = struct structure P = Missing end' 'unbound structure Missing'
 reject_sml 'structure Case = struct structure P = List end' 'not Basis structure List'
-reject_sml 'structure P = Target' 'struct ... end'
+reject_sml 'structure P = Target.Inner' 'alias structure expressions'
 reject_sml 'val y = let structure P = Target in 1 end' 'tructure'
 # An open alone doesn't make the module's own name usable as a qualifier, in either language.
 cat > "$tmp/open/qualified.wm" <<'WM'

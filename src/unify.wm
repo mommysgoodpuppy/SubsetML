@@ -334,7 +334,13 @@ let rec requireKind = (st, k, t) => {
           match(combine(k, k2)) {
             Some(k') => { Unified(set(st, w, Free(k', l))) },
             None => {
-              Mismatch("it must be " ++ kindText(k) ++ " and " ++ kindText(k2))
+              match(k, k2) {
+                (KEq, KClass([n, .._])) => { Mismatch("type " ++ nameOf(n) ++ " does not admit equality") },
+                (KClass([n, .._]), KEq) => { Mismatch("type " ++ nameOf(n) ++ " does not admit equality") },
+                _ => {
+                  Mismatch("it must be " ++ kindText(k) ++ " and " ++ kindText(k2))
+                }
+              }
             }
           }
         },

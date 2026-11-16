@@ -50,15 +50,17 @@ structure CompilerText = struct
 
   (* Compare normalized digit spellings instead of accumulating a magnitude:
      the absolute value of minInt cannot itself fit in a signed integer. *)
-  val int32Literal = fn text =>
+  val signedLiteral = fn (text, hexBounds, decimalBounds) =>
     let
       val (negative, digits) = case characters text of
         #"~" :: rest => (true, rest) | rest => (false, rest)
       val (hex, digits) = case digits of
         #"0" :: #"x" :: rest => (true, rest) | rest => (false, rest)
+      val (hexNegative, hexPositive) = hexBounds
+      val (decimalNegative, decimalPositive) = decimalBounds
       val bound = characters
-        (if hex then (if negative then "80000000" else "7fffffff")
-         else (if negative then "2147483648" else "2147483647"))
+        (if hex then (if negative then hexNegative else hexPositive)
+         else (if negative then decimalNegative else decimalPositive))
       val alphabet = characters "0123456789abcdef"
       val rec digit = fn (c, cs, n) => case cs of
         [] => 16 | d :: rest => if SubsetChar.toLower c = d then n else digit (c, rest, n + 1)
@@ -73,4 +75,10 @@ structure CompilerText = struct
       val size = SubsetList.length normalized
       val limitSize = SubsetList.length bound
     in size < limitSize orelse (size = limitSize andalso within (normalized, bound)) end
+
+  val int32Literal = fn text =>
+    signedLiteral (text, ("80000000", "7fffffff"), ("2147483648", "2147483647"))
+  val int64Literal = fn text =>
+    signedLiteral (text, ("8000000000000000", "7fffffffffffffff"),
+                   ("9223372036854775808", "9223372036854775807"))
 end

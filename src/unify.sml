@@ -241,7 +241,11 @@ structure Unify = struct
            Free (k2, l) =>
              (case combine (k, k2) of
                 SOME k' => Unified (set (st, w, Free (k', l)))
-              | NONE => Mismatch ("it must be " ^ kindText k ^ " and " ^ kindText k2))
+              | NONE =>
+                  (case (k, k2) of
+                     (KEq, KClass (n :: _)) => Mismatch ("type " ^ nameOf n ^ " does not admit equality")
+                   | (KClass (n :: _), KEq) => Mismatch ("type " ^ nameOf n ^ " does not admit equality")
+                   | _ => Mismatch ("it must be " ^ kindText k ^ " and " ^ kindText k2)))
          | Bound _ => Unified st)
     | (KEq, TCon ((_, name, _, eq), args)) =>
         if eq then requireAll (st, k, args)

@@ -364,9 +364,102 @@ structure Translate = struct
     NONE => Unify.Ok ((), st)
   | SOME pos => Unify.Err (defaultedMessage, pos)
 
-  (* Translates one parsed file. `structures` names every structure of the program. *)
-  val toWm = fn (structures, path, src, prog, comments) =>
+  (* Bottom-up rewrites of a program's expressions (f) and patterns (g). *)
+  val rec mapPat = fn (g, p) =>
+    let val go = fn x => mapPat (g, x) in
+      g (case p of
+           PRecord (q, fs) => PRecord (q, SmlList.map (fn (l, x) => (l, go x)) fs)
+         | PTuple ps => PTuple (SmlList.map go ps)
+         | PList ps => PList (SmlList.map go ps)
+         | PApp (q, id, x) => PApp (q, id, go x)
+         | PTyped (x, t) => PTyped (go x, t)
+         | _ => p)
+    end
+
+  val rec mapExp = fn (f, g, e) =>
     let
+      val go = fn x => mapExp (f, g, x)
+      val rules = fn rs => SmlList.map (fn (p, x) => (mapPat (g, p), go x)) rs
+    in
+      f (case e of
+           ERecord (p, fs) => ERecord (p, SmlList.map (fn (l, x) => (l, go x)) fs)
+         | ETuple es => ETuple (SmlList.map go es)
+         | EList es => EList (SmlList.map go es)
+         | ESeq es => ESeq (SmlList.map go es)
+         | ELet (ds, es) => ELet (SmlList.map (fn d => mapDec (f, g, d)) ds, SmlList.map go es)
+         | EApp (a, b) => EApp (go a, go b)
+         | ETyped (x, t) => ETyped (go x, t)
+         | ECopy (p, source, target, t) => ECopy (p, go source, go target, t)
+         | EAndalso (a, b) => EAndalso (go a, go b)
+         | EOrelse (a, b) => EOrelse (go a, go b)
+         | EIf (c, a, b) => EIf (go c, go a, go b)
+         | ECase (x, rs) => ECase (go x, rules rs)
+         | EFn rs => EFn (rules rs)
+         | _ => e)
+    end
+
+  and mapDec = fn (f, g, d) =>
+    case d of
+      DVal (p, vs, plain, recs) =>
+        let val rules = fn rs => SmlList.map (fn (pat, e) => (mapPat (g, pat), mapExp (f, g, e))) rs in
+          DVal (p, vs, rules plain, rules recs)
+        end
+    | DLocal (p, hidden, body) =>
+        DLocal (p, SmlList.map (fn d => mapDec (f, g, d)) hidden, SmlList.map (fn d => mapDec (f, g, d)) body)
+    | _ => d
+
+  val mapProgramWith = fn (f, g, prog) =>
+    SmlList.map (fn
+        TopDecs sds => TopDecs (SmlList.map (fn
+            SDec d => SDec (mapDec (f, g, d))
+          | SStructure (p, binds) => SStructure (p, SmlList.map (fn (n, aliases, ds) =>
+              (n, aliases, SmlList.map (fn d => mapDec (f, g, d)) ds)) binds)) sds)
+      | TopExp (p, e) => TopExp (p, mapExp (f, g, e))) prog
+
+  val mapProgram = fn (f, prog) => mapProgramWith (f, fn p => p, prog)
+
+  (* The structure that owns a sized numeric type: `Word16` for `Word16.word`. *)
+  val sizedStructure = fn t =>
+    case t of
+      Types.TCon (n, []) =>
+        if SmlList.exists (fn m => Unify.sameName (n, m)) (Types.int64Name :: Types.wordNames)
+        then SOME (CompilerText.slice (Types.nameOf n, 0, CompilerText.size (Types.nameOf n) - 5))
+        else NONE
+    | _ => NONE
+
+  (* Workman spells `div` and `mod` per type: an operation the elaboration resolved to a word
+     type or Int64.int names that structure's function, `Word16.div`. *)
+  val sizedDivision = fn (st, prog) =>
+    let
+      val Unify.State (_, _, _, _, sites) = st
+      val resolved = SmlList.mapPartial (fn site => case site of
+          Unify.Operand (p, t) => (case Unify.prune (st, t) of
+             Types.TArrow (_, result) => (case sizedStructure (Unify.prune (st, result)) of
+               SOME q => SOME (p, q) | NONE => NONE)
+           | _ => NONE)
+        | _ => NONE) (case sites of SOME xs => xs | NONE => [])
+      val rewrite = fn e =>
+        case e of
+          EId (p, ([], opr)) =>
+            if opr = "div" orelse opr = "mod" then
+              (case SmlList.find (fn (q, _) => (p = q)) resolved of
+                 SOME found => let val (_, owner) = found in EId (p, ([owner], opr)) end
+               | NONE => e)
+            else e
+        | _ => e
+    in
+      mapProgram (rewrite, prog)
+    end
+
+  (* Translates one parsed file. `structures` names every structure of the program. *)
+  val toWm = fn (structures, path, src, source, comments) =>
+    let
+      (* The file's standalone elaboration, when its environment can be resolved, decides
+         numeric defaults and the per-type spelling of `div` and `mod`. *)
+      val lenient = case Basis.initial of Unify.Err _ => NONE | Unify.Ok (basis, _) =>
+        (case Elab.program (basis, source, Unify.lenient) of Unify.Err _ => NONE
+         | Unify.Ok (_, st) => SOME st)
+      val prog = case lenient of SOME st => sizedDivision (st, source) | NONE => source
       val (self, phrases) = module prog
       val (decs, exps) = parts phrases
       val used = distinct (SubsetList.append (concatMap (decQuals, decs), concatMap (expQuals, exps)))
@@ -382,9 +475,8 @@ structure Translate = struct
         SmlList.map (fn (p, name, target) =>
           Doc.atom (p, "export from \"./" ^ WmPrint.fileName target ^ "\" import * as " ^ name ^ ";")) aliases)
       (* Reject a numeric default when the file's standalone environment can be resolved. *)
-      val defaulted = case Basis.initial of Unify.Err _ => false | Unify.Ok (basis, _) =>
-        (case Elab.program (basis, prog, Unify.lenient) of Unify.Err _ => false
-         | Unify.Ok (_, st) => case defaultedSite st of SOME _ => true | NONE => false)
+      val defaulted = case lenient of NONE => false | SOME st =>
+        (case defaultedSite st of SOME _ => true | NONE => false)
       val gaps = SubsetList.append (declarationGaps (structures, phrases),
         (if defaulted then [defaultedMessage] else []))
       val doc = if SmlList.null gaps then Doc.stack (SmlList.map (fn td => WmPrint.topdec (structures, td)) phrases) else Doc.text ""
@@ -407,45 +499,6 @@ structure Translate = struct
     end
 
   (* Traverse expressions without changing source positions or declaration layout. *)
-  val rec mapExp = fn (f, e) =>
-    let
-      val go = fn x => mapExp (f, x)
-      val rules = fn rs => SmlList.map (fn (p, x) => (p, go x)) rs
-    in
-      f (case e of
-           ERecord (p, fs) => ERecord (p, SmlList.map (fn (l, x) => (l, go x)) fs)
-         | ETuple es => ETuple (SmlList.map go es)
-         | EList es => EList (SmlList.map go es)
-         | ESeq es => ESeq (SmlList.map go es)
-         | ELet (ds, es) => ELet (SmlList.map (fn d => mapDec (f, d)) ds, SmlList.map go es)
-         | EApp (a, b) => EApp (go a, go b)
-         | ETyped (x, t) => ETyped (go x, t)
-         | ECopy (p, source, target, t) => ECopy (p, go source, go target, t)
-         | EAndalso (a, b) => EAndalso (go a, go b)
-         | EOrelse (a, b) => EOrelse (go a, go b)
-         | EIf (c, a, b) => EIf (go c, go a, go b)
-         | ECase (x, rs) => ECase (go x, rules rs)
-         | EFn rs => EFn (rules rs)
-         | _ => e)
-    end
-
-  and mapDec = fn (f, d) =>
-    case d of
-      DVal (p, vs, plain, recs) =>
-        let val rules = fn rs => SmlList.map (fn (pat, e) => (pat, mapExp (f, e))) rs in
-          DVal (p, vs, rules plain, rules recs)
-        end
-    | DLocal (p, hidden, body) =>
-        DLocal (p, SmlList.map (fn d => mapDec (f, d)) hidden, SmlList.map (fn d => mapDec (f, d)) body)
-    | _ => d
-
-  val mapProgram = fn (f, prog) =>
-    SmlList.map (fn
-        TopDecs sds => TopDecs (SmlList.map (fn
-            SDec d => SDec (mapDec (f, d))
-          | SStructure (p, binds) => SStructure (p, SmlList.map (fn (n, aliases, ds) =>
-              (n, aliases, SmlList.map (fn d => mapDec (f, d)) ds)) binds)) sds)
-      | TopExp (p, e) => TopExp (p, mapExp (f, e))) prog
 
   (* Native source spelling is a backend mapping, not a change to WM names or FFI keys.
      One project-wide prefix is absent from every input byte string. *)
@@ -477,24 +530,30 @@ structure Translate = struct
       mapProgram (rewrite, prog)
     end
 
-  (* A Workman integer literal whose context made it real is printed as an SML real constant. *)
+  (* A Workman integer literal whose context made it real or a word is printed as an SML real or
+     word constant: `1` as `1.0`, `0x1F` as `0wx1F`. *)
   val realLiterals = fn (st, prog) =>
     let
       val Unify.State (_, _, _, _, sites) = st
-      val positions = SmlList.mapPartial (fn site => case site of
+      val isWord = fn n => SmlList.exists (fn m => Unify.sameName (n, m)) Types.wordNames
+      val isReal = fn n => Unify.sameName (n, Types.realName) orelse Unify.sameName (n, Types.real32Name)
+      val kinds = SmlList.mapPartial (fn site => case site of
           Unify.Literal (p, t) => (case Unify.prune (st, t) of
-             Types.TCon (n, []) => if Unify.sameName (n, Types.realName) then SOME p else NONE
+             Types.TCon (n, []) => if isReal n then SOME (p, true) else (if isWord n then SOME (p, false) else NONE)
            | _ => NONE)
         | _ => NONE) (case sites of SOME xs => xs | NONE => [])
-      val rewrite = fn e =>
-        case e of
-          EScon (p, SInt text) =>
-            if SmlList.exists (fn q => (p = q)) positions andalso
-               SubsetBool.not (SubsetList.exists (CompilerText.characters text, fn c => c = #"x"))
-            then EScon (p, SReal (text ^ ".0")) else e
-        | _ => e
+      val hex = fn text => SubsetList.exists (CompilerText.characters text, fn c => c = #"x")
+      val constant = fn (p, c) =>
+        case (c, SmlList.find (fn (q, _) => (p = q)) kinds) of
+          (SInt text, SOME (_, true)) => if hex text then c else SReal (text ^ ".0")
+        | (SInt text, SOME (_, false)) =>
+            if CompilerText.size text > 0 andalso CompilerText.slice (text, 0, 1) = "~" then c
+            else (if hex text then SWord ("0wx" ^ CompilerText.drop (text, 2)) else SWord ("0w" ^ text))
+        | _ => c
+      val rewrite = fn e => case e of EScon (p, c) => EScon (p, constant (p, c)) | _ => e
+      val pattern = fn pat => case pat of PScon (p, c) => PScon (p, constant (p, c)) | _ => pat
     in
-      mapProgram (rewrite, prog)
+      mapProgramWith (rewrite, pattern, prog)
     end
 
   (* WM can generalize a pure function-field alias; SML selector applications cannot.

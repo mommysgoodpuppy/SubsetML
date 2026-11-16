@@ -31,8 +31,8 @@ from "./sml_list.wm" import * as SmlList;
 from "./subset_string.wm" import * as SubsetString;
 from "./subset_list.wm" import * as SubsetList;
 from "./compiler_text.wm" import * as CompilerText;
-from "./sml_list_pair.wm" import * as SmlListPair;
 from "./subset_bool.wm" import * as SubsetBool;
+from "./sml_list_pair.wm" import * as SmlListPair;
 from "./subset_result.wm" import * as SubsetResult;
 
 export from "./subset_option_value.wm" import *;
@@ -330,17 +330,31 @@ let checkRecordLabels = (env, pos, labels, st) => {
 
 let constTy = match {
   SInt(_) => { intTy },
+  SWord(_) => { intTy },
   SReal(_) => { realTy },
   SString(_) => { stringTy },
   SChar(_) => { charTy }
 };
 
-let checkConst = (pos, c, st) => {
+/* Appendix E: an integer constant is int or Int64.int by context and defaults to int; beyond
+   the int range only Int64.int remains. A word constant is one of the word types; SubsetML
+   has no `word` type to default to, so context must decide it. */
+let checkConst = (pos, c, level, st) => {
   match(c) {
     SInt(text) => {
-      if (CompilerText.int32Literal(text)) { Ok(intTy, st) } else {
-        Err("integer constant outside signed 32-bit range: " ++ text, pos)
+      if (CompilerText.int32Literal(text)) { Ok(fresh(st, KClass([intName, int64Name]), level)) } else {
+        if (CompilerText.int64Literal(text)) { Ok(fresh(st, KClass([int64Name]), level)) } else {
+          Err("integer constant outside signed 64-bit range: " ++ text, pos)
+        }
       }
+    },
+    SWord(_) => {
+      let (t, st') = fresh(st, KClass(wordNames), level);
+      Ok(t, st')
+    },
+    SReal(_) => {
+      let (t, st') = fresh(st, KClass([realName, real32Name]), level);
+      Ok(t, st')
     },
     _ => { Ok(constTy(c), st) }
   }
@@ -353,6 +367,66 @@ let mergeVars = (pos, a, b, st) => {
       Err("variable " ++ x ++ " is bound twice in a pattern", pos)
     },
     None => { Ok(SubsetList.append(a, b), st) }
+  }
+};
+
+/* A constant in an expression or pattern. Read from Workman, an in-range integer literal takes
+   any numeric type by context and a larger one any but int, and a decimal literal real or
+   Real32.real; the site is recorded, since Workman's own default decides it. */
+let literalConst = (q, c, level, inPattern, st) => {
+  match(c, st) {
+    (SInt(text), State(_, _, _, _, Some(_))) => {
+      // A real constant is no pattern (SML's real does not admit equality).
+      let numeric = SubsetList.append(
+        if (inPattern) { [intName, int64Name] } else { [intName, int64Name, realName, real32Name] },
+        wordNames
+      );
+      let (t, st') = if (CompilerText.int32Literal(text)) { fresh(st, KClass(numeric), level) } else {
+        fresh(
+          st,
+          KClass(SmlList.filter((n) => { SubsetBool.not(sameName(n, intName)) })(numeric)),
+          level
+        )
+      };
+      let State(vs, nx, sels, recs, sites) = st';
+      Ok(
+        t,
+        State(
+          vs,
+          nx,
+          sels,
+          recs,
+          Some([
+            Literal(q, t),
+            ..match(sites) {
+              Some(xs) => { xs },
+              None => { [] }
+            }
+          ])
+        )
+      )
+    },
+    (SReal(_), State(_, _, _, _, Some(_))) => {
+      let (t, st') = fresh(st, KClass([realName, real32Name]), level);
+      let State(vs, nx, sels, recs, sites) = st';
+      Ok(
+        t,
+        State(
+          vs,
+          nx,
+          sels,
+          recs,
+          Some([
+            Literal(q, t),
+            ..match(sites) {
+              Some(xs) => { xs },
+              None => { [] }
+            }
+          ])
+        )
+      )
+    },
+    _ => { checkConst(q, c, level, st) }
   }
 };
 
@@ -377,7 +451,7 @@ let rec pat = (ctx, p, st) => {
       Ok((t, []), st')
     },
     PScon(q, c) => {
-      bind(checkConst(q, c, st))((t) => (st) => { Ok((t, []), st) })
+      bind(literalConst(q, c, level, true, st))((t) => (st) => { Ok((t, []), st) })
     },
     PPinned(q, _) => { Err("internal pinned pattern was not lowered", q) },
     PId(q, id) => {
@@ -507,34 +581,7 @@ let rec nonExpansive = (env, e) => {
 let rec exp = (ctx, e, st) => {
   let (env, level, _) = ctx;
   match(e) {
-    EScon(q, SInt(text)) => {
-      match(st) {
-        State(_, _, _, _, Some(_)) => {
-          /* From Workman: an in-range integer literal is int or real by context; a larger
-             one is real, as Workman's default makes it. */
-          let (t, st') = if (CompilerText.int32Literal(text)) { fresh(st, KClass([intName, realName]), level) } else { (realTy, st) };
-          let State(vs, nx, sels, recs, sites) = st';
-          Ok(
-            t,
-            State(
-              vs,
-              nx,
-              sels,
-              recs,
-              Some([
-                Literal(q, t),
-                ..match(sites) {
-                  Some(xs) => { xs },
-                  None => { [] }
-                }
-              ])
-            )
-          )
-        },
-        _ => { checkConst(q, SInt(text), st) }
-      }
-    },
-    EScon(q, c) => { checkConst(q, c, st) },
+    EScon(q, c) => { literalConst(q, c, level, false, st) },
     EId(q, id) => {
       match(Env.value(env, id)) {
         Some(entry) => {
@@ -985,7 +1032,37 @@ and closeBinding = (level, explicit, generalizable, pos, x, t, st) => {
     match(vars) {
       [] => { Ok(void, st) },
       [v, ..rest] => {
-        bind(unifyAt(st, pos, "integer default", TVar(v), intTy))((_) => (st) => { settle(rest, st) })
+        let names = match(lookup(st, v)) {
+          Free(KClass(ns), _) => { ns },
+          _ => { [intName] }
+        };
+        let has = (n) => { SmlList.exists((m) => { sameName(m, n) })(names) };
+        if (has(intName)) {
+          bind(unifyAt(st, pos, "integer default", TVar(v), intTy))((_) => (st) => { settle(rest, st) })
+        } else {
+          if (has(realName)) {
+            bind(unifyAt(st, pos, "real default", TVar(v), realTy))((_) => (st) => { settle(rest, st) })
+          } else {
+            match(names) {
+              [only] => {
+                if (sameName(only, int64Name)) {
+                  Err("integer constant outside signed 32-bit range; annotate it as Int64.int", pos)
+                } else {
+                  Err(
+                    "the type of this numeric constant or operation is undecided; annotate it as " ++ nameOf(only),
+                    pos
+                  )
+                }
+              },
+              _ => {
+                Err(
+                  "the type of this numeric constant or operation is undecided; annotate it as one of " ++ SubsetString.concatWith(SmlList.map(nameOf)(names), ", "),
+                  pos
+                )
+              }
+            }
+          }
+        }
       }
     }
   };

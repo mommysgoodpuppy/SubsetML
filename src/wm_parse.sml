@@ -175,17 +175,10 @@ structure WmParse = struct
   (* Patterns. As in WmPrint, `inMatch` marks a match arm and `binds` whether a bare name binds
      at this position. *)
 
-  (* A bare Workman integer literal is an SML int when it fits in Int32 and real otherwise, so
-     `1` is int and `1.0` is real. Workman itself types `1` from context and defaults it to
-     Real64, so Real64 code read here must spell its integral constants `1.0`. *)
-  val number = fn c =>
-    case c of
-      SInt s => if CompilerText.int32Literal s then c else SReal (s ^ ".0")
-    | _ => c
 
   val negativeLiteral = fn (minusPos, ts) =>
     case peek ts of
-      (WScon (SInt s), p) => if (p = minusPos + 1) then SOME (number (SInt ("~" ^ s))) else NONE
+      (WScon (SInt s), p) => if (p = minusPos + 1) then SOME (SInt ("~" ^ s)) else NONE
     | (WScon (SReal s), p) => if (p = minusPos + 1) then SOME (SReal ("~" ^ s)) else NONE
     | _ => NONE
 
@@ -232,7 +225,7 @@ structure WmParse = struct
       | (WKey "void", _) => Done (PTuple [], advance ts)
       | (WKey "true", p) => Done (PId (p, ([], "true")), advance ts)
       | (WKey "false", p) => Done (PId (p, ([], "false")), advance ts)
-      | (WScon (SInt s), p) => Done (PScon (p, number (SInt s)), advance ts)
+      | (WScon (SInt s), p) => Done (PScon (p, SInt s), advance ts)
       | (WScon (SReal s), p) => Done (PScon (p, SReal s), advance ts)
       | (WScon c, p) => Done (PScon (p, c), advance ts)
       | (WKey "-", p) =>
@@ -720,7 +713,7 @@ structure WmParse = struct
 
   and parsePrimary = fn ts =>
     case peek ts of
-      (WScon c, p) => Done (EScon (p, number c), advance ts)
+      (WScon c, p) => Done (EScon (p, c), advance ts)
     | (WKey "true", p) => Done (EId (p, ([], "true")), advance ts)
     | (WKey "false", p) => Done (EId (p, ([], "false")), advance ts)
     | (WKey "void", _) => Done (ETuple [], advance ts)

@@ -99,7 +99,7 @@ let substring = (source, start, count) => {
 
 /* Compare normalized digit spellings instead of accumulating a magnitude:
    the absolute value of minInt cannot itself fit in a signed integer. */
-let int32Literal = (text) => {
+let signedLiteral = (text, hexBounds, decimalBounds) => {
   let (negative, digits) = match(characters(text)) {
     ['~', ..rest] => { (true, rest) },
     Var(rest) => { (false, rest) }
@@ -108,7 +108,9 @@ let int32Literal = (text) => {
     ['0', 'x', ..rest] => { (true, rest) },
     Var(rest) => { (false, rest) }
   };
-  let bound = characters(if (hex) { if (negative) { "80000000" } else { "7fffffff" } } else { if (negative) { "2147483648" } else { "2147483647" } });
+  let (hexNegative, hexPositive) = hexBounds;
+  let (decimalNegative, decimalPositive) = decimalBounds;
+  let bound = characters(if (hex) { if (negative) { hexNegative } else { hexPositive } } else { if (negative) { decimalNegative } else { decimalPositive } });
   let alphabet = characters("0123456789abcdef");
   let rec digit = (c, cs, n) => {
     match(cs) {
@@ -135,4 +137,15 @@ let int32Literal = (text) => {
   if (size < limitSize) { true } else {
     if (size == limitSize) { within(normalized, bound) } else { false }
   }
+};
+
+let int32Literal = (text) => {
+  signedLiteral(text, ("80000000", "7fffffff"), ("2147483648", "2147483647"))
+};
+let int64Literal = (text) => {
+  signedLiteral(
+    text,
+    ("8000000000000000", "7fffffffffffffff"),
+    ("9223372036854775808", "9223372036854775807")
+  )
 };

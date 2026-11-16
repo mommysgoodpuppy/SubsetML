@@ -54,6 +54,15 @@ let charName = (5, "char", 0, true);
 let listName = (6, "list", 1, true);
 let optionName = (7, "option", 1, true);
 let orderName = (8, "order", 0, true);
+/* The sized numeric types of the SML Basis Library. MLWorks has Word8, Word16 and Word32;
+   Word64, Int64 and Real32 build with MLton only (docs/spec.md §9.3). */
+let word8Name = (20, "Word8.word", 0, true);
+let word16Name = (21, "Word16.word", 0, true);
+let word32Name = (22, "Word32.word", 0, true);
+let word64Name = (23, "Word64.word", 0, true);
+let int64Name = (24, "Int64.int", 0, true);
+let real32Name = (25, "Real32.real", 0, false);
+let wordNames = [word8Name, word16Name, word32Name, word64Name];
 let firstStamp = 100;
 
 let boolTy = TCon(boolName, []);

@@ -72,11 +72,11 @@ nonfix op raise sharing sig signature where while with withtype :> ...
 
 | Constant | Status |
 |---|---|
-| integer, decimal and hex (`42`, `~7`, `0x1F`, `~0x1f`) | kept; signed 32-bit bounds (§9.3) |
+| integer, decimal and hex (`42`, `~7`, `0x1F`, `~0x1f`) | kept; `int` or `Int64.int` by context, within signed 64-bit bounds (§9.3, §9.4) |
 | real (`1.5`, `~2.0e~3`, `1E10`) | kept |
 | string (all escapes of §2.2, including `\^c`, `\ddd`, `\uxxxx` and `\f…f\` gaps) | kept |
 | character `#"c"` | kept |
-| word (`0w7`, `0wx1F`) | **omitted** |
+| word (`0w7`, `0wx1F`) | kept; one of the word types by context (§9.4) |
 
 A string may contain only the printable characters of §2.2 (codes 33–126 and space) besides
 escapes. The character set is 8-bit, so `\uxxxx` must denote a value ≤ 255 (Appendix E: a
@@ -206,11 +206,21 @@ These are unchanged (§4, §6), including the parts that are easy to get wrong:
 * **Equality attribute** (§4.4, §4.6): `=` and `<>` have type `''a * ''a -> bool` internally.
   Equality type variables still arise during inference even though `''a` can't be written. `real`
   does not admit equality.
-* **Overloading** (Appendix E): `abs ~ + - * < > <= >=` accept `int` or `real`.
-  `div` and `mod` are integer-only; `/` is real-only. Text ordering operands are
-  rejected; use explicit custom Basis comparisons. At a value binding's closure,
-  unresolved numeric overloading defaults to `int`: `val twice = fn x => x + x`
-  has type `int -> int`. Annotate an operand for a real version.
+* **Overloading** (Appendix E), over the numeric types of §9.3 and §9.4:
+
+  | Identifiers | Class | Types |
+  |---|---|---|
+  | `+ - *`, `< > <= >=` | `num` | `int`, `Int64.int`, `Word8.word`–`Word64.word`, `real`, `Real32.real` |
+  | `~ abs` | `realint` | `int`, `Int64.int`, `real`, `Real32.real` |
+  | `div mod` | `wordint` | `int`, `Int64.int`, `Word8.word`–`Word64.word` |
+  | `/` | `real` | `real`, `Real32.real` |
+
+  Integer constants belong to `int` and `Int64.int`, word constants to the word types and real
+  constants to `real` and `Real32.real`. Text ordering operands are rejected; use explicit
+  custom Basis comparisons. At a value binding's closure, unresolved overloading defaults to
+  `int`, or to `real` for a class without `int`: `val twice = fn x => x + x` has type
+  `int -> int`. A word constant whose context names no word type is an error, since SubsetML
+  has no `word` type to default to.
 * **Exceptions still exist dynamically.** The language can't declare, raise or handle them, but
   the Definition's dynamic semantics still produces packets: `Match` (failed `fn`/`case`), `Bind`
   (failed `val`). Current bootstrap host calls can also raise exceptions such as `Subscript`
@@ -311,12 +321,13 @@ end of a file may be omitted.
 | Component | Status |
 |---|---|
 | types `unit bool int real string char list` | kept; `int` is signed 32-bit |
-| types `word`, `ref`, `exn` | **omitted** |
+| types `ref`, `exn` | **omitted** |
+| type `word` | **omitted**; the sized words of §9.4 are kept |
 | `true false nil ::` | kept |
 | `=` | kept |
 | `ref`, `:=` | **omitted** |
 | `Match`, `Bind` as identifiers | **omitted** (still raised dynamically, §5) |
-| overloaded identifiers (Appendix E) | numeric only: `int` and `real`; default `int` |
+| overloaded identifiers (Appendix E) | numeric only, over the types of §9.3 and §9.4; default `int` (§5) |
 
 ### 9.2 Bootstrap namespace restriction
 
@@ -341,7 +352,8 @@ See [Integer contract and native targets](integers.md) for the full contract,
 examples, backend requirements and current scope.
 
 * Range: **~2147483648 through 2147483647**, inclusive. Decimal and hexadecimal
-  constants outside it are static errors, including patterns. Negative literals
+  constants outside it are static errors unless their context makes them `Int64.int`
+  (§9.4), including patterns. Negative literals
   use SML's `~`; negating the minimum value is a distinct overflowing operation.
 * Integer constants have type `int`, real constants have type `real`. There is
   no implicit conversion between the two. `1 + 1.0` and `1 / 2` are type errors.
@@ -364,8 +376,27 @@ examples, backend requirements and current scope.
 * The `native` command explicitly targets `Int32.int` and resolved Int32
   operations; relying on a host's default `int` is insufficient (MLWorks uses
   30 bits). The checker alone does not change a host compiler's representation.
-* `int` translates to Workman's `Int32.Int` (`docs/translation.md`); a bare WM number
-  still translates to `real`. The native SML path does not depend on the WM compiler.
+* `int` translates to Workman's `Int32.Int` (`docs/translation.md`). A bare WM integer
+  literal takes its type from context, as in Workman. The native SML path does not depend on
+  the WM compiler.
+
+### 9.4 Sized numbers: words, `Int64` and `Real32`
+
+**Expansion (2026-11-16):** the SML Basis structures `Word8`, `Word16`, `Word32`, `Word64`,
+`Int64` and `Real32` are kept, with their types and the overloading of §5. They are the
+counterparts of Workman's sized numeric types, so Workman's operator table translates.
+
+* Each word structure has `div`, `mod`, `andb`, `orb`, `xorb` and `notb`; `Int64` has
+  `div`, `mod` and `toString`. These are the operations Workman's std also has; others are
+  omitted until both sides have them.
+* Word arithmetic wraps; `div` and `mod` on zero raise `Div`. Word constants are unsigned:
+  `~0w1` is a lexical error, and `~` does not apply to words (Appendix E's `realint`).
+* `Int64.int` constants lie within signed 64 bits; a larger constant is a static error.
+* **Portability.** MLWorks has `Word8`, `Word16` and `Word32`, but not `Word64`, `Int64` or
+  `Real32`. Programs using those three build with MLton only, until portable implementations
+  exist.
+* Workman spells `div` and `mod` per type: `Word16.div(a, b)` for a `Word16.word` operation,
+  `Int32.div` for `int`. The translator chooses the spelling from the file's elaboration.
 
 ## 10. Implementation-defined choices
 
@@ -379,6 +410,5 @@ examples, backend requirements and current scope.
 
 ## 11. Open questions
 
-* Whether to add the `word` type.
 * Whether to require exhaustive matches, which would remove `Match` at runtime for native code.
   That is an extra restriction, so the Definition allows it.

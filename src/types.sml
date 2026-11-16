@@ -49,6 +49,15 @@ structure Types = struct
   val listName = (6, "list", 1, true)
   val optionName = (7, "option", 1, true)
   val orderName = (8, "order", 0, true)
+  (* The sized numeric types of the SML Basis Library. MLWorks has Word8, Word16 and Word32;
+     Word64, Int64 and Real32 build with MLton only (docs/spec.md §9.3). *)
+  val word8Name = (20, "Word8.word", 0, true)
+  val word16Name = (21, "Word16.word", 0, true)
+  val word32Name = (22, "Word32.word", 0, true)
+  val word64Name = (23, "Word64.word", 0, true)
+  val int64Name = (24, "Int64.int", 0, true)
+  val real32Name = (25, "Real32.real", 0, false)
+  val wordNames = [word8Name, word16Name, word32Name, word64Name]
   val firstStamp = 100
 
   val boolTy = TCon (boolName, [])
