@@ -1,14 +1,16 @@
 (* @subsetml
 from "./subset_option_value.sml" import * as SubsetOptionValue;
+from "./subset_result_value.sml" import * as SubsetResultValue;
 *)
 
 (* Custom Basis Result. Core operations take data first; procedure adapters are curried.
    Errors are ordinary datatype values. *)
 structure SubsetResult = struct
-  open SubsetOptionValue
+  open SubsetResultValue
 
-  datatype ('a, 'e) result = Ok of 'a | Err of 'e
-
+  local
+    open SubsetOptionValue
+  in
   val map = fn (value, f) =>
     case value of Ok x => Ok (f x) | Err error => Err error
 
@@ -32,5 +34,6 @@ structure SubsetResult = struct
   val isErr = fn Ok x => false | Err error => true
 
   val toOption = fn Ok x => SOME x | Err error => NONE
+  end
 
 end

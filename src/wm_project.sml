@@ -122,7 +122,24 @@ structure WmProject = struct
                 CompilerText.size (basisFile name) - 7))), pos),
              (WmLexer.WKey "import", pos), (WmLexer.WKey "*", pos), (WmLexer.WKey "as", pos),
              (WmLexer.WName [name], pos), (WmLexer.WKey ";", pos)]
-        in SubsetList.append (SubsetList.concat (SubsetList.map (uses (tokens, []), header)), tokens) end
+          (* Constructors and type names share the source Basis's identity too. Use private
+             opens, rather than rewriting spellings, so authored declarations and patterns
+             can shadow these names with the usual lexical rules. Explicit imports follow
+             the defaults and therefore still win. Basis sources supply their own imports. *)
+          val defaultOpen = fn (file, names) =>
+            if SubsetList.exists (tokens, fn (token, _) => case token of
+                 WmLexer.WName [name] => SubsetList.exists (names, fn n => n = name)
+               | _ => false) andalso
+               (case ModuleProject.identify (directory ^ "/subset_" ^ file ^ ".wm") of
+                  SubsetResult.Ok _ => true | SubsetResult.Err _ => false)
+            then [(WmLexer.WKey "from", 0),
+                  (WmLexer.WScon (Syntax.SString ("basis/" ^ file ^ ".wm")), 0),
+                  (WmLexer.WKey "import", 0), (WmLexer.WKey "*", 0), (WmLexer.WKey ";", 0)]
+            else []
+          val defaults = SubsetList.concat [
+            defaultOpen ("option_value", ["Option", "Some", "None"]),
+            defaultOpen ("result", ["Result", "Ok", "Err"])]
+        in SubsetList.concat [defaults, SubsetList.concat (SubsetList.map (uses (tokens, []), header)), tokens] end
     end
 
   (* Discovery reads only the supported import header. Preparation still validates aliases,

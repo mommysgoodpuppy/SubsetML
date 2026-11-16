@@ -50,6 +50,10 @@ let nested = 1 :> Math.add(2 :> inc);
 let asArgument = inc(3 :> inc);
 let afterGroup = 3 :> (curried)(4)();
 let standaloneSpace = curried 4;
+let annotatedArgument = curried (4: Int32.Int) 3;
+let annotatedCall = curried(4: Int32.Int)(3);
+let annotatedTuple = sub (10: Int32.Int, 3: Int32.Int);
+let annotatedResult = sub(10, 3): Int32.Int;
 let spaceChain = 3 :> curried 4 :> inc;
 let tupleFirst = ((a, b): (Int32.Int, Int32.Int), n: Int32.Int) => { a + b + n };
 let tupleInserted = (1, 2) :> tupleFirst(3);
@@ -58,7 +62,8 @@ let good = base == 8 && inserted == 7 && many == 6 && emptyCall == 13
   && returned == 7 && adapted == 7 && leftAssoc == 7
   && precedence == 10 && groupedInput == 4 && unary == -3 && !logic
   && length(appended) == 3 && pair == 3 && nested == 4 && asArgument == 5
-  && afterGroup == 7 && standaloneSpace(3) == 7 && spaceChain == 8 && tupleInserted == 6;
+  && afterGroup == 7 && standaloneSpace(3) == 7 && spaceChain == 8 && tupleInserted == 6
+  && annotatedArgument == 7 && annotatedCall == 7 && annotatedTuple == 7 && annotatedResult == 7;
 let input = () => { print("input"); (3: Int32.Int) };
 let arg = () => { print("arg"); (4: Int32.Int) };
 let factory = (n: Int32.Int) => {

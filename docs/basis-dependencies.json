@@ -11,10 +11,16 @@
       "sourceDependencies": [],
       "primitives": []
     },
+    "SubsetResultValue": {
+      "source": "src/subset_result_value.sml",
+      "sourceDependencies": [],
+      "primitives": []
+    },
     "SubsetResult": {
       "source": "src/subset_result.sml",
       "sourceDependencies": [
-        "SubsetOptionValue"
+        "SubsetOptionValue",
+        "SubsetResultValue"
       ],
       "primitives": []
     },

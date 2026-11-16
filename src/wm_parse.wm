@@ -929,6 +929,13 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
      Grouping returns a primary with no insertion slot. A space application is
      a fully constructed stage; a final explicit call supplies an insertion slot. */
   and parsePostfixForm = (ts) => {
+    /* An annotation belongs to the completed postfix expression, including a call
+       argument such as `f (1: Int32.Int) next`. Do not require an extra group. */
+    let finish = (value, insertion, rest) => {
+      if (isKey(":", rest)) {
+        bind(parseType(advance(rest)))((t) => (rest) => { Done((ETyped(value, t), None), rest) })
+      } else { Done((value, insertion), rest) }
+    };
     /* Direct self tail calls, not `bind` continuations, so a long application chain
        runs in constant stack on the Workman backend too. */
     let rec calls = (callee, insertion, ts) => {
@@ -944,7 +951,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
             (WName([label]), Var(p)) => {
               calls(EApp(ESelect(p, label), callee), None, advance(advance(ts)))
             },
-            _ => { Done((callee, insertion), ts) }
+            _ => { finish(callee, insertion, ts) }
           }
         } else {
           if (startsSpaceArgument(ts)) {
@@ -952,7 +959,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
               Done(arg, rest) => { calls(EApp(callee, arg), None, rest) },
               Fail(message, offset) => { Fail(message, offset) }
             }
-          } else { Done((callee, insertion), ts) }
+          } else { finish(callee, insertion, ts) }
         }
       }
     };

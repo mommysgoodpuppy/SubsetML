@@ -205,7 +205,39 @@ let implicitBasis = (basis, path, tokens) => {
             (WmLexer.WKey(";"), pos)
           ]
         };
-        SubsetList.append(SubsetList.concat(SubsetList.map(uses(tokens, []), header)), tokens)
+        /* Constructors and type names share the source Basis's identity too. Use private
+           opens, rather than rewriting spellings, so authored declarations and patterns
+           can shadow these names with the usual lexical rules. Explicit imports follow
+           the defaults and therefore still win. Basis sources supply their own imports. */
+        let defaultOpen = (file, names) => {
+          if (if (SubsetList.exists(
+            tokens,
+            (token, _) => {
+              match(token) {
+                WmLexer.WName([name]) => { SubsetList.exists(names, (n) => { n == name }) },
+                _ => { false }
+              }
+            }
+          )) {
+            match(ModuleProject.identify(directory ++ "/subset_" ++ file ++ ".wm")) {
+              SubsetResult.Ok(_) => { true },
+              SubsetResult.Err(_) => { false }
+            }
+          } else { false }) {
+            [
+              (WmLexer.WKey("from"), 0),
+              (WmLexer.WScon(Syntax.SString("basis/" ++ file ++ ".wm")), 0),
+              (WmLexer.WKey("import"), 0),
+              (WmLexer.WKey("*"), 0),
+              (WmLexer.WKey(";"), 0)
+            ]
+          } else { [] }
+        };
+        let defaults = SubsetList.concat([
+          defaultOpen("option_value", ["Option", "Some", "None"]),
+          defaultOpen("result", ["Result", "Ok", "Err"])
+        ]);
+        SubsetList.concat([defaults, SubsetList.concat(SubsetList.map(uses(tokens, []), header)), tokens])
       }
     }
   }

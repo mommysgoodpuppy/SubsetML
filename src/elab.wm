@@ -843,9 +843,10 @@ and dec = (ctx, d, st) => {
        since Workman's `private` hides it from importers. */
     DLocal(pos, hidden, body) => {
       let (env, level, scoped) = ctx;
+      let priorState = st;
       bind(decs(ctx, hidden, st))((private) => (st) => {
         bind(decs((plus(env, private), level, scoped), body, st))((visible) => (st) => {
-          match(localLeak(private, visible, st)) {
+          match(localLeak(private, visible, priorState, st)) {
             None => { Ok(visible, st) },
             Some(binding, tyName) => {
               Err(
@@ -862,14 +863,21 @@ and dec = (ctx, d, st) => {
 
 /* The first binding of `visible` whose type mentions a datatype or record type declared in
    `private`, with that type's name. A record type is a label set, as Workman's nominal
-   records are named by their declaration. */
-and localLeak = (private, visible, st) => {
+   records are named by their declaration. An open only aliases existing types: stamps and
+   record label sets present before the hidden declarations cannot be private declarations. */
+and localLeak = (private, visible, priorState, st) => {
+  let State(_, first, _, existingRecords, _) = priorState;
   let Env(_, hiddenTypes, _) = private;
   let Env(_, visibleTypes, visibleValues) = visible;
+  let sameLabels = (a, b) => {
+    if (SubsetList.length(a) == SubsetList.length(b)) {
+      SmlList.all((l) => { SmlList.exists((m) => { m == l })(b) })(a)
+    } else { false }
+  };
   let datatypes = SmlList.mapPartial(match {
     (Var(n), TyStr(_, t, cons)) => {
       match(t, cons) {
-        (TCon(name, _), [_, .._]) => { Some(n, name) },
+        (TCon(name, _), [_, .._]) => { if (stampOf(name) >= first) { Some(n, name) } else { None } },
         _ => { None }
       }
     }
@@ -880,7 +888,9 @@ and localLeak = (private, visible, st) => {
       match(t) {
         TRecord(fields) => {
           match(tupleComponents(fields)) {
-            None => { Some(n, labelsOf(fields)) },
+            None => {
+              if (SmlList.exists((labels) => { sameLabels(labels, labelsOf(fields)) })(existingRecords)) { None } else { Some(n, labelsOf(fields)) }
+            },
             Some(_) => { None }
           }
         },
@@ -888,11 +898,6 @@ and localLeak = (private, visible, st) => {
       }
     }
   })(hiddenTypes);
-  let sameLabels = (a, b) => {
-    if (SubsetList.length(a) == SubsetList.length(b)) {
-      SmlList.all((l) => { SmlList.exists((m) => { m == l })(b) })(a)
-    } else { false }
-  };
   let rec mentions = (t) => {
     match(prune(st, t)) {
       TCon(name, args) => {

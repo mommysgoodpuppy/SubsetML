@@ -690,6 +690,13 @@ structure WmParse = struct
      a fully constructed stage; a final explicit call supplies an insertion slot. *)
   and parsePostfixForm = fn ts =>
     let
+      (* An annotation belongs to the completed postfix expression, including a call
+         argument such as `f (1: Int32.Int) next`. Do not require an extra group. *)
+      val finish = fn (value, insertion, rest) =>
+        if isKey (":", rest) then
+          bind (parseType (advance rest)) (fn t => fn rest =>
+            Done ((ETyped (value, t), NONE), rest))
+        else Done ((value, insertion), rest)
       (* Direct self tail calls, not `bind` continuations, so a long application chain
          runs in constant stack on the Workman backend too. *)
       val rec calls = fn (callee, insertion, ts) =>
@@ -701,12 +708,12 @@ structure WmParse = struct
           (* `f(x).field` reads a field of the call's result: `#field (f x)`. *)
           (case peek (advance ts) of
              (WName [label], p) => calls (EApp (ESelect (p, label), callee), NONE, advance (advance ts))
-           | _ => Done ((callee, insertion), ts))
+           | _ => finish (callee, insertion, ts))
         else (if startsSpaceArgument ts then
           (case (if lambdaAhead ts then parseLambda ts else parsePrimary ts) of
              Done (arg, rest) => calls (EApp (callee, arg), NONE, rest)
            | Fail (message, offset) => Fail (message, offset))
-        else Done ((callee, insertion), ts)))
+        else finish (callee, insertion, ts)))
     in
       bind (parsePrimary ts) (fn value => fn rest => calls (value, NONE, rest))
     end

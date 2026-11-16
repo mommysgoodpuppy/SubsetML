@@ -46,6 +46,11 @@ dependency. It is separate from `SubsetOption` helpers to avoid a cycle:
 `SubsetResult.toOption` needs the datatype, while `SubsetOption.toResult` needs
 Result. Both depend on the independent datatype module.
 
+Result's datatype is likewise independent: `SubsetResultValue` declares
+`datatype ('a, 'e) result = Ok of 'a | Err of 'e`, and `SubsetResult` opens it. Its
+`SubsetOptionValue` open is local, so converting to Option does not re-export Option's
+type or constructors. Neither datatype module requires host operations.
+
 Compiler source and the old source-only list/option helpers use this datatype too.
 The compatibility checker retains SML's initial `option` for external fixtures;
 that is a separate nominal type. Full-SML comparison tests convert explicitly
@@ -56,6 +61,12 @@ Workman's generated datatype is marked `@basis-type Option`, just as Result is
 marked `@basis-type Result`: it adopts WM's existing Option identity so FFI and
 bare `Some`/`None` continue to interoperate. This WM integration does not make the
 SubsetML datatype special or restore it to the portable initial environment.
+
+WM's `generate-assets` reads the synced Option and Result datatype declarations with the WM
+grammar and packages their constructor descriptors. Only compiler lang-item identities, arities
+and stable constructor ID allocation remain hand-authored; constructor payloads and runtime
+spellings come from the source declarations. The compiler validates adopting declarations
+against that generated source contract.
 
 ## Explicit adapter operations
 

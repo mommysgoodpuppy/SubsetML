@@ -65,6 +65,13 @@ import * as X;`. The host adapters and the Basis modules themselves are excluded
 stays the translator's numeric namespace. Without `--basis`, these names keep the bootstrap
 meanings below. Workman's `std/` extensions are not part of the Basis and remain unbound.
 
+With `--basis`, bare `Option`, `Some` and `None` use the source datatype in
+`subset_option_value.wm`, while `Result`, `Ok` and `Err` use `subset_result.wm`. The translator
+supplies private opens when those names occur; it does not define another datatype or rewrite
+constructor spellings to a fixed module. Ordinary declarations and explicit imports can shadow
+these defaults. Values returned by Basis functions therefore match the same constructors used
+in authored patterns. Without `--basis`, the legacy bootstrap Option remains available.
+
 `before` and `o` are infix in the SML Basis Library, so native output renames bindings with
 those names, as it does SML keywords.
 
@@ -216,6 +223,8 @@ A grouped or space-applied stage is evaluated as written, then receives the inpu
 Only the outermost call's source form determines this rule: `x :> f(a)(b)` is
 `f(a)(x, b)`, while `x :> (f(a)(b))` is `f(a)(b)(x)`.
 Space application is also accepted in ordinary expressions and for lambda arguments.
+Postfix expressions accept type annotations, including call arguments: `add (1: Int32.Int) one`
+and `add(1: Int32.Int)(one)` both pass an annotated integer before the second argument.
 
 Pipes associate left-to-right and bind more tightly than unary and binary
 operators, matching WM. Thus `1 + 2 :> inc` means `1 + inc(2)`, and

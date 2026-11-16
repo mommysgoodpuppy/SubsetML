@@ -65,7 +65,7 @@ let value = readA(A.value) + readB(B.value);
 
  # "basis/x.wm" names the generated Basis module subset_x.wm in the --basis directory.
  basis = root / 'basis'; basis.mkdir()
- subprocess.run([compiler, 'wm', basis, 'src/subset_option_value.sml', 'src/subset_result.sml'], check=True)
+ subprocess.run([compiler, 'wm', basis, 'src/subset_option_value.sml', 'src/subset_result_value.sml', 'src/subset_result.sml'], check=True)
  entry.write_text('from "basis/result.wm" import * as R;\nlet value = R.getOr(R.map(R.Ok(1), (x) => { x + 1 }), 0);\n')
  subprocess.run([compiler, 'sml-entry', out, '--basis', basis, entry], check=True)
  driver.write_text('val _ = if Entry.value = 2 then () else OS.Process.exit OS.Process.failure\n')
@@ -74,7 +74,7 @@ let value = readA(A.value) + readB(B.value);
 
  # As in Workman, an unimported `List.name` is the Basis module subset_list.wm. A lowercase
  # head is a record read, and an explicit import of the name wins.
- subprocess.run([compiler, 'wm', basis, 'src/subset_option_value.sml', 'src/subset_result.sml', 'src/subset_list.sml'], check=True)
+ subprocess.run([compiler, 'wm', basis, 'src/subset_option_value.sml', 'src/subset_result_value.sml', 'src/subset_result.sml', 'src/subset_list.sml'], check=True)
  entry.write_text('record Source = { text: String };\n'
                   'let source: Source = .{ text = "abc" };\n'
                   'let before = (n: Int32.Int) => { n + 1 };\n'
@@ -86,6 +86,53 @@ let value = readA(A.value) + readB(B.value);
  driver.write_text('val _ = if Entry.value = 6 then () else OS.Process.exit OS.Process.failure\n')
  subprocess.run(['mlton', '-output', root / 'implicit-basis', mlb], check=True)
  subprocess.run([root / 'implicit-basis'], check=True)
+
+ # Bare Option/Result types and constructors are the source Basis datatypes. In particular,
+ # an option returned by a Basis collection can be matched without an explicit open.
+ subprocess.run([compiler, 'wm', basis, 'src/subset_option_value.sml', 'src/subset_result_value.sml', 'src/subset_result.sml', 'src/subset_option.sml'], check=True)
+ entry.write_text('''from "basis/option_value.wm" import * as O;
+from "basis/result.wm" import * as R;
+let option: Option<Int32.Int> = Some(4);
+let missing: Option<Int32.Int> = None;
+let result: Result<Int32.Int, String> = Ok(5);
+let failure: Result<Int32.Int, String> = Err("bad");
+let found = List.find([1, 2, 3], (n) => { n == 2 });
+let value = match(found) {
+  Some(n) => { n + Option.getOr(option, 0) + R.getOr(result, 0) },
+  None => { 0 }
+};
+let good = value == 11 && Option.isNone(missing) && R.isErr(failure)
+  && match(R.toOption(Ok(7))) { Some(n) => { n == 7 }, None => { false } }
+  && match(option) { O.Some(n) => { n == 4 }, O.None => { false } };
+''')
+ subprocess.run([compiler, 'sml-entry', out, '--basis', basis, entry], check=True)
+ driver.write_text('val _ = if Entry.good then () else OS.Process.exit OS.Process.failure\n')
+ subprocess.run(['mlton', '-output', root / 'basis-constructors', mlb], check=True)
+ subprocess.run([root / 'basis-constructors'], check=True)
+ # Implicit opens are private. They do not export the defaults through the entry module.
+ user = root / 'user.wm'
+ user.write_text('from "./entry.wm" import * as Entry;\nlet leaked = Entry.Some(1);\n')
+ result = subprocess.run([compiler, 'sml-entry', root / 'private-defaults', '--basis', basis, user], capture_output=True)
+ assert result.returncode != 0 and b'unbound' in result.stdout + result.stderr, result
+ # A local datatype shadows the defaults; no textual constructor replacement is involved.
+ entry.write_text('''type Option = | None | Some<String>;
+type Result = | Ok<String> | Err;
+let good = (match(Some("local")) { Some(s) => { s == "local" }, None => { false } })
+  && match(Ok("own")) { Ok(s) => { s == "own" }, Err => { false } };
+''')
+ subprocess.run([compiler, 'sml-entry', out, '--basis', basis, entry], check=True)
+ subprocess.run(['mlton', '-output', root / 'shadowed-constructors', mlb], check=True)
+ subprocess.run([root / 'shadowed-constructors'], check=True)
+ # Plain imports are private opens, but they do not privately declare the imported types.
+ (root / 'types.wm').write_text('type Item = | Item<Int32.Int>;\nrecord Box = { payload: Item };\n')
+ entry.write_text('''from "./types.wm" import *;
+let value = Item(3);
+let boxed: Box = .{ payload = value };
+let good = match(boxed.payload) { Item(n) => { n == 3 } };
+''')
+ subprocess.run([compiler, 'sml-entry', out, '--basis', basis, entry], check=True)
+ subprocess.run(['mlton', '-output', root / 'private-import-types', mlb], check=True)
+ subprocess.run([root / 'private-import-types'], check=True)
 
  rejected = root / 'rejected'; rejected.mkdir()
  for body, expected in [

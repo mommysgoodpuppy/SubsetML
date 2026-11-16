@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Stage the WM host probe for MLWorks; output files are portable to the PS2.
 
-This is deliberately the three-module host probe, not a general MLB converter.
+This is deliberately the fixed host probe, not a general MLB converter.
 No transfer or remote execution is performed here.
 """
 import argparse
@@ -28,7 +28,9 @@ shutil.copyfile(repo / 'lib/mlworks/subset_host.sml', output / 'subset_host.nati
 (output / 'bootstrap.sml').write_text('''(* One load preserves shared Basis types across all native modules. *)
 Shell.Project.load "require_all";
 ''')
-(output / 'load.sml').write_text('''use "subset_result.sml";
+(output / 'load.sml').write_text('''use "subset_option_value.sml";
+use "subset_result_value.sml";
+use "subset_result.sml";
 use "subset_host.native.sml";
 use "probe.sml";
 use "driver.sml";

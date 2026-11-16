@@ -55,8 +55,10 @@ stages, as described below. These conventions deliberately differ from the SML B
 
 ### Result and optional values
 
-`SubsetResult` defines `datatype ('a, 'e) result = Ok of 'a | Err of 'e`. Errors are typed,
-ordinary values chosen by each operation or its caller. There is no unsafe unwrap.
+`SubsetResultValue` defines `datatype ('a, 'e) result = Ok of 'a | Err of 'e` in ordinary
+source. `SubsetResult` opens that datatype and adds the functions below. Errors are typed,
+ordinary values chosen by each operation or its caller. There is no unsafe unwrap. Its Option
+dependency is private: `SubsetResult` does not export `option`, `NONE` or `SOME`.
 
 | Operation | Contract |
 |---|---|
