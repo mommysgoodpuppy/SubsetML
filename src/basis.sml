@@ -94,6 +94,7 @@ structure Basis = struct
     [(["Int"], [],
       [("toString", "int -> string"),
        ("fromString", "string -> int option"),
+       ("rem", "int * int -> int"),
        ("precision", "int option"),
        ("minInt", "int option"),
        ("maxInt", "int option")]),

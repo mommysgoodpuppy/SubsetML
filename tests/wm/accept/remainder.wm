@@ -1,0 +1,4 @@
+// Workman's `%` truncates toward zero, as SML's `Int.rem` does.
+let isEven = (n: Int32.Int) => { n % 2 == 0 };
+let signs = -7 % 2 + 7 % -2;
+let product = (a: Int32.Int, b: Int32.Int) => { a * b % 3 };

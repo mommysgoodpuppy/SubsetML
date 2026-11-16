@@ -289,6 +289,8 @@ structure WmPrint = struct
         in
           (10, cat (atom (p, ""), group ("[", ",", "]", SubsetList.append (SmlList.map exp items, tailDocs))))
         end
+    | EApp (EId (p, (["Int"], "rem")), ETuple [l, r]) =>
+        (6, cats [parenAt (6, expL l), atom (p, " % "), parenAt (7, expL r)])
     | EApp (EId (p, (["Real"], opr)), ETuple [l, r]) =>
         if opr = "==" orelse opr = "!=" then
           let val left = case l of ETyped (x, TyCon ([], ([], "real"))) => x | _ => l in

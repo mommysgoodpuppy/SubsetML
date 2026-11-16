@@ -638,8 +638,7 @@ structure WmParse = struct
                SOME level =>
                  if level < minLevel then Done (l, ts)
                  else
-                   (if opr = "%" then Fail ("`%` has no SubsetML counterpart (SML `mod` differs)", p)
-                    else
+                   (
                       bind (parseBinary (level + 1, advance ts)) (fn r => fn ts =>
                         more (case opr of
                                 "&&" => EAndalso (l, r)
@@ -650,6 +649,8 @@ structure WmParse = struct
                                       EApp (EId (p, (["Real"], "==")), ETuple [x, r])
                                   | ("!=", ETyped (x, TyCon ([], ([], "real")))) =>
                                       EApp (EId (p, (["Real"], "!=")), ETuple [x, r])
+                                  (* Workman's `%` truncates toward zero, as `Int.rem` does. *)
+                                  | ("%", _) => EApp (EId (p, (["Int"], "rem")), ETuple [l, r])
                                   | _ => infixApp (smlOperator opr, p, l, r), ts)))
              | NONE => Done (l, ts))
         | _ => Done (l, ts)
