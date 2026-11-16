@@ -1,2 +1,2 @@
-(* error: only `struct ... end` *)
+(* error: not Basis structure List *)
 structure A = List

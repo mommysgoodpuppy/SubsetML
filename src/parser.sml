@@ -733,7 +733,13 @@ structure Parser = struct
       else
         bind (expect ("=", ts)) (fn _ => fn ts =>
           if SubsetBool.not (isKey ("struct", ts)) then
-            Fail ("only `struct ... end` structure expressions are part of SubsetML", posOf ts)
+            (* An alias module, `structure A = B`, is `structure A = struct open B end`: it
+               declares B's bindings, with B's types, under the name A. *)
+            (case peek ts of
+               (TId target, p) =>
+                 if isAlnumId target then Done ((name, [], [DOpen (p, [[target]])]), advance ts)
+                 else Fail ("only `struct ... end` and alias structure expressions are part of SubsetML", p)
+             | (_, p) => Fail ("only `struct ... end` and alias structure expressions are part of SubsetML", p))
           else
             bind (parseStructureAliases ([], advance ts)) (fn aliases => fn ts =>
               bind (parseDecs ts) (fn ds => fn ts =>

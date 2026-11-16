@@ -259,7 +259,8 @@ strdec ::= dec
 |---|---|
 | `structure strid = struct dec end` at top level | kept |
 | structure declarations inside `struct … end` (nesting) | **omitted**, except the alias of M2 |
-| any other `strexp` (`longstrid`, `let … in strexp end`, ascription) | **omitted** |
+| `structure strid = strid` at top level (an alias module) | kept: means `struct open strid end` |
+| any other `strexp` (qualified `longstrid`, `let … in strexp end`, ascription) | **omitted** |
 | `local` around declarations inside a structure | kept (§4.4) |
 | `signature`, `sig … end`, `:`/`:>` ascription, `where type`, sharing, `include`, `eqtype` | **omitted** |
 | `functor` declarations and applications | **omitted** |
@@ -267,7 +268,9 @@ strdec ::= dec
 **Restriction M1.** A source file contains at most one structure (a single `strbind`), alongside
 any other top-level declarations. Each file corresponds to one Workman module: the structure
 `FooBar` lives in `foo_bar.sml`, which becomes `foo_bar.wm`, and the file's other top-level
-declarations join that module.
+declarations join that module. The structure may be an alias module, `structure Num = Numbers`,
+naming a program structure: it declares that structure's bindings, with the same types, and
+becomes Workman's `export from "./numbers.wm" import *;`.
 
 **Restriction M2.** The only structure declaration inside a `struct` is an alias, the counterpart
 of Workman's `export from "./file.wm" import * as Name;`:
@@ -281,8 +284,8 @@ end
 
 An alias appears before the structure's other declarations, names a whole structure the program
 declares by its unqualified name, and binds one name. It isn't a general structure expression:
-`struct … end` bodies, qualified targets, Basis targets, `and`, and aliases at top level or in
-`let` all stay omitted. Each is a compatible restriction of the Definition's `structure strid =
+`struct … end` bodies, qualified targets, Basis targets, `and`, and aliases in `let` all stay
+omitted; a top-level alias is an alias module (M1). Each is a compatible restriction of the Definition's `structure strid =
 longstrid`, so a valid program means the same to other SML compilers.
 
 Long identifiers may have several qualifiers when an alias or the supplied library environment
@@ -377,6 +380,5 @@ examples, backend requirements and current scope.
 ## 11. Open questions
 
 * Whether to add the `word` type.
-* Structure aliases beyond M2, such as `structure A = B` at top level.
 * Whether to require exhaustive matches, which would remove `Match` at runtime for native code.
   That is an extra restriction, so the Definition allows it.
