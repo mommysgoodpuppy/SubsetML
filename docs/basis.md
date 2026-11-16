@@ -15,6 +15,9 @@ library version; further modules and the primitive interface remain to be design
 MLton builds must supply the custom Basis rather than assume its stock SML Basis has the same
 names and APIs.
 
+The rules every API follows (names, argument order, callbacks, `Result` and error types,
+numbers, text) are in [basis-conventions.md](basis-conventions.md).
+
 ## Portability rule
 
 **Anything reasonably expressible in SubsetML should have a portable source implementation
