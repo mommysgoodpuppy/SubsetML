@@ -130,7 +130,7 @@ let unsupported = match {
   "infix" => { Some("fixity declarations are") },
   "infixr" => { Some("fixity declarations are") },
   "nonfix" => { Some("fixity declarations are") },
-  "op" => { Some("`op` is") },
+  "op" => { Some("`op` in patterns is") },
   "while" => { Some("`while` loops are") },
   "do" => { Some("`while` loops are") },
   "withtype" => { Some("`withtype` is") },
@@ -321,7 +321,7 @@ let resolve = (group, make, items, start) => {
   match(operands(items, [])) {
     ([], [Operator(opr, p), .._]) => {
       Fail(
-        "infix operator `" ++ opr ++ "` is missing its left operand (`op` is not part of SubsetML)",
+        "infix operator `" ++ opr ++ "` is missing its left operand; write `op " ++ opr ++ "` for the operator as a value",
         p
       )
     },
@@ -460,8 +460,9 @@ let parseRecordTy = (ts) => {
 
 let startsAtPat = (ts) => {
   match(peek(ts)) {
+    // `op` starts an atomic pattern only so parseAtPat can reject it by name.
     (TKey(k), _) => {
-      if (if (if (k == "_") { true } else { k == "(" }) { true } else { k == "[" }) { true } else { k == "{" }
+      if (if (if (if (k == "_") { true } else { k == "(" }) { true } else { k == "[" }) { true } else { k == "{" }) { true } else { k == "op" }
     },
     (TId(s), _) => { SubsetBool.not(isInfix(s)) },
     (TLong(_, _), _) => { true },
@@ -513,6 +514,7 @@ and parseInfixPat = (ts) => {
 and parseAtPat = (ts) => {
   match(peek(ts)) {
     (TKey("_"), _) => { Done(PWild, advance(ts)) },
+    (TKey("op"), Var(p)) => { Fail("`op` in patterns is not part of SubsetML", p) },
     (TScon(SReal(_)), Var(p)) => { Fail("real constants may not occur in patterns", p) },
     (TScon(c), Var(p)) => { Done(PScon(p, c), advance(ts)) },
     (TId(s), Var(p)) => { Done(PId(p, ([], s)), advance(ts)) },
@@ -584,7 +586,7 @@ and parseRecordPat = (start, ts) => {
 let startsAtExp = (ts) => {
   match(peek(ts)) {
     (TKey(k), _) => {
-      if (if (if (if (k == "(") { true } else { k == "[" }) { true } else { k == "{" }) { true } else { k == "#" }) { true } else { k == "let" }
+      if (if (if (if (if (k == "(") { true } else { k == "[" }) { true } else { k == "{" }) { true } else { k == "#" }) { true } else { k == "let" }) { true } else { k == "op" }
     },
     (TId(s), _) => { SubsetBool.not(isInfix(s)) },
     (TLong(_, _), _) => { true },
@@ -720,6 +722,16 @@ and parseAtExp = (ts) => {
       }
     },
     (TKey("("), _) => { parseParenExp(advance(ts)) },
+    // `op` passes an infix operator as a function value: `op +` is `fn (a, b) => a + b`.
+    (TKey("op"), Var(p)) => {
+      match(peek(advance(ts))) {
+        (TId(s), _) => {
+          if (isInfix(s)) { Done(EId(p, ([], s)), advance(advance(ts))) } else { expected("an infix identifier after `op`", advance(ts)) }
+        },
+        (TKey("="), _) => { Done(EId(p, ([], "=")), advance(advance(ts))) },
+        _ => { expected("an infix identifier after `op`", advance(ts)) }
+      }
+    },
     (TKey("["), _) => {
       if (isKey("]", advance(ts))) { Done(EList([]), advance(advance(ts))) } else {
         bind(separated(parseExp, ",", advance(ts)))((es) => (ts) => {

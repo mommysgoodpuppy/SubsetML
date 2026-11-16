@@ -99,7 +99,7 @@ structure Parser = struct
     | "infix" => SOME "fixity declarations are"
     | "infixr" => SOME "fixity declarations are"
     | "nonfix" => SOME "fixity declarations are"
-    | "op" => SOME "`op` is"
+    | "op" => SOME "`op` in patterns is"
     | "while" => SOME "`while` loops are"
     | "do" => SOME "`while` loops are"
     | "withtype" => SOME "`withtype` is"
@@ -241,7 +241,7 @@ structure Parser = struct
     in
       case operands (items, []) of
         ([], Operator (opr, p) :: _) =>
-          Fail ("infix operator `" ^ opr ^ "` is missing its left operand (`op` is not part of SubsetML)", p)
+          Fail ("infix operator `" ^ opr ^ "` is missing its left operand; write `op " ^ opr ^ "` for the operator as a value", p)
       | ([], _) => Fail ("expected an expression or pattern", start)
       | (xs, rest) =>
           bind (group xs) (fn first => fn _ =>
@@ -344,7 +344,8 @@ structure Parser = struct
 
   val startsAtPat = fn ts =>
     case peek ts of
-      (TKey k, _) => k = "_" orelse k = "(" orelse k = "[" orelse k = "{"
+      (* `op` starts an atomic pattern only so parseAtPat can reject it by name. *)
+      (TKey k, _) => k = "_" orelse k = "(" orelse k = "[" orelse k = "{" orelse k = "op"
     | (TId s, _) => SubsetBool.not (isInfix s)
     | (TLong (_, _), _) => true
     | (TScon _, _) => true
@@ -383,6 +384,7 @@ structure Parser = struct
   and parseAtPat = fn ts =>
     case peek ts of
       (TKey "_", _) => Done (PWild, advance ts)
+    | (TKey "op", p) => Fail ("`op` in patterns is not part of SubsetML", p)
     | (TScon (SReal _), p) => Fail ("real constants may not occur in patterns", p)
     | (TScon c, p) => Done (PScon (p, c), advance ts)
     | (TId s, p) => Done (PId (p, ([], s)), advance ts)
@@ -434,7 +436,7 @@ structure Parser = struct
 
   val startsAtExp = fn ts =>
     case peek ts of
-      (TKey k, _) => k = "(" orelse k = "[" orelse k = "{" orelse k = "#" orelse k = "let"
+      (TKey k, _) => k = "(" orelse k = "[" orelse k = "{" orelse k = "#" orelse k = "let" orelse k = "op"
     | (TId s, _) => SubsetBool.not (isInfix s)
     | (TLong (_, _), _) => true
     | (TScon _, _) => true
@@ -536,6 +538,13 @@ structure Parser = struct
              Fail ("tuple selectors (#1, #2, ...) are not part of SubsetML; use a pattern such as (_, x)", q)
          | _ => bind (label (false, advance ts)) (fn l => fn ts => Done (ESelect (p, l), ts)))
     | (TKey "(", _) => parseParenExp (advance ts)
+    (* `op` passes an infix operator as a function value: `op +` is `fn (a, b) => a + b`. *)
+    | (TKey "op", p) =>
+        (case peek (advance ts) of
+           (TId s, _) => if isInfix s then Done (EId (p, ([], s)), advance (advance ts))
+             else expected ("an infix identifier after `op`", advance ts)
+         | (TKey "=", _) => Done (EId (p, ([], "=")), advance (advance ts))
+         | _ => expected ("an infix identifier after `op`", advance ts))
     | (TKey "[", _) =>
         if isKey ("]", advance ts) then Done (EList [], advance (advance ts))
         else

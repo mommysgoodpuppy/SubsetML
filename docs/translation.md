@@ -151,6 +151,7 @@ ordinary WM labels and go through the shared backend renaming system.
 | `{x = 1.0}` | `.{ x = 1 }` |
 | `#x r` (r a variable or a selection) | `r.x` |
 | `#x (f a)` | `f(a).x`: a field of a call's result |
+| `op +` | `(left, right) => { left + right }`: Workman has no operator values; `op div` is `Int32.div` |
 | `(e : t)` | `(e: T)` |
 | `#"c"` | `'c'` |
 

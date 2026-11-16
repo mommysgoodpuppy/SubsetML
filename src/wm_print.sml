@@ -264,6 +264,14 @@ structure WmPrint = struct
                     ETuple [EId (p, ([], "realLeft")), EId (p, ([], "realRight"))]))])
           end
         else (10, atom (p, valueName (["Real"], opr)))
+    (* `op +`: Workman has no operator values, so an operator passed as a value is a lambda.
+       `div` and `mod` have Workman function spellings already, and the printer reaches their
+       calls through this case, so they stay names. *)
+    | EId (p, ([], opr)) =>
+        if (Parser.isInfix opr orelse opr = "=") andalso valueName ([], opr) = opr
+        then expL (EFn [(PTuple [PId (p, ([], "left")), PId (p, ([], "right"))],
+                         EApp (EId (p, ([], opr)), ETuple [EId (p, ([], "left")), EId (p, ([], "right"))]))])
+        else (10, atom (p, valueName ([], opr)))
     | EId (p, id) => (10, atom (p, valueName id))
     | ERecord (p, fields) =>
         (10, cat (atom (p, "."),

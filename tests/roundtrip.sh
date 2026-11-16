@@ -35,6 +35,10 @@ for f in tests/accept/*.sml; do
       fi
       rg -q 'embedded SML declarations are not supported' "$tmp/unsupported" || exit 1
       ;;
+    tests/accept/op.sml)
+      # An operator value prints as a Workman lambda, which reads back as `fn`, not `op`.
+      $bin wm "$tmp" "$f" > /dev/null || { echo "FAIL: WM translation of $f"; exit 1; }
+      ;;
     *) set -- "$@" "$f" ;;
   esac
 done

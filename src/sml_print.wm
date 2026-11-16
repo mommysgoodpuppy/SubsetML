@@ -145,6 +145,10 @@ let tyvarseq = match {
 
 let rec expL = match {
   EScon(p, c) => { (30, atom(p, scon(c))) },
+  // An infix operator outside an application is a value only as `op +`.
+  EId(p, ([], Var(opr))) => {
+    if (if (Parser.isInfix(opr)) { true } else { opr == "=" }) { (30, atom(p, "(op " ++ opr ++ ")")) } else { (30, atom(p, longid([], opr))) }
+  },
   EId(p, id) => { (30, atom(p, longid(id))) },
   ERecord(p, fields) => {
     (

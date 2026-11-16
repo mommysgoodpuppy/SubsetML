@@ -99,8 +99,9 @@ As in §2.2: `(* … *)`, properly nested. An unclosed comment is an error.
 
 ## 3. Fixity (§2.6)
 
-`infix`, `infixr`, `nonfix` and `op` are omitted. The infix status of identifiers is therefore
-fixed. The table follows SML's conventional initial fixities (Appendix C and the SML Basis
+`infix`, `infixr` and `nonfix` are omitted, so the infix status of identifiers is fixed. `op` is
+kept in expressions, where `op +` passes an infix operator as a function value; it is omitted
+in patterns. The table follows SML's conventional initial fixities (Appendix C and the SML Basis
 Library); using this table does not imply support for that library:
 
 | Precedence | Associativity | Identifiers |
@@ -148,7 +149,7 @@ when its equivalent form uses only kept features.
 | `()`, tuples `(e1, …, en)`, lists `[e1, …, en]`, sequences `(e1; …; en)` | kept |
 | record `{ lab = exp, … }` | kept, under §6 |
 | selector `# lab` | kept for alphanumeric labels, under §6; `#1`, `#2`, … omitted (R4) |
-| `op longvid` | **omitted** |
+| `op vid` | kept for an infix identifier or `=`; `op` before a nonfix or long identifier is omitted |
 | `raise exp`, `exp handle match` | **omitted** |
 | `while exp do exp` | **omitted** |
 

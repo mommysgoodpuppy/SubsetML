@@ -362,6 +362,19 @@ let rec expL = match {
       ]))
     } else { (10, atom(p, valueName(["Real"], opr))) }
   },
+  /* `op +`: Workman has no operator values, so an operator passed as a value is a lambda.
+     `div` and `mod` have Workman function spellings already, and the printer reaches their
+     calls through this case, so they stay names. */
+  EId(p, ([], Var(opr))) => {
+    if (if (if (Parser.isInfix(opr)) { true } else { opr == "=" }) { valueName([], opr) == opr } else { false }) {
+      expL(EFn([
+        (
+          PTuple([PId(p, ([], "left")), PId(p, ([], "right"))]),
+          EApp(EId(p, ([], opr)), ETuple([EId(p, ([], "left")), EId(p, ([], "right"))]))
+        )
+      ]))
+    } else { (10, atom(p, valueName([], opr))) }
+  },
   EId(p, id) => { (10, atom(p, valueName(id))) },
   ERecord(p, fields) => {
     (

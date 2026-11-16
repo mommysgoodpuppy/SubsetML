@@ -86,6 +86,10 @@ structure SmlPrint = struct
 
   val rec expL = fn
       EScon (p, c) => (30, atom (p, scon c))
+    (* An infix operator outside an application is a value only as `op +`. *)
+    | EId (p, ([], opr)) =>
+        if Parser.isInfix opr orelse opr = "=" then (30, atom (p, "(op " ^ opr ^ ")"))
+        else (30, atom (p, longid ([], opr)))
     | EId (p, id) => (30, atom (p, longid id))
     | ERecord (p, fields) =>
         (30, cats [atom (p, ""),
