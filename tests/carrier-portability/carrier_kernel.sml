@@ -33,5 +33,5 @@ structure CarrierKernel = struct
     map = map, map2 = map2, andThen = andThen, mapErr = mapErr
   }
   val via = fn (domain: ('fa, 'fr, 'ea, 'er, 'sa, 'sr, 'mc, 'mt, 'mr, 'ml, 'mright, 'mf, 'mresult, 'ac, 'at, 'ar, 'ec, 'et, 'eresult) carrier) => fn f => (#fn_ domain) f
-  val viaError = fn (domain: ('fa, 'fr, 'ea, ('handler -> 'handled), 'sa, 'sr, 'mc, 'mt, 'mr, 'ml, 'mright, 'mf, 'mresult, 'ac, 'at, 'ar, 'ec, 'et, 'eresult) carrier) => fn inject => fn f => (#fnError domain) inject f
+  val viaErr = fn (domain: ('fa, 'fr, 'ea, ('handler -> 'handled), 'sa, 'sr, 'mc, 'mt, 'mr, 'ml, 'mright, 'mf, 'mresult, 'ac, 'at, 'ar, 'ec, 'et, 'eresult) carrier) => fn inject => fn f => (#fnError domain) inject f
 end

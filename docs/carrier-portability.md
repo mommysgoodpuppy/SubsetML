@@ -27,7 +27,7 @@ This is ordinary rank-1 let-polymorphism, supported by MLton and SubsetML.
 The SML probe models all seven fields of WM's current
 [Carrier declaration](../../wm-mini/std/monad.wm), the pure
 [Result carrier](../../wm-mini/std/result.wm), and their data-first combinators and curried
-`via`/`viaError` adapters. It tests:
+`via`/`viaErr` adapters. It tests:
 
 - One shared carrier used with unrelated success and error types.
 - Independent instantiations of `map` and `map2` fields.
@@ -36,7 +36,7 @@ The SML probe models all seven fields of WM's current
 - Failure propagation without running a later transformation; the probe detects unexpected
   output if the skipped stage runs.
 
-The existing direct `SubsetResult.via` and `viaError` API remains portable too. A carrier record
+The existing direct `SubsetResult.via` and `viaErr` API remains portable too. A carrier record
 provides another level of indirection, rather than changing the polymorphism required by a
 single procedure stage.
 

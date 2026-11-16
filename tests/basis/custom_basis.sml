@@ -8,18 +8,22 @@ structure CustomBasis = struct
     andalso SubsetResult.mapErr (SubsetResult.Err "bad", fn x => x ^ "!") = SubsetResult.Err "bad!"
     andalso SubsetResult.andThen (SubsetResult.Ok "a", fn x => SubsetResult.Ok (x ^ "!")) = SubsetResult.Ok "a!"
     andalso SubsetResult.via (fn x => SubsetResult.Ok (x ^ "!")) (SubsetResult.Ok "a") = SubsetResult.Ok "a!"
-    andalso SubsetResult.viaError SOME (fn x => SubsetResult.Err x) (SubsetResult.Ok "bad") = SubsetResult.Err (SOME "bad")
-    andalso SubsetResult.viaError
+    andalso SubsetResult.viaErr SOME (fn x => SubsetResult.Err x) (SubsetResult.Ok "bad") = SubsetResult.Err (SOME "bad")
+    andalso SubsetResult.viaErr
       (fn error => (print "UNEXPECTED ERROR MAPPER\n"; SOME error))
       (fn value => (print "UNEXPECTED RESULT STAGE\n"; SubsetResult.Ok value))
       (SubsetResult.Err (SOME "earlier")) = SubsetResult.Err (SOME "earlier")
     andalso SubsetResult.getOr (SubsetResult.Err "bad", "fallback") = "fallback"
     andalso SubsetResult.isOk (SubsetResult.Ok true)
+    andalso SubsetResult.isErr (SubsetResult.Err "bad")
+    andalso not (SubsetResult.isErr (SubsetResult.Ok true))
     andalso SubsetResult.toOption (SubsetResult.Err "bad") = NONE
   val optionOk = SubsetOption.map (SOME "a", fn x => x ^ "!") = SOME "a!"
     andalso SubsetOption.andThen (NONE, fn x => SOME x) = (NONE : string option)
     andalso SubsetOption.filter (SOME "a", fn x => x = "b") = NONE
     andalso SubsetOption.getOr (NONE, "fallback") = "fallback"
+    andalso SubsetOption.isNone NONE
+    andalso not (SubsetOption.isNone (SOME "a"))
     andalso SubsetOption.toResult (NONE, "absent") = (SubsetResult.Err "absent" : (string, string) SubsetResult.result)
   val listOk = SubsetList.isEmpty []
     andalso SubsetList.reverseAppend (["b", "a"], ["c"]) = names

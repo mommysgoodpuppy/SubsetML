@@ -9,6 +9,7 @@ structure SubsetOption = struct
 
   val getOr = fn (value, fallback) => case value of NONE => fallback | SOME x => x
   val isSome = fn NONE => false | SOME x => true
+  val isNone = fn NONE => true | SOME x => false
   val map = fn (value, f) => case value of NONE => NONE | SOME x => SOME (f x)
   val andThen = fn (value, f) => case value of NONE => NONE | SOME x => f x
   val filter = fn (value, predicate) =>

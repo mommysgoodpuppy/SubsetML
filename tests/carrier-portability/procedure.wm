@@ -1,9 +1,9 @@
 type Error = ParseFailure<String> | DomainFailure<String>;
 let procedure = (input) => {
-  let parse = Monad.viaError Result.carrier ParseFailure (text) => {
+  let parse = Monad.viaErr Result.carrier ParseFailure (text) => {
     if (text == "12") {Ok(12)} else {Err("bad input")}
   };
-  let validate = Monad.viaError Result.carrier DomainFailure (number) => {
+  let validate = Monad.viaErr Result.carrier DomainFailure (number) => {
     if (number > 0) {Ok(number)} else {Err("not positive")}
   };
   let render = Monad.via Result.carrier (_) => {Ok("compiled")};
@@ -12,7 +12,7 @@ let procedure = (input) => {
 let skipped: Result<String, Error> = Monad.via Result.carrier (_) => {
   print("FAILED: stage ran"); Ok("wrong")
 } (Err(ParseFailure("stop")));
-let other: Result<Bool, Bool> = Monad.viaError Result.carrier (e) => {!e} (_) => {Err(false)} (Ok(void));
+let other: Result<Bool, Bool> = Monad.viaErr Result.carrier (e) => {!e} (_) => {Err(false)} (Ok(void));
 let main = () => {
   let checked = match(procedure("12"), procedure("bad"), skipped, other) {
     (Ok("compiled"), Err(ParseFailure("bad input")), Err(ParseFailure("stop")), Err(true)) => {true},

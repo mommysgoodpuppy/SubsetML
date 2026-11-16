@@ -74,7 +74,7 @@ Other naming rules:
   `String.isPrefix prefix value`), the order is reversed.
 - **Tupled, not curried,** for core operations. Unary operations take their value directly.
 - **Curried only for adapters** that are meant to be partially applied to build a reusable stage
-  (`via transform`, `viaError inject transform`).
+  (`via transform`, `viaErr inject transform`).
 - When two operands play the same role, keep the SML order (`append (xs, ys)`,
   `compare (left, right)`, `zip (left, right)`).
 

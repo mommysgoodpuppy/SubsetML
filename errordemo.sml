@@ -13,7 +13,7 @@ structure Errordemo = struct
     | ValidationFailure of string
 
   val via = SubsetResult.via
-  val viaError = SubsetResult.viaError
+  val viaErr = SubsetResult.viaErr
 
   val readInput = fn input =>
     if input = "missing" then SubsetResult.Err "input unavailable"
@@ -30,8 +30,8 @@ structure Errordemo = struct
 
   val compileInput = fn input =>
     let
-      val read = viaError InputFailure readInput
-      val parse = viaError ParseFailure decode
+      val read = viaErr InputFailure readInput
+      val parse = viaErr ParseFailure decode
       val compile = via requirePositive
 
       val loaded = read (SubsetResult.Ok input)

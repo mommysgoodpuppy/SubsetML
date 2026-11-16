@@ -145,7 +145,7 @@ let parseSource = (path, src, tokens, comments) => {
 
 // No reporting or exit inside the procedure; later transformations skip on Err.
 let load = (path) => {
-  let read = SubsetResult.viaError((error) => { ReadFailure(path, error) })((file) => {
+  let read = SubsetResult.viaErr((error) => { ReadFailure(path, error) })((file) => {
     SubsetResult.map(SubsetIo.readFile(file), (bytes) => { (file, CompilerText.stringOf(bytes)) })
   });
   let lex = SubsetResult.via(lexSource);

@@ -100,7 +100,7 @@ structure Main = struct
   (* No reporting or exit inside the procedure; later transformations skip on Err. *)
   val load = fn path =>
     let
-      val read = SubsetResult.viaError (fn error => ReadFailure (path, error))
+      val read = SubsetResult.viaErr (fn error => ReadFailure (path, error))
         (fn file => SubsetResult.map (SubsetIo.readFile file,
           fn bytes => (file, CompilerText.stringOf bytes)))
       val lex = SubsetResult.via lexSource

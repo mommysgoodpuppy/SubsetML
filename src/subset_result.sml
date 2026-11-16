@@ -21,13 +21,15 @@ structure SubsetResult = struct
   (* Procedure adapters are curried so a stage can be named before it is called. *)
   val via = fn transform => fn wrapped => andThen (wrapped, transform)
 
-  val viaError = fn inject => fn transform => fn wrapped =>
+  val viaErr = fn inject => fn transform => fn wrapped =>
     andThen (wrapped, fn value => mapErr (transform value, inject))
 
   val getOr = fn (value, fallback) =>
     case value of Ok x => x | Err error => fallback
 
   val isOk = fn Ok x => true | Err error => false
+
+  val isErr = fn Ok x => false | Err error => true
 
   val toOption = fn Ok x => SOME x | Err error => NONE
 

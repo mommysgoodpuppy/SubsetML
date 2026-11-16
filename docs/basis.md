@@ -64,12 +64,12 @@ ordinary values chosen by each operation or its caller. There is no unsafe unwra
 | `SubsetResult.mapErr (result, f)` | Transform Err; preserve Ok without calling f. |
 | `SubsetResult.andThen (result, f)` | Call a Result-producing f only for Ok. |
 | `SubsetResult.via transform result` | Adapt a Result-producing transformation; call it only for Ok and preserve Err. |
-| `SubsetResult.viaError inject transform result` | As via, mapping only the transformation's new error through inject. |
+| `SubsetResult.viaErr inject transform result` | As via, mapping only the transformation's new error through inject. |
 | `SubsetResult.getOr (result, fallback)` | Return the successful value or the supplied fallback. |
-| `SubsetResult.isOk result` | Test the constructor. |
+| `SubsetResult.isOk result`, `SubsetResult.isErr result` | Test the constructor. |
 | `SubsetResult.toOption result` | Ok becomes SOME; Err becomes NONE, explicitly discarding its error. |
 | `SubsetOption.getOr (option, fallback)` | Return the present value or fallback. |
-| `SubsetOption.isSome option` | Test presence. |
+| `SubsetOption.isSome option`, `SubsetOption.isNone option` | Test presence or absence. |
 | `SubsetOption.map (option, f)` | Transform SOME; leave NONE alone. |
 | `SubsetOption.andThen (option, f)` | Call an option-producing f only for SOME. |
 | `SubsetOption.filter (option, predicate)` | Keep a present value satisfying the predicate; otherwise NONE. |
@@ -96,7 +96,7 @@ without exceptions, early-return syntax or new host operations.
 val via = fn transform => fn wrapped =>
   SubsetResult.andThen (wrapped, transform)
 
-val viaError = fn inject => fn transform => fn wrapped =>
+val viaErr = fn inject => fn transform => fn wrapped =>
   SubsetResult.andThen (wrapped, fn value =>
     SubsetResult.mapErr (transform value, inject))
 ```
@@ -104,11 +104,11 @@ val viaError = fn inject => fn transform => fn wrapped =>
 These are ordinary curried functions exported by `SubsetResult`. Currying lets a procedure
 name its transformations before applying them to data; the core data-first `andThen` and
 `mapErr` APIs remain unchanged. The runnable [errordemo.sml](../errordemo.sml) uses these
-exports, locally named `via` and `viaError`.
+exports, locally named `via` and `viaErr`.
 
 - `via transform` adapts a function from an unwrapped value to a Result into a function from
   one Result to another. It calls `transform` only on success and preserves an existing error.
-- `viaError inject transform` also maps the transformation's own error into the procedure's
+- `viaErr inject transform` also maps the transformation's own error into the procedure's
   shared error type. It preserves an incoming error without calling either `transform` or
   `inject`. The error mapper can be an ordinary datatype constructor.
 
@@ -119,8 +119,8 @@ datatype, while the underlying operations can retain their own error types. In t
 ```sml
 val compileInput = fn input =>
   let
-    val read = viaError InputFailure readInput
-    val parse = viaError ParseFailure decode
+    val read = viaErr InputFailure readInput
+    val parse = viaErr ParseFailure decode
     val compile = via requirePositive
 
     val loaded = read (SubsetResult.Ok input)
@@ -167,14 +167,14 @@ Its Result adapters have the same propagation behavior, but SubsetML uses ordina
 | Workman facility | SubsetML form or scope |
 |---|---|
 | `Monad.via Result transform` | `SubsetResult.via transform`; no carrier record is required. |
-| `Monad.viaError Result inject transform` | `SubsetResult.viaError inject transform`. |
+| `Monad.viaErr Result inject transform` | `SubsetResult.viaErr inject transform`. |
 | `head :> read :> parse :> compile` | Sequential `val` bindings and ordinary function application. SubsetML has no pipeline operator. |
 | `Result\|a, b\|` carrier tuple lifting | No corresponding syntax. Use ordinary source helpers built from `andThen` and `map`, keeping deferred work inside callbacks when it must short-circuit. |
 | Carrier-generic `Monad` operations | The custom adapters specialize to Result. A generic carrier abstraction is not needed for this pattern. |
 | `Task` and safe foreign-call error wrapping | Outside this demo and the current custom Result API. Host failures enter through the explicit adapters, such as `SubsetIo`; the pattern supplies no asynchronous runtime or exception catching. |
 
 Workman's pipeline and tuple-lift syntax are conveniences around carrier composition;
-`procedure`, `via` and `viaError` are not exception or early-return keywords there either.
+`procedure`, `via` and `viaErr` are not exception or early-return keywords there either.
 The shared portable part is the functions, typed errors and propagation discipline. Normal
 translation generates the demo's Workman implementation without replacing it with Workman's
 separate Result library or requiring these syntax conveniences.
