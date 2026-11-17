@@ -5,6 +5,9 @@ from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./subset_list.sml" import * as SubsetList;
 from "./subset_bool.sml" import * as SubsetBool;
 from "./wm_print.sml" import * as WmPrint;
+from "./wm_parse.sml" import * as WmParse;
+from "./subset_string.sml" import * as SubsetString;
+from "./compiler_text.sml" import * as CompilerText;
 */
 
 /* Resolve default library bindings after parsing. Defaults are projections, not opens: only
@@ -14,30 +17,185 @@ from "./wm_print.sml" import * as WmPrint;
 from "./subset_option_value.wm" import * as SubsetOptionValue;
 from "./syntax.wm" import * as Syntax;
 from "./subset_list.wm" import * as SubsetList;
+from "./compiler_text.wm" import * as CompilerText;
+from "./wm_parse.wm" import * as WmParse;
 from "./wm_print.wm" import * as WmPrint;
+from "./subset_string.wm" import * as SubsetString;
 from "./subset_bool.wm" import * as SubsetBool;
 
 export from "./subset_option_value.wm" import *;
 export from "./syntax.wm" import *;
 
-type Scope = | Scope<List<(String, Bool)>, List<String>>;
-let empty = Scope([], []);
+type Scope =
+  | Scope<List<(String, Bool, Option<Longid>)>, List<(String, List<String>)>, List<(String, List<String>)>>;
+let empty = Scope([], [], []);
 let member = (names, name) => { SubsetList.exists(names, (n) => { n == name }) };
 let plus = match {
-  (Scope(av, at), Scope(bv, bt)) => { Scope(SubsetList.append(bv, av), SubsetList.append(bt, at)) }
+  (Scope(av, at, an), Scope(bv, bt, bn)) => {
+    Scope(
+      SubsetList.append(bv, av),
+      SubsetList.append(bt, at),
+      SubsetList.append(bn, an)
+    )
+  }
 };
 let value = match {
-  (Scope(values, _), Var(name)) => { SubsetList.find(values, (n, _) => { n == name }) }
+  (Scope(values, _, _), Var(name)) => { SubsetList.find(values, (n, _, _) => { n == name }) }
 };
 let typeBound = match {
-  (Scope(_, types), Var(name)) => { member(types, name) }
+  (Scope(_, types, _), Var(name)) => { SubsetList.exists(types, (n, _) => { n == name }) }
+};
+
+let namespace = match {
+  (Scope(_, _, namespaces), Var(name)) => {
+    match(SubsetList.find(namespaces, (n, _) => { n == name })) {
+      Some(_, path) => { Some(path) },
+      None => { None }
+    }
+  }
+};
+let rec namespacePath = (imports, path) => {
+  match(path) {
+    [head, member, ..rest] => {
+      match(SubsetList.find(imports, (n, _) => { n == head })) {
+        Some(_, scope) => {
+          match(namespace(scope, member)) {
+            Some(target) => { namespacePath(imports, SubsetList.append(target, rest)) },
+            None => { path }
+          }
+        },
+        None => { path }
+      }
+    },
+    _ => { path }
+  }
+};
+let exported = match {
+  (Scope(values, types, namespaces), Var(aliases)) => {
+    Scope(
+      values,
+      types,
+      SubsetList.append(
+        SubsetList.map(
+          aliases,
+          (_, alias, target) => { (alias, CompilerText.fields(target, (c) => { c == '.' })) }
+        ),
+        namespaces
+      )
+    )
+  }
+};
+
+let projection = (imports, target, original, alias, pos) => {
+  let Scope(values, types, namespaces) = match(SubsetList.find(imports, (n, _) => { n == target })) {
+    Some(_, scope) => { scope },
+    None => { empty }
+  };
+  let (_, sourceValue) = WmParse.valueName([], original);
+  let (_, aliasValue) = WmParse.valueName([], alias);
+  let (_, sourceType) = WmParse.tyConName([], original);
+  let (_, aliasType) = WmParse.tyConName([], alias);
+  let value = SubsetList.find(values, (n, _, _) => { n == sourceValue });
+  let typ = SubsetList.find(types, (n, _) => { n == sourceType });
+  let ns = SubsetList.find(namespaces, (n, _) => { n == original });
+  let error = match(value, typ, ns) {
+    (None, None, None) => { Some("unbound selected name " ++ original) },
+    _ => { None }
+  };
+  let declarations = match(error) {
+    Some(_) => { [] },
+    None => {
+      SubsetList.append(
+        match(typ) {
+          None => { [] },
+          Some(_, parameters) => {
+            [
+              DType(
+                pos,
+                [
+                  (
+                    parameters,
+                    aliasType,
+                    TyCon(SubsetList.map(parameters, TyVar), ([target], sourceType))
+                  )
+                ]
+              )
+            ]
+          }
+        },
+        match(value) {
+          None => { [] },
+          Some(_, isConstructor, origin) => {
+            let source = match(origin) {
+              Some(id) => { id },
+              None => { ([target], sourceValue) }
+            };
+            let marker = match(isConstructor, origin) {
+              (true, Some(qs, n)) => {
+                SubsetList.append(["`constructor"], SubsetList.append(qs, [n]))
+              },
+              _ => { ["`bind"] }
+            };
+            [DVal(pos, [], [(PId(pos, (marker, aliasValue)), EId(pos, source))], [])]
+          }
+        }
+      )
+    }
+  };
+  let declarations = SubsetList.append(
+    declarations,
+    match(ns) {
+      None => { [] },
+      Some(_, path) => {
+        [
+          DOpen(pos, [SubsetList.append(["`namespace", alias], namespacePath(imports, path))])
+        ]
+      }
+    }
+  );
+  (declarations, error)
+};
+
+let projectionErrors = (imports, ds) => {
+  let rec scan = (ds) => {
+    SubsetList.concat(SubsetList.map(
+      ds,
+      (d) => {
+        match(d) {
+          DOpen(p, [[marker, target, ..items], .._]) => {
+            if (if (marker != "`export") { marker != "`import" } else { false }) { [] } else {
+              let rec pairs = (items) => {
+                match(items) {
+                  [original, alias, ..rest] => {
+                    let (_, error) = projection(imports, target, original, alias, p);
+                    SubsetList.append(
+                      match(error) {
+                        Some(message) => { [(p, message)] },
+                        None => { [] }
+                      },
+                      pairs(rest)
+                    )
+                  },
+                  _ => { [] }
+                }
+              };
+              pairs(items)
+            }
+          },
+          DLocal(_, hidden, body) => { SubsetList.append(scan(hidden), scan(body)) },
+          _ => { [] }
+        }
+      }
+    ))
+  };
+  scan(ds)
 };
 
 /* Each table maps a source spelling to its defining module and member. Namespace targets
    are canonical project names, rather than basenames or source aliases. */
-let resolve = (values, types, namespaces, imports, declarations) => {
+let resolve = (owner, values, types, namespaces, imports, declarations) => {
   let find = (table, name) => { SubsetList.find(table, (n, _) => { n == name }) };
-  let namespace = (name) => {
+  let defaultNamespace = (name) => {
     match(find(namespaces, name)) {
       Some(_, target) => { Some(target) },
       None => { None }
@@ -52,7 +210,7 @@ let resolve = (values, types, namespaces, imports, declarations) => {
         if (sml == id) {
           match(wm) {
             ([head, .._], _) => {
-              match(namespace(head)) {
+              match(defaultNamespace(head)) {
                 Some(_) => { true },
                 None => { false }
               }
@@ -66,8 +224,26 @@ let resolve = (values, types, namespaces, imports, declarations) => {
       None => { id }
     }
   };
+  let localNamespace = namespace;
+  let originalConstructor = (env, (qs, name)) => {
+    let selected = match(qs) {
+      [] => { value(env, name) },
+      _ => {
+        match(find(imports, SubsetString.concatWith(qs, "."))) {
+          Some(_, scope) => { value(scope, name) },
+          None => { None }
+        }
+      }
+    };
+    match(selected) {
+      Some(_, true, Some([moduleName], original)) => {
+        if (moduleName == owner) { ([], original) } else { ([moduleName], original) }
+      },
+      _ => { (qs, name) }
+    }
+  };
   let resolveId = (env, isType, (qs, name)) => {
-    match(qs) {
+    let resolved = match(qs) {
       [] => {
         if (if (isType) { typeBound(env, name) } else {
           match(value(env, name)) {
@@ -82,16 +258,23 @@ let resolve = (values, types, namespaces, imports, declarations) => {
         }
       },
       [head, ..tail] => {
-        match(namespace(head)) {
-          Some(target) => { ([target, ..tail], name) },
-          None => { (qs, name) }
-        }
+        let path = match(localNamespace(env, head)) {
+          Some(path) => { SubsetList.append(path, tail) },
+          None => {
+            match(defaultNamespace(head)) {
+              Some(target) => { [target, ..tail] },
+              None => { qs }
+            }
+          }
+        };
+        (namespacePath(imports, path), name)
       }
-    }
+    };
+    if (isType) { resolved } else { originalConstructor(env, resolved) }
   };
   let constructor = (env, name) => {
     match(value(env, name)) {
-      Some(_, flag) => { flag },
+      Some(_, flag, _) => { flag },
       None => {
         if (member(["true", "false", "nil", "::", "NONE", "SOME"], name)) { true } else {
           SubsetList.exists(
@@ -117,8 +300,17 @@ let resolve = (values, types, namespaces, imports, declarations) => {
   };
   let rec pat = (env, p) => {
     match(p) {
+      PId(_, (["`bind"], Var(name))) => { (p, Scope([(name, false, None)], [], [])) },
+      PId(_, (["`constructor", ..path], Var(name))) => {
+        let reversed = SubsetList.reverse(path);
+        let origin = match(reversed) {
+          [n, ..qs] => { Some(SubsetList.reverse(qs), n) },
+          [] => { None }
+        };
+        (p, Scope([(name, true, origin)], [], []))
+      },
       PId(pos, ([], Var(name))) => {
-        if (constructor(env, name)) { (PId(pos, resolveId(env, false, ([], name))), empty) } else { (p, Scope([(name, false)], [])) }
+        if (constructor(env, name)) { (PId(pos, resolveId(env, false, ([], name))), empty) } else { (p, Scope([(name, false, None)], [], [])) }
       },
       PId(pos, id) => { (PId(pos, resolveId(env, false, id)), empty) },
       PPinned(pos, id) => { (PPinned(pos, resolveId(env, false, id)), empty) },
@@ -180,14 +372,19 @@ let resolve = (values, types, namespaces, imports, declarations) => {
     match(e) {
       EId(pos, ([], Var(name))) => {
         match(value(env, name)) {
-          Some(_) => { e },
+          Some(_) => { EId(pos, resolveId(env, false, ([], name))) },
           None => {
             match(find(values, name)) {
               Some(_, target) => { EId(pos, target) },
               None => {
-                match(namespace(name)) {
-                  Some(target) => { EId(pos, ([target], "carrier")) },
-                  None => { e }
+                match(localNamespace(env, name)) {
+                  Some(path) => { EId(pos, (namespacePath(imports, path), "carrier")) },
+                  None => {
+                    match(defaultNamespace(name)) {
+                      Some(target) => { EId(pos, ([target], "carrier")) },
+                      None => { e }
+                    }
+                  }
                 }
               }
             }
@@ -196,8 +393,8 @@ let resolve = (values, types, namespaces, imports, declarations) => {
       },
       EId(pos, ([head, ..tail], Var(name))) => {
         // An uppercase local value can be a record receiver, just like a lowercase one.
-        match(value(env, head)) {
-          Some(_, false) => {
+        match(localNamespace(env, head), value(env, head)) {
+          (None, Some(_, false, _)) => {
             SubsetList.foldLeft(
               SubsetList.append(tail, [name]),
               EId(pos, ([], head)),
@@ -244,13 +441,19 @@ let resolve = (values, types, namespaces, imports, declarations) => {
       DType(pos, bs) => {
         (
           DType(pos, SubsetList.map(bs, (vs, n, t) => { (vs, n, ty(env, t)) })),
-          Scope([], SubsetList.map(bs, (_, n, _) => { n }))
+          Scope([], SubsetList.map(bs, (vs, n, _) => { (n, vs) }), [])
         )
       },
       DDatatype(pos, bs) => {
         let delta = Scope(
-          SubsetList.concat(SubsetList.map(bs, (_, _, cs) => { SubsetList.map(cs, (_, n, _) => { (n, true) }) })),
-          SubsetList.map(bs, (_, n, _) => { n })
+          SubsetList.concat(SubsetList.map(
+            bs,
+            (_, _, cs) => {
+              SubsetList.map(cs, (_, n, _) => { (n, true, Some([owner], n)) })
+            }
+          )),
+          SubsetList.map(bs, (vs, n, _) => { (n, vs) }),
+          []
         );
         let env = plus(env, delta);
         (
@@ -312,6 +515,29 @@ let resolve = (values, types, namespaces, imports, declarations) => {
   and decs = (env, ds) => {
     match(ds) {
       [] => { ([], empty) },
+      [DOpen(p, [["`namespace", alias, ..path], .._]), ..rest] => {
+        let delta = Scope([], [], [(alias, path)]);
+        let (rest, more) = decs(plus(env, delta), rest);
+        (rest, plus(delta, more))
+      },
+      [DOpen(p, [[marker, target, ..items], .._]), ..rest] => {
+        if (if (marker != "`export") { marker != "`import" } else { false }) {
+          let (d, delta) = dec(env, DOpen(p, [[marker, target, ..items]]));
+          let (rest, more) = decs(plus(env, delta), rest);
+          ([d, ..rest], plus(delta, more))
+        } else {
+          let rec expand = (items) => {
+            match(items) {
+              [original, alias, ..more] => {
+                let (ds, _) = projection(imports, target, original, alias, p);
+                SubsetList.append(ds, expand(more))
+              },
+              _ => { [] }
+            }
+          };
+          decs(env, SubsetList.append(expand(items), rest))
+        }
+      },
       [d, ..rest] => {
         let (d, delta) = dec(env, d);
         let (rest, more) = decs(plus(env, delta), rest);
@@ -342,6 +568,8 @@ let moduleReferences = (program) => {
   };
   let rec pat = (p) => {
     match(p) {
+      PId(_, (["`constructor", .._], _)) => { [] },
+      PId(_, (["`bind"], _)) => { [] },
       PId(_, name) => { id(name) },
       PPinned(_, name) => { id(name) },
       PComputed(_, e) => { exp(e) },
@@ -422,7 +650,18 @@ let moduleReferences = (program) => {
                   flat(
                     bs,
                     (_, aliases, ds) => {
-                      SubsetList.append(SubsetList.map(aliases, (_, _, target) => { target }), flat(ds, dec))
+                      SubsetList.append(
+                        flat(
+                          aliases,
+                          (_, _, target) => {
+                            match(CompilerText.fields(target, (c) => { c == '.' })) {
+                              [head, .._] => { [head] },
+                              [] => { [] }
+                            }
+                          }
+                        ),
+                        flat(ds, dec)
+                      )
                     }
                   )
                 }
@@ -449,6 +688,8 @@ let pruneLibraries = (libraries, modules) => {
   let flat = (xs, f) => { SubsetList.concat(SubsetList.map(xs, f)) };
   let rec patternRefs = (p) => {
     match(p) {
+      PId(_, (["`constructor", .._], _)) => { [] },
+      PId(_, (["`bind"], _)) => { [] },
       PComputed(_, e) => { expressionRefs(e) },
       PPinned(_, id) => { [id] },
       PId(_, (Var(qs), Var(n))) => { if (SubsetList.isEmpty(qs)) { [] } else { [(qs, n)] } },

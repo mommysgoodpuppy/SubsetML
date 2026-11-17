@@ -4,6 +4,9 @@ from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./subset_list.sml" import * as SubsetList;
 from "./subset_bool.sml" import * as SubsetBool;
 from "./wm_print.sml" import * as WmPrint;
+from "./wm_parse.sml" import * as WmParse;
+from "./subset_string.sml" import * as SubsetString;
+from "./compiler_text.sml" import * as CompilerText;
 *)
 
 (* Resolve default library bindings after parsing. Defaults are projections, not opens: only
@@ -13,38 +16,106 @@ structure WmScope = struct
   open SubsetOptionValue
   open Syntax
 
-  datatype scope = Scope of (string * bool) list * string list
-  val empty = Scope ([], [])
+  datatype scope = Scope of (string * bool * longid option) list * (string * string list) list * (string * string list) list
+  val empty = Scope ([], [], [])
   val member = fn (names, name) => SubsetList.exists (names, fn n => n = name)
-  val plus = fn (Scope (av, at), Scope (bv, bt)) =>
-    Scope (SubsetList.append (bv, av), SubsetList.append (bt, at))
-  val value = fn (Scope (values, _), name) => SubsetList.find (values, fn (n, _) => n = name)
-  val typeBound = fn (Scope (_, types), name) => member (types, name)
+  val plus = fn (Scope (av, at, an), Scope (bv, bt, bn)) =>
+    Scope (SubsetList.append (bv, av), SubsetList.append (bt, at), SubsetList.append (bn, an))
+  val value = fn (Scope (values, _, _), name) => SubsetList.find (values, fn (n, _, _) => n = name)
+  val typeBound = fn (Scope (_, types, _), name) => SubsetList.exists (types, fn (n, _) => n = name)
+
+  val namespace = fn (Scope (_, _, namespaces), name) =>
+    case SubsetList.find (namespaces, fn (n, _) => n = name) of SOME (_, path) => SOME path | NONE => NONE
+  val rec namespacePath = fn (imports, path) => case path of
+      head :: member :: rest => (case SubsetList.find (imports, fn (n, _) => n = head) of
+        SOME (_, scope) => (case namespace (scope, member) of
+          SOME target => namespacePath (imports, SubsetList.append (target, rest)) | NONE => path)
+      | NONE => path)
+    | _ => path
+  val exported = fn (Scope (values, types, namespaces), aliases) =>
+    Scope (values, types, SubsetList.append (SubsetList.map (aliases,
+      fn (_, alias, target) => (alias, CompilerText.fields (target, fn c => c = #"."))), namespaces))
+
+  val projection = fn (imports, target, original, alias, pos) =>
+    let
+      val Scope (values, types, namespaces) = case SubsetList.find (imports, fn (n, _) => n = target) of
+          SOME (_, scope) => scope | NONE => empty
+      val (_, sourceValue) = WmParse.valueName ([], original)
+      val (_, aliasValue) = WmParse.valueName ([], alias)
+      val (_, sourceType) = WmParse.tyConName ([], original)
+      val (_, aliasType) = WmParse.tyConName ([], alias)
+      val value = SubsetList.find (values, fn (n, _, _) => n = sourceValue)
+      val typ = SubsetList.find (types, fn (n, _) => n = sourceType)
+      val ns = SubsetList.find (namespaces, fn (n, _) => n = original)
+      val error = case (value, typ, ns) of
+          (NONE, NONE, NONE) => SOME ("unbound selected name " ^ original) | _ => NONE
+      val declarations = case error of SOME _ => [] | NONE =>
+        SubsetList.append (
+          (case typ of NONE => [] | SOME (_, parameters) =>
+            [DType (pos, [(parameters, aliasType,
+              TyCon (SubsetList.map (parameters, TyVar), ([target], sourceType)))])]),
+          (case value of NONE => [] | SOME (_, isConstructor, origin) =>
+            let val source = case origin of SOME id => id | NONE => ([target], sourceValue)
+                val marker = case (isConstructor, origin) of
+                    (true, SOME (qs, n)) => SubsetList.append (["`constructor"], SubsetList.append (qs, [n]))
+                  | _ => ["`bind"]
+            in [DVal (pos, [], [(PId (pos, (marker, aliasValue)), EId (pos, source))], [])] end))
+      val declarations = SubsetList.append (declarations, case ns of NONE => [] | SOME (_, path) =>
+        [DOpen (pos, [SubsetList.append (["`namespace", alias], namespacePath (imports, path))])])
+    in (declarations, error) end
+
+  val projectionErrors = fn (imports, ds) =>
+    let val rec scan = fn ds => SubsetList.concat (SubsetList.map (ds, fn d => case d of
+          DOpen (p, (marker :: target :: items) :: _) =>
+            if marker <> "`export" andalso marker <> "`import" then [] else
+            let val rec pairs = fn items => case items of
+                  original :: alias :: rest =>
+                    let val (_, error) = projection (imports, target, original, alias, p)
+                    in SubsetList.append (case error of SOME message => [(p, message)] | NONE => [], pairs rest) end
+                | _ => []
+            in pairs items end
+        | DLocal (_, hidden, body) => SubsetList.append (scan hidden, scan body)
+        | _ => []))
+    in scan ds end
 
   (* Each table maps a source spelling to its defining module and member. Namespace targets
      are canonical project names, rather than basenames or source aliases. *)
-  val resolve = fn (values, types, namespaces, imports, declarations) =>
+  val resolve = fn (owner, values, types, namespaces, imports, declarations) =>
     let
       val find = fn (table, name) => SubsetList.find (table, fn (n, _) => n = name)
-      val namespace = fn name => case find (namespaces, name) of
+      val defaultNamespace = fn name => case find (namespaces, name) of
           SOME (_, target) => SOME target | NONE => NONE
       (* The standalone reader's bootstrap numeric spellings precede this scope pass. Undo
          them only when the source namespace is supplied by the selected library. *)
       val sourceId = fn id => case SubsetList.find (WmPrint.numNames, fn (sml, wm) =>
           sml = id andalso (case wm of (head :: _, _) =>
-            (case namespace head of SOME _ => true | NONE => false) | _ => false)) of
+            (case defaultNamespace head of SOME _ => true | NONE => false) | _ => false)) of
           SOME (_, wm) => wm | NONE => id
+      val localNamespace = namespace
+      val originalConstructor = fn (env, (qs, name)) =>
+        let val selected = case qs of [] => value (env, name)
+              | _ => (case find (imports, SubsetString.concatWith (qs, ".")) of
+                  SOME (_, scope) => value (scope, name) | NONE => NONE)
+        in case selected of
+            SOME (_, true, SOME ([moduleName], original)) =>
+              if moduleName = owner then ([], original) else ([moduleName], original)
+          | _ => (qs, name)
+        end
       val resolveId = fn (env, isType, (qs, name)) =>
-        case qs of
+        let val resolved = case qs of
           [] => if (if isType then typeBound (env, name) else
                      case value (env, name) of SOME _ => true | NONE => false)
                 then (qs, name)
                 else (case find (if isType then types else values, name) of
                   SOME (_, target) => target | NONE => (qs, name))
-        | head :: tail => (case namespace head of
-            SOME target => (target :: tail, name) | NONE => (qs, name))
+        | head :: tail =>
+            let val path = case localNamespace (env, head) of
+                    SOME path => SubsetList.append (path, tail)
+                  | NONE => (case defaultNamespace head of SOME target => target :: tail | NONE => qs)
+            in (namespacePath (imports, path), name) end
+        in if isType then resolved else originalConstructor (env, resolved) end
       val constructor = fn (env, name) => case value (env, name) of
-          SOME (_, flag) => flag
+          SOME (_, flag, _) => flag
         | NONE => member (["true", "false", "nil", "::", "NONE", "SOME"], name) orelse
             SubsetList.exists (values, fn (n, _) => n = name andalso
               member (["Less", "Equal", "Greater", "Ok", "Err"], n))
@@ -55,9 +126,14 @@ structure WmScope = struct
         | TyArrow (a, b) => TyArrow (ty (env, a), ty (env, b))
         | TyRecord fs => TyRecord (SubsetList.map (fs, fn (l, t) => (l, ty (env, t))))
       val rec pat = fn (env, p) => case p of
-          PId (pos, ([], name)) =>
+          PId (_, (["`bind"], name)) => (p, Scope ([(name, false, NONE)], [], []))
+        | PId (_, ("`constructor" :: path, name)) =>
+            let val reversed = SubsetList.reverse path
+                val origin = case reversed of n :: qs => SOME (SubsetList.reverse qs, n) | [] => NONE
+            in (p, Scope ([(name, true, origin)], [], [])) end
+        | PId (pos, ([], name)) =>
             if constructor (env, name) then (PId (pos, resolveId (env, false, ([], name))), empty)
-            else (p, Scope ([(name, false)], []))
+            else (p, Scope ([(name, false, NONE)], [], []))
         | PId (pos, id) => (PId (pos, resolveId (env, false, id)), empty)
         | PPinned (pos, id) => (PPinned (pos, resolveId (env, false, id)), empty)
         | PComputed (pos, e) => (PComputed (pos, exp (env, e)), empty)
@@ -85,15 +161,17 @@ structure WmScope = struct
               let val (p, delta) = pat (env, p) in (p, exp (plus (env, delta), e)) end)
         in case e of
           EId (pos, ([], name)) => (case value (env, name) of
-              SOME _ => e
+              SOME _ => EId (pos, resolveId (env, false, ([], name)))
             | NONE => (case find (values, name) of
                 SOME (_, target) => EId (pos, target)
-              | NONE => (case namespace name of
-                  SOME target => EId (pos, ([target], "carrier")) | NONE => e)))
+              | NONE => (case localNamespace (env, name) of
+                  SOME path => EId (pos, (namespacePath (imports, path), "carrier"))
+                | NONE => (case defaultNamespace name of
+                    SOME target => EId (pos, ([target], "carrier")) | NONE => e))))
         | EId (pos, (head :: tail, name)) =>
             (* An uppercase local value can be a record receiver, just like a lowercase one. *)
-            (case value (env, head) of
-               SOME (_, false) => SubsetList.foldLeft (SubsetList.append (tail, [name]),
+            (case (localNamespace (env, head), value (env, head)) of
+               (NONE, SOME (_, false, _)) => SubsetList.foldLeft (SubsetList.append (tail, [name]),
                  EId (pos, ([], head)), fn (field, receiver) => EApp (ESelect (pos, field), receiver))
              | _ => EId (pos, resolveId (env, false, (head :: tail, name))))
         | ERecord (pos, fs) => ERecord (pos, SubsetList.map (fs, fn (l, e) => (l, go e)))
@@ -122,11 +200,11 @@ structure WmScope = struct
             in (DVal (pos, vs, zip (pp, pe), zip (rp, re)), plus (pd, rd)) end
         | DType (pos, bs) =>
             (DType (pos, SubsetList.map (bs, fn (vs, n, t) => (vs, n, ty (env, t)))),
-             Scope ([], SubsetList.map (bs, fn (_, n, _) => n)))
+             Scope ([], SubsetList.map (bs, fn (vs, n, _) => (n, vs)), []))
         | DDatatype (pos, bs) =>
             let val delta = Scope (SubsetList.concat (SubsetList.map (bs, fn (_, _, cs) =>
-                      SubsetList.map (cs, fn (_, n, _) => (n, true)))),
-                    SubsetList.map (bs, fn (_, n, _) => n))
+                      SubsetList.map (cs, fn (_, n, _) => (n, true, SOME ([owner], n))))),
+                    SubsetList.map (bs, fn (vs, n, _) => (n, vs)), [])
                 val env = plus (env, delta)
             in (DDatatype (pos, SubsetList.map (bs, fn (vs, n, cs) => (vs, n,
                  SubsetList.map (cs, fn (p, c, t) => (p, c, case t of
@@ -140,6 +218,21 @@ structure WmScope = struct
             in (DLocal (pos, hidden, body), bd) end
       and decs = fn (env, ds) => case ds of
           [] => ([], empty)
+        | DOpen (p, ("`namespace" :: alias :: path) :: _) :: rest =>
+            let val delta = Scope ([], [], [(alias, path)])
+                val (rest, more) = decs (plus (env, delta), rest)
+            in (rest, plus (delta, more)) end
+        | DOpen (p, (marker :: target :: items) :: _) :: rest =>
+            if marker <> "`export" andalso marker <> "`import" then
+              let val (d, delta) = dec (env, DOpen (p, [(marker :: target :: items)]))
+                  val (rest, more) = decs (plus (env, delta), rest)
+              in (d :: rest, plus (delta, more)) end
+            else let val rec expand = fn items => case items of
+                  original :: alias :: more =>
+                    let val (ds, _) = projection (imports, target, original, alias, p)
+                    in SubsetList.append (ds, expand more) end
+                | _ => []
+            in decs (env, SubsetList.append (expand items, rest)) end
         | d :: rest => let val (d, delta) = dec (env, d)
                            val (rest, more) = decs (plus (env, delta), rest)
                        in (d :: rest, plus (delta, more)) end
@@ -157,7 +250,9 @@ structure WmScope = struct
         | TyRecord fs => flat (fs, fn (_, t) => ty t)
         | _ => []
       val rec pat = fn p => case p of
-          PId (_, name) => id name | PPinned (_, name) => id name
+          PId (_, ("`constructor" :: _, _)) => []
+        | PId (_, (["`bind"], _)) => []
+        | PId (_, name) => id name | PPinned (_, name) => id name
         | PComputed (_, e) => exp e
         | PApp (_, name, p) => SubsetList.append (id name, pat p)
         | PRecord (_, fs) => flat (fs, fn (_, p) => pat p)
@@ -191,7 +286,8 @@ structure WmScope = struct
         | TopDecs ss => flat (ss, fn s => case s of
             SDec d => dec d
           | SStructure (_, bs) => flat (bs, fn (_, aliases, ds) =>
-              SubsetList.append (SubsetList.map (aliases, fn (_, _, target) => target), flat (ds, dec)))))
+              SubsetList.append (flat (aliases, fn (_, _, target) =>
+                case CompilerText.fields (target, fn c => c = #".") of head :: _ => [head] | [] => []), flat (ds, dec)))))
     in SubsetList.foldLeft (names, [], fn (n, found) => if member (found, n) then found else n :: found) end
 
   (* Closed native projects need no unused library function definitions. In particular, a
@@ -203,7 +299,9 @@ structure WmScope = struct
     let
       val flat = fn (xs, f) => SubsetList.concat (SubsetList.map (xs, f))
       val rec patternRefs = fn p => case p of
-          PComputed (_, e) => expressionRefs e
+          PId (_, ("`constructor" :: _, _)) => []
+        | PId (_, (["`bind"], _)) => []
+        | PComputed (_, e) => expressionRefs e
         | PPinned (_, id) => [id]
         | PId (_, (qs, n)) => if SubsetList.isEmpty qs then [] else [(qs, n)]
         | PApp (_, id, p) => id :: patternRefs p

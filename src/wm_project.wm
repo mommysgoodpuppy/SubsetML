@@ -956,9 +956,66 @@ let prepare = (basis, units, unit) => {
       ] => {
         openAll(specifier, pos, false, rest, edges, aliases, named, opens, exported)
       },
-      /* `import { a, B as C }`. A constructor or type is uppercase and can never be a alias
-         binding, so its uses are qualified in place. A value may be shadowed, rebound by a
-         pattern or spelled like a record label, so it becomes `let a = X.a;` instead. */
+      /* Keep selective exports until parsed module interfaces are available. They become
+         ordinary public value/type aliases, rather than opening the dependency's API. */
+      [
+        (WmLexer.WName(["export"]), _),
+        (WmLexer.WKey("from"), Var(pos)),
+        (WmLexer.WScon(Syntax.SString(specifier)), _),
+        (WmLexer.WKey("import"), _),
+        (WmLexer.WKey("{"), _),
+        ..rest
+      ] => {
+        SubsetResult.andThen(
+          dependency(specifier, pos),
+          (child) => {
+            SubsetResult.andThen(
+              namedItems(rest, []),
+              (items, rest) => {
+                let rec add = (items, named, encoded) => {
+                  match(items) {
+                    [] => { SubsetResult.Ok(named, SubsetList.reverse(encoded)) },
+                    [(Var(original), Var(alias), Var(itemPos)), ..more] => {
+                      if (if (if (SubsetList.exists(named, (n, _) => { n == alias })) { true } else { SubsetList.exists(aliases, (n, _) => { n == alias }) }) { true } else { boundValue(opens, alias) }) {
+                        failure(path, src, "duplicate imported name " ++ alias, itemPos)
+                      } else {
+                        add(more, [(alias, []), ..named], [alias, original, ..encoded])
+                      }
+                    }
+                  }
+                };
+                let known = SubsetList.exists(
+                  edges,
+                  match {
+                    Edge(_, _, _, key) => { ModuleProject.same(key, identity(child)) }
+                  }
+                );
+                let edges = if (known) { edges } else {
+                  [Edge(specifier, pos, name(child), identity(child)), ..edges]
+                };
+                SubsetResult.andThen(
+                  add(items, named, []),
+                  (named, encoded) => {
+                    imports(
+                      rest,
+                      edges,
+                      aliases,
+                      named,
+                      [
+                        (WmLexer.WOpen([SubsetList.append(["`export", name(child)], encoded)]), pos),
+                        ..opens
+                      ],
+                      exported
+                    )
+                  }
+                )
+              }
+            )
+          }
+        )
+      },
+      /* Named imports use the same lexical projections as named exports. Keeping them
+         private avoids token rewrites that could capture a later local datatype/binder. */
       [
         (WmLexer.WKey("from"), Var(pos)),
         (WmLexer.WScon(Syntax.SString(specifier)), _),
@@ -972,44 +1029,43 @@ let prepare = (basis, units, unit) => {
             SubsetResult.andThen(
               namedItems(rest, []),
               (items, rest) => {
-                let target = name(child);
+                let rec add = (items, named, encoded) => {
+                  match(items) {
+                    [] => { SubsetResult.Ok(named, SubsetList.reverse(encoded)) },
+                    [(Var(original), Var(alias), Var(itemPos)), ..more] => {
+                      if (if (if (SubsetList.exists(named, (n, _) => { n == alias })) { true } else { SubsetList.exists(aliases, (n, _) => { n == alias }) }) { true } else { boundValue(opens, alias) }) {
+                        failure(path, src, "duplicate imported name " ++ alias, itemPos)
+                      } else {
+                        add(more, [(alias, []), ..named], [alias, original, ..encoded])
+                      }
+                    }
+                  }
+                };
                 let known = SubsetList.exists(
                   edges,
                   match {
                     Edge(_, _, _, key) => { ModuleProject.same(key, identity(child)) }
                   }
                 );
-                let edges = if (known) { edges } else { [Edge(specifier, pos, target, identity(child)), ..edges] };
-                let rec add = (items, named, opens) => {
-                  match(items) {
-                    [] => { SubsetResult.Ok(named, opens) },
-                    [(Var(original), Var(alias), Var(itemPos)), ..more] => {
-                      if (if (if (SubsetList.exists(named, (n, _) => { n == alias })) { true } else { SubsetList.exists(aliases, (a, _) => { a == alias }) }) { true } else { boundValue(opens, alias) }) {
-                        failure(path, src, "duplicate imported name " ++ alias, itemPos)
-                      } else {
-                        if (CompilerText.firstIs(alias, SubsetChar.isUpper)) { add(more, [(alias, [target, original]), ..named], opens) } else {
-                          add(
-                            more,
-                            named,
-                            [
-                              (WmLexer.WKey(";"), itemPos),
-                              (WmLexer.WName([target, original]), itemPos),
-                              (WmLexer.WKey("="), itemPos),
-                              (WmLexer.WName([alias]), itemPos),
-                              (WmLexer.WKey("let"), itemPos),
-                              // A named import is private in Workman.
-                              (WmLexer.WName(["private"]), itemPos),
-                              ..opens
-                            ]
-                          )
-                        }
-                      }
-                    }
-                  }
+                let edges = if (known) { edges } else {
+                  [Edge(specifier, pos, name(child), identity(child)), ..edges]
                 };
                 SubsetResult.andThen(
-                  add(items, named, opens),
-                  (named, opens) => { imports(rest, edges, aliases, named, opens, exported) }
+                  add(items, named, []),
+                  (named, encoded) => {
+                    imports(
+                      rest,
+                      edges,
+                      aliases,
+                      named,
+                      [
+                        (WmLexer.WOpen([SubsetList.append(["`import", name(child)], encoded)]), pos),
+                        (WmLexer.WName(["private"]), pos),
+                        ..opens
+                      ],
+                      exported
+                    )
+                  }
                 )
               }
             )
@@ -1081,6 +1137,7 @@ let prepare = (basis, units, unit) => {
             },
             [(WmLexer.WName([head, ..tail]), Var(pos)), ..rest] => {
               match(SubsetList.find(named, (alias, _) => { alias == head })) {
+                Some(_, []) => { rewrite(rest, [(WmLexer.WName([head, ..tail]), pos), ..acc]) },
                 Some(_, qualified) => {
                   rewrite(rest, [(WmLexer.WName(SubsetList.append(qualified, tail)), pos), ..acc])
                 },

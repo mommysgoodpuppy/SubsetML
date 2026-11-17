@@ -50,13 +50,31 @@ compiler round trips, header `export from "./file.wm" import *;` imports lower t
 back as that form. As in SML, the opened bindings become part of the importing module. A namespace
 import stays private: it only resolves qualified names, and emits no SML structure binding.
 `export from "./file.wm" import * as Name;` lowers to the structure alias of spec restriction M2.
-`from "./file.wm" import { a, B as C };` brings names in unqualified. An uppercase name, a type
-or constructor, can never be a local binding, so each use is qualified in place (`File.B`, also
-in patterns). A value may be shadowed, rebound by a pattern or spelled like a record label, so it
-becomes a private `val a = File.a` at the start of the structure instead (see Private
-declarations below). Duplicate imported names are
-errors. `export from` with a named clause is diagnosed explicitly, as are non-local and later
-imports. Namespace values are not first-class.
+`from "./file.wm" import { a, B as C };` brings names in unqualified through private lexical
+projections. Values, types, constructors and namespaces retain their source binding kinds;
+later declarations and pattern binders can shadow them without rewriting declaration names
+or record labels. Duplicate imported names are errors. Non-local and later imports remain
+outside this profile. Namespace values are not first-class.
+
+`export from "./file.wm" import { value as renamed, Type as Alias };` selectively re-exports
+values and types. Values become public SML aliases; generic type aliases retain their type
+parameters and the defining type's identity. A record's callable constructor can be forwarded
+alongside its type. The dependency's other names and private imports stay private. These
+projections compose through multiple facades, and a shared dependency initializes once.
+Missing or duplicate names fail before output is written.
+
+Selective datatype-constructor re-exports preserve the defining constructor's identity,
+including renamed, nullary and polymorphic constructors, names shared by a type and its
+constructor, and projections through multiple facades or nested namespaces. The reader carries
+constructor origins through lexical scope and resolves WM expression/pattern references to
+the defining datatype. It adds canonical private dependencies when those references cross a
+facade; it never creates a replacement datatype or exposes the dependency's unselected names
+to WM source. The generated native aliases are ordinary SML value bindings: hand-written SML
+patterns must name the defining constructor, as the generated WM consumer code does.
+
+Named record-literal/update syntax through a newly renamed type still requires its layout to
+be supplied under that name; calling the forwarded record constructor or annotating a record
+value uses the transparent type alias.
 
 The reader and Workman's compiler share `WmModuleScope` for library paths, namespace aliases,
 auto-open rules, pervasive values and pervasive types. With `--basis DIR`, source defaults

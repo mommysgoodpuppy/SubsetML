@@ -380,6 +380,23 @@ structure WmParse = struct
 
   val parseModuleLowering = fn (layouts, owner, src, lexed, fieldPrefix) =>
     let
+      (* A private named record import keeps its lexical name for type/binding resolution.
+         Its literal layout is still the defining record's layout. *)
+      val recordImports = case lexed of
+          Tokens (tokens, _) => SubsetList.concat (SubsetList.map (tokens, fn (token, _) => case token of
+            WOpen (("`import" :: target :: items) :: _) =>
+              let val rec pairs = fn items => case items of
+                    original :: alias :: rest => (alias, [target, original]) :: pairs rest
+                  | _ => []
+              in pairs items end
+          | _ => []))
+        | _ => []
+      val recordPath = fn path => case path of
+          [name] => if SubsetList.exists (layouts, fn Layout (moduleName, recordName, _, _) =>
+              moduleName = owner andalso recordName = decapitalize name) then path else
+            (case SubsetList.find (recordImports, fn (alias, _) => alias = name) of
+              SOME (_, target) => target | NONE => path)
+        | _ => path
       (* Export field-type witnesses through their owning record module. Consumers need
          not import private dependencies merely to type-check generated reconstruction. *)
       val fieldAlias = fn (recordName, label) =>
@@ -442,7 +459,7 @@ structure WmParse = struct
         let
           val rec scan = fn tokens =>
             case tokens of
-              (WName path, _) :: (WKey "{", _) :: rest => path :: scan rest
+              (WName path, _) :: (WKey "{", _) :: rest => recordPath path :: scan rest
             | _ :: rest => scan rest
             | [] => []
         in case lexed of Tokens (tokens, _) => scan tokens | LexError (_, _) => [] end
@@ -960,6 +977,7 @@ structure WmParse = struct
   (* Named record layout is explicit; no inference is needed to enumerate copied fields. *)
   and parseNamedRecord = fn (p, path, ts) =>
     let
+      val path = recordPath path
       val (qualifiers, name, selections) = splitPath path
       val sourceOwner = if SubsetList.isEmpty qualifiers then owner else SubsetString.concatWith (qualifiers, ".")
       val candidate = SmlList.find (fn Layout (moduleName, recordName, _, _) =>

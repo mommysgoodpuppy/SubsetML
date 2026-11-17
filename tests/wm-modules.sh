@@ -113,8 +113,8 @@ grep -q 'open Middle' "$tmp/open-out/forward.sml"
 "$compiler" wm "$tmp/open-back" "$tmp/open-out/base.sml" "$tmp/open-out/middle.sml"
 grep -q 'export from "./base.wm" import \*;' "$tmp/open-back/middle.wm"
 if command -v wm >/dev/null 2>&1; then wm check "$tmp/open/user.wm" >/dev/null; fi
-# A named clause has no SML counterpart.
-reject 'export from "./records.wm" import {make};' 'SML counterpart' "$tmp/records.wm"
+# Unknown selected names remain an error.
+reject 'export from "./records.wm" import {Missing};' 'unbound selected name Missing' "$tmp/records.wm"
 
 # `export from ... import * as` is a structure alias, reachable through every level. `val end` needs
 # a backend name, so this also covers names resolved through the alias.

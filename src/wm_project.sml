@@ -489,40 +489,49 @@ structure WmProject = struct
           (WmLexer.WKey "import", _) :: (WmLexer.WKey "*", _) ::
           (WmLexer.WKey ";", _) :: rest =>
             openAll (specifier, pos, false, rest, edges, aliases, named, opens, exported)
-        (* `import { a, B as C }`. A constructor or type is uppercase and can never be a alias
-           binding, so its uses are qualified in place. A value may be shadowed, rebound by a
-           pattern or spelled like a record label, so it becomes `let a = X.a;` instead. *)
+        (* Keep selective exports until parsed module interfaces are available. They become
+           ordinary public value/type aliases, rather than opening the dependency's API. *)
+        | (WmLexer.WName ["export"], _) :: (WmLexer.WKey "from", pos) ::
+          (WmLexer.WScon (Syntax.SString specifier), _) ::
+          (WmLexer.WKey "import", _) :: (WmLexer.WKey "{", _) :: rest =>
+            SubsetResult.andThen (dependency (specifier, pos), fn child =>
+              SubsetResult.andThen (namedItems (rest, []), fn (items, rest) =>
+                let
+                  val rec add = fn (items, named, encoded) => case items of
+                      [] => SubsetResult.Ok (named, SubsetList.reverse encoded)
+                    | (original, alias, itemPos) :: more =>
+                        if SubsetList.exists (named, fn (n, _) => n = alias) orelse
+                           SubsetList.exists (aliases, fn (n, _) => n = alias) orelse boundValue (opens, alias)
+                        then failure (path, src, "duplicate imported name " ^ alias, itemPos)
+                        else add (more, (alias, []) :: named, alias :: original :: encoded)
+                  val known = SubsetList.exists (edges, fn Edge (_, _, _, key) =>
+                    ModuleProject.same (key, identity child))
+                  val edges = if known then edges else Edge (specifier, pos, name child, identity child) :: edges
+                in SubsetResult.andThen (add (items, named, []), fn (named, encoded) =>
+                  imports (rest, edges, aliases, named,
+                    (WmLexer.WOpen [SubsetList.append (["`export", name child], encoded)], pos) :: opens, exported)) end))
+        (* Named imports use the same lexical projections as named exports. Keeping them
+           private avoids token rewrites that could capture a later local datatype/binder. *)
         | (WmLexer.WKey "from", pos) ::
           (WmLexer.WScon (Syntax.SString specifier), _) ::
           (WmLexer.WKey "import", _) :: (WmLexer.WKey "{", _) :: rest =>
             SubsetResult.andThen (dependency (specifier, pos), fn child =>
               SubsetResult.andThen (namedItems (rest, []), fn (items, rest) =>
                 let
-                  val target = name child
-                  val known = SubsetList.exists (edges, fn Edge (_, _, _, key) =>
-                    ModuleProject.same (key, identity child))
-                  val edges = if known then edges
-                    else Edge (specifier, pos, target, identity child) :: edges
-                  val rec add = fn (items, named, opens) =>
-                    case items of
-                      [] => SubsetResult.Ok (named, opens)
+                  val rec add = fn (items, named, encoded) => case items of
+                      [] => SubsetResult.Ok (named, SubsetList.reverse encoded)
                     | (original, alias, itemPos) :: more =>
                         if SubsetList.exists (named, fn (n, _) => n = alias) orelse
-                           SubsetList.exists (aliases, fn (a, _) => a = alias) orelse
-                           boundValue (opens, alias) then
-                          failure (path, src, "duplicate imported name " ^ alias, itemPos)
-                        else (if CompilerText.firstIs (alias, SubsetChar.isUpper) then
-                          add (more, (alias, [target, original]) :: named, opens)
-                        else add (more, named,
-                          (WmLexer.WKey ";", itemPos) ::
-                          (WmLexer.WName [target, original], itemPos) ::
-                          (WmLexer.WKey "=", itemPos) ::
-                          (WmLexer.WName [alias], itemPos) ::
-                          (WmLexer.WKey "let", itemPos) ::
-                          (* A named import is private in Workman. *)
-                          (WmLexer.WName ["private"], itemPos) :: opens))
-                in SubsetResult.andThen (add (items, named, opens), fn (named, opens) =>
-                  imports (rest, edges, aliases, named, opens, exported)) end))
+                           SubsetList.exists (aliases, fn (n, _) => n = alias) orelse boundValue (opens, alias)
+                        then failure (path, src, "duplicate imported name " ^ alias, itemPos)
+                        else add (more, (alias, []) :: named, alias :: original :: encoded)
+                  val known = SubsetList.exists (edges, fn Edge (_, _, _, key) =>
+                    ModuleProject.same (key, identity child))
+                  val edges = if known then edges else Edge (specifier, pos, name child, identity child) :: edges
+                in SubsetResult.andThen (add (items, named, []), fn (named, encoded) =>
+                  imports (rest, edges, aliases, named,
+                    (WmLexer.WOpen [SubsetList.append (["`import", name child], encoded)], pos) ::
+                    (WmLexer.WName ["private"], pos) :: opens, exported)) end))
         | (WmLexer.WKey "from", pos) :: _ =>
             failure (path, src, "reverse translation currently requires header namespace imports: from \"./file.wm\" import * as Name;", pos)
         (* `structure Alias = Target`. The body's uses are rewritten like a private alias's. *)
@@ -548,7 +557,8 @@ structure WmProject = struct
                     failure (path, src, "imports must precede ordinary declarations in the initial translation profile", pos)
                 | (WmLexer.WName (head :: tail), pos) :: rest =>
                     (case SubsetList.find (named, fn (alias, _) => alias = head) of
-                       SOME (_, qualified) =>
+                       SOME (_, []) => rewrite (rest, (WmLexer.WName (head :: tail), pos) :: acc)
+                     | SOME (_, qualified) =>
                          rewrite (rest, (WmLexer.WName (SubsetList.append (qualified, tail)), pos) :: acc)
                      | NONE =>
                     case SubsetList.find (aliases, fn (alias, _) => alias = head) of

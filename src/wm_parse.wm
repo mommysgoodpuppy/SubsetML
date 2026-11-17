@@ -507,6 +507,50 @@ let rec parameterType = (variables, t) => {
 };
 
 let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
+  /* A private named record import keeps its lexical name for type/binding resolution.
+     Its literal layout is still the defining record's layout. */
+  let recordImports = match(lexed) {
+    Tokens(tokens, _) => {
+      SubsetList.concat(SubsetList.map(
+        tokens,
+        (token, _) => {
+          match(token) {
+            WOpen([["`import", target, ..items], .._]) => {
+              let rec pairs = (items) => {
+                match(items) {
+                  [original, alias, ..rest] => { [(alias, [target, original]), ..pairs(rest)] },
+                  _ => { [] }
+                }
+              };
+              pairs(items)
+            },
+            _ => { [] }
+          }
+        }
+      ))
+    },
+    _ => { [] }
+  };
+  let recordPath = (path) => {
+    match(path) {
+      [name] => {
+        if (SubsetList.exists(
+          layouts,
+          match {
+            Layout(moduleName, recordName, _, _) => {
+              if (moduleName == owner) { recordName == decapitalize(name) } else { false }
+            }
+          }
+        )) { path } else {
+          match(SubsetList.find(recordImports, (alias, _) => { alias == name })) {
+            Some(_, target) => { target },
+            None => { path }
+          }
+        }
+      },
+      _ => { path }
+    }
+  };
   /* Export field-type witnesses through their owning record module. Consumers need
      not import private dependencies merely to type-check generated reconstruction. */
   let fieldAlias = (recordName, label) => {
@@ -611,7 +655,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
   let referenced = {
     let rec scan = (tokens) => {
       match(tokens) {
-        [(WName(path), _), (WKey("{"), _), ..rest] => { [path, ..scan(rest)] },
+        [(WName(path), _), (WKey("{"), _), ..rest] => { [recordPath(path), ..scan(rest)] },
         [_, ..rest] => { scan(rest) },
         [] => { [] }
       }
@@ -1340,6 +1384,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
 
   // Named record layout is explicit; no inference is needed to enumerate copied fields.
   and parseNamedRecord = (p, path, ts) => {
+    let path = recordPath(path);
     let (qualifiers, name, selections) = splitPath(path);
     let sourceOwner = if (SubsetList.isEmpty(qualifiers)) { owner } else { SubsetString.concatWith(qualifiers, ".") };
     let candidate = SmlList.find(match {

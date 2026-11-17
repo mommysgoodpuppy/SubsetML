@@ -169,7 +169,20 @@ structure BackendNames = struct
         | _ => []
       val rec pattern = fn (env, pat, supply) =>
         case pat of
-          Syntax.PId (p, ([], name)) =>
+          Syntax.PId (p, ("`constructor" :: _, name)) =>
+            (* WM constructor aliases are ordinary native values. Their pattern uses have
+               already been redirected to the defining datatype by WmScope. *)
+            pattern (env, Syntax.PId (p, (["`bind"], name)), supply)
+        | Syntax.PId (p, (["`bind"], name)) =>
+            (* A generated named export binds a value even when its spelling would be an
+               existing constructor pattern. Rename that collision before printing SML. *)
+            if isConstructor (env, ([], name)) then
+              let val (target, next) = generated (supply, owner, p, "export_" ^ name)
+              in (Syntax.PId (p, ([], target)), Scope ([Binding (name, target, false)], []), next) end
+            else let val (binding, next) = fresh (supply, owner, p, "value", name, false)
+                     val Binding (_, target, _) = binding
+                 in (Syntax.PId (p, ([], target)), Scope ([binding], []), next) end
+        | Syntax.PId (p, ([], name)) =>
             if isConstructor (env, ([], name)) then (Syntax.PId (p, resolve (env, "value", ([], name))), empty, supply)
             else let val (binding, next) = fresh (supply, owner, p, "value", name, false)
                   val Binding (_, target, _) = binding
