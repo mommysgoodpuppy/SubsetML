@@ -238,6 +238,24 @@ let implicitBasis = (basis, path, tokens) => {
             }
           )
         };
+        /* A namespace use. Tokens don't tell types from expressions, so this over-approximates,
+           except for a bare type name the compiler owns (`String`, `List`): that names the
+           type wherever a type may stand, and the namespace only as a carrier, in `via X` or a
+           group `X|a, b|`. */
+        let rec namespaceUse = (name, tokens) => {
+          match(tokens) {
+            [] => { false },
+            [(WmLexer.WName([head, _, .._]), _), ..rest] => { if (head == name) { true } else { namespaceUse(name, rest) } },
+            [(WmLexer.WName(["via"]), _), (WmLexer.WName([head]), _), ..rest] => { if (head == name) { true } else { namespaceUse(name, rest) } },
+            [(WmLexer.WName([head]), _), (WmLexer.WKey("|"), _), ..rest] => { if (head == name) { true } else { namespaceUse(name, rest) } },
+            [(WmLexer.WName([head]), _), ..rest] => {
+              if (if (head == name) {
+                SubsetBool.not(SubsetList.exists(WmModuleScope.primitiveTypeNames, (n) => { n == name }))
+              } else { false }) { true } else { namespaceUse(name, rest) }
+            },
+            [_, ..rest] => { namespaceUse(name, rest) }
+          }
+        };
         let builtin = SubsetList.append(WmModuleScope.builtinValues, WmModuleScope.builtinTypes);
         let projected = if (std) { builtin } else {
           SubsetList.concat([builtin, WmModuleScope.pervasives, WmModuleScope.pervasiveTypes])
@@ -262,7 +280,7 @@ let implicitBasis = (basis, path, tokens) => {
           SubsetList.filter(
             paths,
             (modulePath) => {
-              if (if (WmModuleScope.isAutoOpened(modulePath, paths)) { WmModuleScope.moduleAlias(modulePath) != "Int32" } else { false }) { mentioned(WmModuleScope.moduleAlias(modulePath)) } else { false }
+              if (if (WmModuleScope.isAutoOpened(modulePath, paths)) { WmModuleScope.moduleAlias(modulePath) != "Int32" } else { false }) { namespaceUse(WmModuleScope.moduleAlias(modulePath), tokens) } else { false }
             }
           )
         };

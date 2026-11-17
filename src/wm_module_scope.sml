@@ -198,6 +198,13 @@ structure WmModuleScope = struct
     namesOf ("subml-basis/subset_option_value.wm", ["Option"]),
     namesOf ("subml-basis/subset_result_value.wm", ["Result"])]
 
+  (* The compiler's own unqualified types (wm-mini src/basis_manifest.ts, BASIS_TYPES). A bare
+     name in type position is a namespace's `Self` only after ordinary type lookup fails
+     (wm-mini docs/modules.md), so `(name: String)` is the type String, never the String
+     namespace. *)
+  val primitiveTypeNames =
+    ["Bool", "CStorage", "Char", "List", "Opaque", "Option", "Ptr", "Result", "String", "Task", "Void"]
+
   (* Unqualified library values in every module. Portable operations belong to the SubsetML
      Basis; std contributes only its extra facilities. *)
   val pervasives = SubsetList.concat [

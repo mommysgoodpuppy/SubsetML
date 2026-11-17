@@ -118,6 +118,21 @@ structure WmProject = struct
             token = WmLexer.WName [name])
           val mentioned = fn name => SubsetList.exists (tokens, fn (token, _) => case token of
             WmLexer.WName (head :: _) => head = name | _ => false)
+          (* A namespace use. Tokens don't tell types from expressions, so this over-approximates,
+             except for a bare type name the compiler owns (`String`, `List`): that names the
+             type wherever a type may stand, and the namespace only as a carrier, in `via X` or a
+             group `X|a, b|`. *)
+          val rec namespaceUse = fn (name, tokens) => case tokens of
+              [] => false
+            | (WmLexer.WName (head :: _ :: _), _) :: rest => head = name orelse namespaceUse (name, rest)
+            | (WmLexer.WName ["via"], _) :: (WmLexer.WName [head], _) :: rest =>
+                head = name orelse namespaceUse (name, rest)
+            | (WmLexer.WName [head], _) :: (WmLexer.WKey "|", _) :: rest =>
+                head = name orelse namespaceUse (name, rest)
+            | (WmLexer.WName [head], _) :: rest =>
+                (head = name andalso SubsetBool.not (SubsetList.exists (WmModuleScope.primitiveTypeNames,
+                  fn n => n = name))) orelse namespaceUse (name, rest)
+            | _ :: rest => namespaceUse (name, rest)
           val builtin = SubsetList.append (WmModuleScope.builtinValues, WmModuleScope.builtinTypes)
           val projected = if std then builtin else SubsetList.concat [builtin,
             WmModuleScope.pervasives, WmModuleScope.pervasiveTypes]
@@ -129,7 +144,7 @@ structure WmProject = struct
           val namespaces = if std then [] else SubsetList.filter (paths, fn modulePath =>
             WmModuleScope.isAutoOpened (modulePath, paths) andalso
             WmModuleScope.moduleAlias modulePath <> "Int32" andalso
-            mentioned (WmModuleScope.moduleAlias modulePath))
+            namespaceUse (WmModuleScope.moduleAlias modulePath, tokens))
           val needed = SubsetList.foldLeft (SubsetList.append (needed, namespaces), [], fn (p, acc) =>
             if SubsetList.exists (acc, fn n => n = p) orelse
                SubsetBool.not (SubsetList.exists (paths, fn n => n = p)) then acc else p :: acc)
