@@ -164,6 +164,14 @@ let splitPath = (path) => {
   go([], path)
 };
 
+let rec lastOf = (path) => {
+  match(path) {
+    [] => { "" },
+    [name] => { name },
+    [_, ..rest] => { lastOf(rest) }
+  }
+};
+
 let pathExp = (p, path) => {
   let (quals, base, fields) = splitPath(path);
   SmlList.foldl((l, e) => { EApp(ESelect(p, l), e) })(EId(p, valueName(quals, base)))(fields)
@@ -1085,6 +1093,40 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
     parts([], ts)
   }
 
+  /* A carrier group, `Result|a, b, c|`, as Workman desugars it: `Result.andThen(a, x =>
+     Result.andThen(b, y => Result.map(c, z => (x, y, z))))`. One item is the item itself. */
+  and parseCarrierGroup = (p, carrier, ts) => {
+    let member = (name) => { pathExp(p, SubsetList.append(carrier, [name])) };
+    let rec items = (acc, ts) => {
+      bind(parseExp(ts))((e) => (ts) => {
+        if (isKey(",", ts)) { items([e, ..acc], advance(ts)) } else {
+          bind(expect("|", ts))((_) => (ts) => { Done(SmlList.rev([e, ..acc]), ts) })
+        }
+      })
+    };
+    let rec build = (index, remaining, values) => {
+      match(remaining) {
+        [] => { ETuple(SmlList.rev(values)) },
+        [item, ..rest] => {
+          let name = fresh("subsetmlLift" ++ CompilerText.natural(p) ++ "_" ++ CompilerText.natural(index));
+          let value = EId(p, ([], name));
+          let body = build(index + 1, rest, [value, ..values]);
+          let step = match(rest) {
+            [] => { "map" },
+            _ => { "andThen" }
+          };
+          EApp(member(step), ETuple([item, EFn([(PId(p, ([], name)), body)])]))
+        }
+      }
+    };
+    bind(items([], ts))((group) => (ts) => {
+      match(group) {
+        [single] => { Done(single, ts) },
+        _ => { Done(build(0, group, []), ts) }
+      }
+    })
+  }
+
   and parsePrimary = (ts) => {
     match(peek(ts)) {
       (WScon(c), Var(p)) => { Done(EScon(p, c), advance(ts)) },
@@ -1094,7 +1136,9 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
       (WKey("void"), _) => { Done(ETuple([]), advance(ts)) },
       (WKey("~"), Var(p)) => { Done(EId(p, ([], "~")), advance(ts)) },
       (WName(path), Var(p)) => {
-        if (isKey("{", advance(ts))) { parseNamedRecord(p, path, advance(advance(ts))) } else { Done(pathExp(p, path), advance(ts)) }
+        if (isKey("{", advance(ts))) { parseNamedRecord(p, path, advance(advance(ts))) } else {
+          if (if (isKey("|", advance(ts))) { CompilerText.firstIs(lastOf(path), SubsetChar.isUpper) } else { false }) { parseCarrierGroup(p, path, advance(advance(ts))) } else { Done(pathExp(p, path), advance(ts)) }
+        }
       },
       (WSelect(l), Var(p)) => {
         if (CompilerText.firstIs(l, SubsetChar.isDigit)) {

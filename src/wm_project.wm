@@ -182,11 +182,16 @@ let implicitBasis = (basis, path, tokens) => {
             }
           } else { false }
         };
+        let use = (head, pos, rest, acc) => {
+          if (if (SubsetList.exists(acc, (n, _) => { n == head })) { true } else { SubsetBool.not(available(head)) }) { acc } else { [(head, pos), ..acc] }
+        };
+        // `X.name`, or a carrier group `X|a, b|`, which uses X's andThen and map.
         let rec uses = (tokens, acc) => {
           match(tokens) {
             [] => { SubsetList.reverse(acc) },
-            [(WmLexer.WName([head, _, .._]), Var(pos)), ..rest] => {
-              if (if (SubsetList.exists(acc, (n, _) => { n == head })) { true } else { SubsetBool.not(available(head)) }) { uses(rest, acc) } else { uses(rest, [(head, pos), ..acc]) }
+            [(WmLexer.WName([head, _, .._]), Var(pos)), ..rest] => { uses(rest, use(head, pos, rest, acc)) },
+            [(WmLexer.WName([head]), Var(pos)), (WmLexer.WKey("|"), Var(bar)), ..rest] => {
+              uses([(WmLexer.WKey("|"), bar), ..rest], use(head, pos, rest, acc))
             },
             [_, ..rest] => { uses(rest, acc) }
           }
@@ -944,7 +949,14 @@ let prepare = (basis, units, unit) => {
                       } else { rewrite(rest, [(WmLexer.WName([head, ..tail]), pos), ..acc]) }
                     },
                     Some(_, target) => {
-                      if (SubsetList.isEmpty(tail)) { rewrite(rest, [(WmLexer.WName([head]), pos), ..acc]) } else {
+                      /* A bare alias may be a local name, except as a carrier group's
+                         namespace, `Result|a, b|`. */
+                      if (SubsetList.isEmpty(tail)) {
+                        match(rest) {
+                          [(WmLexer.WKey("|"), _), .._] => { rewrite(rest, [(WmLexer.WName([target]), pos), ..acc]) },
+                          _ => { rewrite(rest, [(WmLexer.WName([head]), pos), ..acc]) }
+                        }
+                      } else {
                         rewrite(rest, [(WmLexer.WName([target, ..tail]), pos), ..acc])
                       }
                     }

@@ -110,11 +110,15 @@ structure WmProject = struct
             SubsetBool.not (SubsetList.exists (explicit, fn n => n = name)) andalso
             (case ModuleProject.identify (directory ^ "/" ^ basisFile name) of
                SubsetResult.Ok _ => true | SubsetResult.Err _ => false)
+          val use = fn (head, pos, rest, acc) =>
+            if SubsetList.exists (acc, fn (n, _) => n = head) orelse SubsetBool.not (available head)
+            then acc else (head, pos) :: acc
+          (* `X.name`, or a carrier group `X|a, b|`, which uses X's andThen and map. *)
           val rec uses = fn (tokens, acc) => case tokens of
               [] => SubsetList.reverse acc
-            | (WmLexer.WName (head :: _ :: _), pos) :: rest =>
-                if SubsetList.exists (acc, fn (n, _) => n = head) orelse SubsetBool.not (available head)
-                then uses (rest, acc) else uses (rest, (head, pos) :: acc)
+            | (WmLexer.WName (head :: _ :: _), pos) :: rest => uses (rest, use (head, pos, rest, acc))
+            | (WmLexer.WName [head], pos) :: (WmLexer.WKey "|", bar) :: rest =>
+                uses ((WmLexer.WKey "|", bar) :: rest, use (head, pos, rest, acc))
             | _ :: rest => uses (rest, acc)
           val header = fn (name, pos) =>
             [(WmLexer.WKey "from", pos),
@@ -508,7 +512,12 @@ structure WmProject = struct
                            failure (path, src, "namespace " ^ head ^ " is not explicitly imported under that name", pos)
                          else rewrite (rest, (WmLexer.WName (head :: tail), pos) :: acc)
                      | SOME (_, target) =>
-                         if SubsetList.isEmpty tail then rewrite (rest, (WmLexer.WName [head], pos) :: acc)
+                         (* A bare alias may be a local name, except as a carrier group's
+                            namespace, `Result|a, b|`. *)
+                         if SubsetList.isEmpty tail then
+                           (case rest of
+                              (WmLexer.WKey "|", _) :: _ => rewrite (rest, (WmLexer.WName [target], pos) :: acc)
+                            | _ => rewrite (rest, (WmLexer.WName [head], pos) :: acc))
                          else rewrite (rest, (WmLexer.WName (target :: tail), pos) :: acc))
                 | token :: rest => rewrite (rest, token :: acc)
             in SubsetResult.map (rewrite (tokens, []), fn body =>

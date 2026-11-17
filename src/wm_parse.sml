@@ -124,6 +124,8 @@ structure WmParse = struct
       go ([], path)
     end
 
+  val rec lastOf = fn path => case path of [] => "" | [name] => name | _ :: rest => lastOf rest
+
   val pathExp = fn (p, path) =>
     let val (quals, base, fields) = splitPath path in
       SmlList.foldl (fn (l, e) => EApp (ESelect (p, l), e)) (EId (p, valueName (quals, base))) fields
@@ -793,6 +795,32 @@ structure WmParse = struct
         | _ => expected ("the rest of a backtick string", ts)
     in parts ([], ts) end
 
+  (* A carrier group, `Result|a, b, c|`, as Workman desugars it: `Result.andThen(a, x =>
+     Result.andThen(b, y => Result.map(c, z => (x, y, z))))`. One item is the item itself. *)
+  and parseCarrierGroup = fn (p, carrier, ts) =>
+    let
+      val member = fn name => pathExp (p, SubsetList.append (carrier, [name]))
+      val rec items = fn (acc, ts) =>
+        bind (parseExp ts) (fn e => fn ts =>
+          if isKey (",", ts) then items (e :: acc, advance ts)
+          else bind (expect ("|", ts)) (fn _ => fn ts => Done (SmlList.rev (e :: acc), ts)))
+      val rec build = fn (index, remaining, values) =>
+        case remaining of
+          [] => ETuple (SmlList.rev values)
+        | item :: rest =>
+            let
+              val name = fresh ("subsetmlLift" ^ CompilerText.natural p ^ "_" ^ CompilerText.natural index)
+              val value = EId (p, ([], name))
+              val body = build (index + 1, rest, value :: values)
+              val step = case rest of [] => "map" | _ => "andThen"
+            in EApp (member step, ETuple [item, EFn [(PId (p, ([], name)), body)]]) end
+    in
+      bind (items ([], ts)) (fn group => fn ts =>
+        case group of
+          [single] => Done (single, ts)
+        | _ => Done (build (0, group, []), ts))
+    end
+
   and parsePrimary = fn ts =>
     case peek ts of
       (WScon c, p) => Done (EScon (p, c), advance ts)
@@ -803,7 +831,9 @@ structure WmParse = struct
     | (WKey "~", p) => Done (EId (p, ([], "~")), advance ts)
     | (WName path, p) =>
         if isKey ("{", advance ts) then parseNamedRecord (p, path, advance (advance ts))
-        else Done (pathExp (p, path), advance ts)
+        else (if isKey ("|", advance ts) andalso CompilerText.firstIs (lastOf path, SubsetChar.isUpper)
+        then parseCarrierGroup (p, path, advance (advance ts))
+        else Done (pathExp (p, path), advance ts))
     | (WSelect l, p) =>
         if CompilerText.firstIs (l, SubsetChar.isDigit)
         then Fail ("tuple selectors are not part of SubsetML; use a pattern such as (_, x)", p)

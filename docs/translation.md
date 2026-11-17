@@ -205,6 +205,11 @@ decides; annotate it. SML's number text differs from Workman's display in places
 `-3`); the portable Basis has no Workman-matching number formatting yet. A backtick string
 without `${ }` is a plain string constant.
 
+A carrier group, `Result|a, b, c|`, is desugared as Workman does it: `Result.andThen(a, x =>
+Result.andThen(b, y => Result.map(c, z => (x, y, z))))`, through the named namespace's own
+`andThen` and `map`, so the SML evaluates and short-circuits in the same order. A one-item group
+is the item itself.
+
 Workman's operator precedences differ from SML's (for example, `==` binds looser than `<`), so
 the printer adds parentheses wherever the Workman grammar needs them.
 

@@ -35,7 +35,7 @@ TEST_SCRIPTS = run integer roundtrip translation pipes wm-modules \
   no-sml-declarations pattern-lowering selector-scope record-updates record-constructors carrier-lowering \
   basis char-basis custom-basis text-basis won-basis utf16-source \
   lexer-bytes doc-portable sml-printer wm-printer kernel-portable io-portable \
-  process-panic process-os panic-lowering cli-portable module-loading alias-module templates inline-records
+  process-panic process-os panic-lowering cli-portable module-loading alias-module templates inline-records carrier-groups
 JOBS ?= $(shell nproc 2>/dev/null || echo 4)
 
 test: bin/subsetml selfcheck
