@@ -506,7 +506,7 @@ let rec parameterType = (variables, t) => {
   }
 };
 
-let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
+let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix, recordResolver) => {
   /* A private named record import keeps its lexical name for type/binding resolution.
      Its literal layout is still the defining record's layout. */
   let recordImports = match(lexed) {
@@ -531,7 +531,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
     },
     _ => { [] }
   };
-  let recordPath = (path) => {
+  let legacyRecordPath = (path) => {
     match(path) {
       [name] => {
         if (SubsetList.exists(
@@ -549,6 +549,12 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
         }
       },
       _ => { path }
+    }
+  };
+  let recordPath = (pos, path) => {
+    match(recordResolver) {
+      Some(resolve) => { resolve(pos, path) },
+      None => { Some(legacyRecordPath(path)) }
     }
   };
   /* Export field-type witnesses through their owning record module. Consumers need
@@ -655,7 +661,12 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
   let referenced = {
     let rec scan = (tokens) => {
       match(tokens) {
-        [(WName(path), _), (WKey("{"), _), ..rest] => { [recordPath(path), ..scan(rest)] },
+        [(WName(path), Var(p)), (WKey("{"), _), ..rest] => {
+          match(recordPath(p, path)) {
+            Some(target) => { [target, ..scan(rest)] },
+            None => { scan(rest) }
+          }
+        },
         [_, ..rest] => { scan(rest) },
         [] => { [] }
       }
@@ -1384,14 +1395,24 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
 
   // Named record layout is explicit; no inference is needed to enumerate copied fields.
   and parseNamedRecord = (p, path, ts) => {
-    let path = recordPath(path);
+    let resolved = recordPath(p, path);
+    let originalPath = path;
+    let path = match(resolved) {
+      Some(target) => { target },
+      None => { path }
+    };
     let (qualifiers, name, selections) = splitPath(path);
     let sourceOwner = if (SubsetList.isEmpty(qualifiers)) { owner } else { SubsetString.concatWith(qualifiers, ".") };
-    let candidate = SmlList.find(match {
-      Layout(moduleName, recordName, _, _) => {
-        if (moduleName == sourceOwner) { recordName == decapitalize(name) } else { false }
+    let candidate = match(resolved) {
+      None => { None },
+      Some(_) => {
+        SmlList.find(match {
+          Layout(moduleName, recordName, _, _) => {
+            if (moduleName == sourceOwner) { recordName == decapitalize(name) } else { false }
+          }
+        })(layouts)
       }
-    })(layouts);
+    };
     let part = (ts) => {
       match(peek(ts)) {
         (WKey(".."), _) => {
@@ -1409,7 +1430,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
       match(candidate) {
         None => {
           Fail(
-            "unknown record layout " ++ SubsetString.concatWith(path, ".") ++ "; supply its declaration when translating",
+            "unknown record layout " ++ SubsetString.concatWith(originalPath, ".") ++ "; supply its declaration when translating",
             p
           )
         },
@@ -1990,7 +2011,11 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
       };
       match(items([], [], ts)) {
         Done((Var(decs), Var(exps)), _) => {
-          Module(SubsetList.append(aliases, scope(decs)), exps, comments)
+          Module(
+            if (SubsetList.isEmpty(aliases)) { scope(decs) } else { [DLocal(0, aliases, scope(decs))] },
+            exps,
+            comments
+          )
         },
         Fail(message, pos) => { ParseError(message, pos) }
       }
@@ -1998,10 +2023,14 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
   }
 };
 
-let parseModuleTokens = (layouts, owner, src, lexed) => { parseModuleLowering(layouts, owner, src, lexed, None) };
+let parseModuleTokens = (layouts, owner, src, lexed) => { parseModuleLowering(layouts, owner, src, lexed, None, None) };
 
 let parseModuleProject = (layouts, owner, src, lexed, prefix) => {
-  parseModuleLowering(layouts, owner, src, lexed, Some(prefix))
+  parseModuleLowering(layouts, owner, src, lexed, Some(prefix), None)
+};
+
+let parseModuleRecordScope = (layouts, owner, src, lexed, prefix, resolve) => {
+  parseModuleLowering(layouts, owner, src, lexed, Some(prefix), Some(resolve))
 };
 
 let parseModuleWithLayouts = (layouts, owner, src) => { parseModuleTokens(layouts, owner, src, WmLexer.lex(src)) };

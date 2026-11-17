@@ -6,6 +6,7 @@ from "./subset_list.sml" import * as SubsetList;
 from "./subset_bool.sml" import * as SubsetBool;
 from "./wm_print.sml" import * as WmPrint;
 from "./wm_parse.sml" import * as WmParse;
+from "./wm_lexer.sml" import * as WmLexer;
 from "./subset_string.sml" import * as SubsetString;
 from "./compiler_text.sml" import * as CompilerText;
 */
@@ -19,6 +20,7 @@ from "./syntax.wm" import * as Syntax;
 from "./subset_list.wm" import * as SubsetList;
 from "./compiler_text.wm" import * as CompilerText;
 from "./wm_parse.wm" import * as WmParse;
+from "./wm_lexer.wm" import * as WmLexer;
 from "./wm_print.wm" import * as WmPrint;
 from "./subset_string.wm" import * as SubsetString;
 from "./subset_bool.wm" import * as SubsetBool;
@@ -27,7 +29,7 @@ export from "./subset_option_value.wm" import *;
 export from "./syntax.wm" import *;
 
 type Scope =
-  | Scope<List<(String, Bool, Option<Longid>)>, List<(String, List<String>)>, List<(String, List<String>)>>;
+  | Scope<List<(String, Bool, Option<Longid>)>, List<(String, List<String>, Option<(String, String)>)>, List<(String, List<String>)>>;
 let empty = Scope([], [], []);
 let member = (names, name) => { SubsetList.exists(names, (n) => { n == name }) };
 let plus = match {
@@ -43,7 +45,15 @@ let value = match {
   (Scope(values, _, _), Var(name)) => { SubsetList.find(values, (n, _, _) => { n == name }) }
 };
 let typeBound = match {
-  (Scope(_, types, _), Var(name)) => { SubsetList.exists(types, (n, _) => { n == name }) }
+  (Scope(_, types, _), Var(name)) => { SubsetList.exists(types, (n, _, _) => { n == name }) }
+};
+let recordType = match {
+  (Scope(_, types, _), Var(name)) => {
+    match(SubsetList.find(types, (n, _, _) => { n == name })) {
+      Some(_, _, origin) => { origin },
+      None => { None }
+    }
+  }
 };
 
 let namespace = match {
@@ -68,6 +78,17 @@ let rec namespacePath = (imports, path) => {
       }
     },
     _ => { path }
+  }
+};
+let importedRecord = (imports, (qs, name)) => {
+  match(namespacePath(imports, qs)) {
+    [target] => {
+      match(SubsetList.find(imports, (n, _) => { n == target })) {
+        Some(_, scope) => { recordType(scope, name) },
+        None => { None }
+      }
+    },
+    _ => { None }
   }
 };
 let exported = match {
@@ -96,7 +117,7 @@ let projection = (imports, target, original, alias, pos) => {
   let (_, sourceType) = WmParse.tyConName([], original);
   let (_, aliasType) = WmParse.tyConName([], alias);
   let value = SubsetList.find(values, (n, _, _) => { n == sourceValue });
-  let typ = SubsetList.find(types, (n, _) => { n == sourceType });
+  let typ = SubsetList.find(types, (n, _, _) => { n == sourceType });
   let ns = SubsetList.find(namespaces, (n, _) => { n == original });
   let error = match(value, typ, ns) {
     (None, None, None) => { Some("unbound selected name " ++ original) },
@@ -108,7 +129,7 @@ let projection = (imports, target, original, alias, pos) => {
       SubsetList.append(
         match(typ) {
           None => { [] },
-          Some(_, parameters) => {
+          Some(_, parameters, _) => {
             [
               DType(
                 pos,
@@ -189,6 +210,178 @@ let projectionErrors = (imports, ds) => {
     ))
   };
   scan(ds)
+};
+
+/* Record literals need their layout before expressions can be parsed. Use already parsed
+   dependency interfaces, and snapshot lexical type bindings at each literal/update. A
+   type with no record origin shadows an older record binding rather than guessing a layout. */
+let recordResolver = (owner, imports, defaultTypes, defaultNamespaces, lexed) => {
+  let put = (name, item, entries) => {
+    [(name, item), ..SubsetList.filter(entries, (n, _) => { n != name })]
+  };
+  let scopeOf = (target) => {
+    match(SubsetList.find(imports, (n, _) => { n == target })) {
+      Some(_, scope) => { scope },
+      None => { empty }
+    }
+  };
+  let selected = (target, items, records, namespaces) => {
+    let scope = scopeOf(target);
+    let rec add = (items, records, namespaces) => {
+      match(items) {
+        [original, alias, ..rest] => {
+          let records = put(
+            WmParse.decapitalize(alias),
+            recordType(scope, WmParse.decapitalize(original)),
+            records
+          );
+          let namespaces = match(namespace(scope, original)) {
+            Some(path) => { put(alias, path, namespaces) },
+            None => { namespaces }
+          };
+          add(rest, records, namespaces)
+        },
+        _ => { (records, namespaces) }
+      }
+    };
+    add(items, records, namespaces)
+  };
+  let opened = (target, records, namespaces) => {
+    let Scope(_, types, names) = scopeOf(target);
+    let records = SubsetList.foldLeft(types, records, ((name, _, origin), records) => { put(name, origin, records) });
+    let namespaces = SubsetList.foldLeft(
+      names,
+      namespaces,
+      ((name, path), namespaces) => { put(name, path, namespaces) }
+    );
+    (records, namespaces)
+  };
+  let resolve = (records, namespaces, path) => {
+    match(path) {
+      [name] => {
+        match(SubsetList.find(records, (n, _) => { n == WmParse.decapitalize(name) })) {
+          Some(_, origin) => { origin },
+          None => { None }
+        }
+      },
+      [head, ..rest] => {
+        let path = match(SubsetList.find(namespaces, (n, _) => { n == head })) {
+          Some(_, target) => { SubsetList.append(target, rest) },
+          None => { path }
+        };
+        let reversed = SubsetList.reverse(path);
+        match(reversed) {
+          [name, ..qs] => {
+            importedRecord(imports, (SubsetList.reverse(qs), WmParse.decapitalize(name)))
+          },
+          _ => { None }
+        }
+      },
+      _ => { None }
+    }
+  };
+  let rec scan = (tokens, records, namespaces, stack, typeGroup, found) => {
+    match(tokens) {
+      [] => { found },
+      [(WmLexer.WOpen([[marker, target, ..items], .._]), _), ..rest] => {
+        if (if (marker == "`import") { true } else { marker == "`export" }) {
+          let (records, namespaces) = selected(target, items, records, namespaces);
+          scan(rest, records, namespaces, stack, None, found)
+        } else { scan(rest, records, namespaces, stack, typeGroup, found) }
+      },
+      [(WmLexer.WOpen([[target]]), _), ..rest] => {
+        let (records, namespaces) = opened(target, records, namespaces);
+        scan(rest, records, namespaces, stack, None, found)
+      },
+      [(WmLexer.WKey("record"), _), (WmLexer.WName([name]), _), ..rest] => {
+        scan(
+          rest,
+          put(WmParse.decapitalize(name), Some(owner, WmParse.decapitalize(name)), records),
+          namespaces,
+          stack,
+          None,
+          found
+        )
+      },
+      [(WmLexer.WKey("type"), _), (WmLexer.WName([name]), _), ..rest] => {
+        scan(
+          rest,
+          put(WmParse.decapitalize(name), None, records),
+          namespaces,
+          stack,
+          Some(SubsetList.length(stack)),
+          found
+        )
+      },
+      [(WmLexer.WKey("and"), _), (WmLexer.WName([name]), _), ..rest] => {
+        scan(
+          rest,
+          match(typeGroup) {
+            Some(depth) => {
+              if (depth == SubsetList.length(stack)) { put(WmParse.decapitalize(name), None, records) } else { records }
+            },
+            None => { records }
+          },
+          namespaces,
+          stack,
+          typeGroup,
+          found
+        )
+      },
+      [(WmLexer.WName(path), Var(p)), (WmLexer.WKey("{"), Var(q)), ..rest] => {
+        scan(
+          [(WmLexer.WKey("{"), q), ..rest],
+          records,
+          namespaces,
+          stack,
+          typeGroup,
+          [(p, resolve(records, namespaces, path)), ..found]
+        )
+      },
+      [(WmLexer.WKey("{"), _), ..rest] => {
+        scan(
+          rest,
+          records,
+          namespaces,
+          [(records, namespaces, typeGroup), ..stack],
+          typeGroup,
+          found
+        )
+      },
+      [(WmLexer.WKey(".{"), _), ..rest] => {
+        scan(
+          rest,
+          records,
+          namespaces,
+          [(records, namespaces, typeGroup), ..stack],
+          typeGroup,
+          found
+        )
+      },
+      [(WmLexer.WKey("}"), _), ..rest] => {
+        match(stack) {
+          [(Var(records), Var(namespaces), Var(group)), ..stack] => { scan(rest, records, namespaces, stack, group, found) },
+          [] => { scan(rest, records, namespaces, [], typeGroup, found) }
+        }
+      },
+      [(WmLexer.WKey(";"), _), ..rest] => { scan(rest, records, namespaces, stack, None, found) },
+      [_, ..rest] => { scan(rest, records, namespaces, stack, typeGroup, found) }
+    }
+  };
+  let records = SubsetList.map(defaultTypes, (name, id) => { (name, importedRecord(imports, id)) });
+  let namespaces = SubsetList.map(defaultNamespaces, (name, target) => { (name, [target]) });
+  let found = match(lexed) {
+    WmLexer.Tokens(tokens, _) => { scan(tokens, records, namespaces, [], None, []) },
+    _ => { [] }
+  };
+  (pos, path) => {
+    match(SubsetList.find(found, (p, _) => { p == pos })) {
+      Some(_, Some(moduleName, name)) => {
+        Some(if (moduleName == owner) { [name] } else { [moduleName, name] })
+      },
+      _ => { None }
+    }
+  }
 };
 
 /* Each table maps a source spelling to its defining module and member. Namespace targets
@@ -439,9 +632,29 @@ let resolve = (owner, values, types, namespaces, imports, declarations) => {
         (DVal(pos, vs, zip(pp, pe), zip(rp, re)), plus(pd, rd))
       },
       DType(pos, bs) => {
+        let bs = SubsetList.map(bs, (vs, n, t) => { (vs, n, ty(env, t)) });
+        let origin = (vs, n, t) => {
+          match(t) {
+            TyRecord(_) => { Some(owner, n) },
+            TyCon(args, (Var(qs), Var(name))) => {
+              if (if (SubsetBool.not(SubsetList.isEmpty(qs))) { args == SubsetList.map(vs, TyVar) } else { false }) { importedRecord(imports, (qs, name)) } else { None }
+            },
+            _ => { None }
+          }
+        };
         (
-          DType(pos, SubsetList.map(bs, (vs, n, t) => { (vs, n, ty(env, t)) })),
-          Scope([], SubsetList.map(bs, (vs, n, _) => { (n, vs) }), [])
+          DType(pos, bs),
+          Scope(
+            [],
+            SubsetList.map(
+              bs,
+              (binding) => {
+                let (vs, n, _) = binding;
+                (n, vs, origin(binding))
+              }
+            ),
+            []
+          )
         )
       },
       DDatatype(pos, bs) => {
@@ -452,7 +665,7 @@ let resolve = (owner, values, types, namespaces, imports, declarations) => {
               SubsetList.map(cs, (_, n, _) => { (n, true, Some([owner], n)) })
             }
           )),
-          SubsetList.map(bs, (vs, n, _) => { (n, vs) }),
+          SubsetList.map(bs, (vs, n, _) => { (n, vs, None) }),
           []
         );
         let env = plus(env, delta);

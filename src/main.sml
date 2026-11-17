@@ -187,6 +187,35 @@ structure Main = struct
             case SubsetList.find (units, fn unit => WmProject.name unit = name) of
               NONE => WmProject.failure ("translation", "", "missing runtime dependency " ^ name, 0)
             | SOME unit => SubsetResult.Ok unit)
+          val parseGraph = fn (sources, layouts) =>
+            let val rec parse = fn (sources, scopes) => case sources of
+                [] => SubsetResult.Ok ([], [])
+              | WmProject.Source (unit, edges, aliases, tokens) :: rest =>
+                  let
+                    val owner = WmProject.name unit
+                    val path = WmProject.pathOf unit
+                    val src = WmProject.textOf unit
+                    val (values, types, namespaces) = WmProject.defaultScope (basis, units, unit)
+                    val records = WmScope.recordResolver (owner, scopes, types, namespaces, tokens)
+                  in case WmParse.parseModuleRecordScope (layouts, owner, src, tokens, keywordPrefix, records) of
+                    WmParse.ParseError (message, pos) => WmProject.failure (path, src, message, pos)
+                  | WmParse.Module (ds, es, cs) =>
+                      let
+                        val errors = SubsetList.map (WmScope.projectionErrors (scopes, ds),
+                          fn (p, message) => (Translate.located (path, message), p))
+                        val (ds, scope) = WmScope.resolve (owner, values, types, namespaces, scopes, ds)
+                        val scope = WmScope.exported (scope, aliases)
+                        val WmScope.Scope (_, _, names) = scope
+                        val aliases = SubsetList.map (names, fn (alias, path) =>
+                          (0, alias, SubsetString.concatWith (path, ".")))
+                        val program = Syntax.TopDecs [Syntax.SStructure (0, [(owner, aliases, ds)])] ::
+                          SubsetList.map (es, fn e => Syntax.TopExp (0, e))
+                      in SubsetResult.andThen (WmProject.imported (units, unit, edges), fn dependencies =>
+                        SubsetResult.map (parse (rest, (owner, scope) :: scopes), fn (rest, moreErrors) =>
+                          ((owner, SubsetList.map (dependencies, WmProject.name), (path, src, program, cs)) :: rest,
+                            SubsetList.append (errors, moreErrors)))) end
+                  end
+            in parse (sources, []) end
         in SubsetResult.andThen (traverse (units, fn unit => WmProject.prepare (basis, units, unit)), fn prepared =>
           SubsetResult.andThen (WmProject.order prepared, fn ordered =>
             let
@@ -195,38 +224,8 @@ structure Main = struct
                   WmParse.Done (layouts, _) => SubsetResult.Ok layouts
                 | WmParse.Fail (message, pos) => WmProject.failure (WmProject.pathOf unit, WmProject.textOf unit, message, pos))
             in SubsetResult.andThen (declarations, fn groups =>
-              SubsetResult.andThen (traverse (ordered, fn WmProject.Source (unit, edges, aliases, tokens) =>
-                case WmParse.parseModuleProject (SmlList.concat groups, WmProject.name unit, WmProject.textOf unit, tokens, keywordPrefix) of
-                  WmParse.ParseError (message, pos) => WmProject.failure (WmProject.pathOf unit, WmProject.textOf unit, message, pos)
-                | WmParse.Module (ds, es, cs) =>
-                    SubsetResult.map (WmProject.imported (units, unit, edges), fn dependencies =>
-                      (WmProject.name unit, SmlList.map WmProject.name dependencies,
-                       (WmProject.pathOf unit, WmProject.textOf unit,
-                        Syntax.TopDecs [Syntax.SStructure (0, [(WmProject.name unit, aliases, ds)])] ::
-                        SmlList.map (fn e => Syntax.TopExp (0, e)) es, cs)))), fn modules =>
+              SubsetResult.andThen (parseGraph (ordered, SmlList.concat groups), fn (modules, projectionErrors) =>
                 let
-                  val rec defaults = fn (modules, scopes) => case modules of
-                      [] => ([], [])
-                    | (moduleName, dependencies, (path, src, program, cs)) :: rest =>
-                        let
-                          val tables = case SubsetList.find (units, fn u => WmProject.name u = moduleName) of
-                              NONE => ([], [], []) | SOME unit => WmProject.defaultScope (basis, units, unit)
-                          val (values, types, namespaces) = tables
-                          val (program, exported, errors) = case program of
-                              Syntax.TopDecs [Syntax.SStructure (p, [(n, aliases, ds)])] :: tail =>
-                                let val errors = WmScope.projectionErrors (scopes, ds)
-                                    val (ds, scope) = WmScope.resolve (moduleName, values, types, namespaces, scopes, ds)
-                                    val scope = WmScope.exported (scope, aliases)
-                                    val WmScope.Scope (_, _, namespaces) = scope
-                                    val aliases = SubsetList.map (namespaces, fn (alias, path) =>
-                                      (p, alias, SubsetString.concatWith (path, ".")))
-                                in (Syntax.TopDecs [Syntax.SStructure (p, [(n, aliases, ds)])] :: tail, scope,
-                                  SubsetList.map (errors, fn (p, message) => (Translate.located (path, message), p))) end
-                            | _ => (program, WmScope.Scope ([], [], []), [])
-                          val (rest, moreErrors) = defaults (rest, (moduleName, exported) :: scopes)
-                        in ((moduleName, dependencies, (path, src, program, cs)) :: rest,
-                          SubsetList.append (errors, moreErrors)) end
-                  val (modules, projectionErrors) = defaults (modules, [])
                   val libraries = case basis of NONE => [] | SOME directory =>
                     SubsetList.map (SubsetList.filter (units,
                       fn u => WmProject.inside (directory ^ "/std", WmProject.pathOf u)), WmProject.name)

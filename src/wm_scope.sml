@@ -5,6 +5,7 @@ from "./subset_list.sml" import * as SubsetList;
 from "./subset_bool.sml" import * as SubsetBool;
 from "./wm_print.sml" import * as WmPrint;
 from "./wm_parse.sml" import * as WmParse;
+from "./wm_lexer.sml" import * as WmLexer;
 from "./subset_string.sml" import * as SubsetString;
 from "./compiler_text.sml" import * as CompilerText;
 *)
@@ -16,13 +17,16 @@ structure WmScope = struct
   open SubsetOptionValue
   open Syntax
 
-  datatype scope = Scope of (string * bool * longid option) list * (string * string list) list * (string * string list) list
+  datatype scope = Scope of (string * bool * longid option) list * (string * string list * (string * string) option) list * (string * string list) list
   val empty = Scope ([], [], [])
   val member = fn (names, name) => SubsetList.exists (names, fn n => n = name)
   val plus = fn (Scope (av, at, an), Scope (bv, bt, bn)) =>
     Scope (SubsetList.append (bv, av), SubsetList.append (bt, at), SubsetList.append (bn, an))
   val value = fn (Scope (values, _, _), name) => SubsetList.find (values, fn (n, _, _) => n = name)
-  val typeBound = fn (Scope (_, types, _), name) => SubsetList.exists (types, fn (n, _) => n = name)
+  val typeBound = fn (Scope (_, types, _), name) => SubsetList.exists (types, fn (n, _, _) => n = name)
+  val recordType = fn (Scope (_, types, _), name) =>
+    case SubsetList.find (types, fn (n, _, _) => n = name) of
+      SOME (_, _, origin) => origin | NONE => NONE
 
   val namespace = fn (Scope (_, _, namespaces), name) =>
     case SubsetList.find (namespaces, fn (n, _) => n = name) of SOME (_, path) => SOME path | NONE => NONE
@@ -32,6 +36,11 @@ structure WmScope = struct
           SOME target => namespacePath (imports, SubsetList.append (target, rest)) | NONE => path)
       | NONE => path)
     | _ => path
+  val importedRecord = fn (imports, (qs, name)) =>
+    case namespacePath (imports, qs) of
+      [target] => (case SubsetList.find (imports, fn (n, _) => n = target) of
+        SOME (_, scope) => recordType (scope, name) | NONE => NONE)
+    | _ => NONE
   val exported = fn (Scope (values, types, namespaces), aliases) =>
     Scope (values, types, SubsetList.append (SubsetList.map (aliases,
       fn (_, alias, target) => (alias, CompilerText.fields (target, fn c => c = #"."))), namespaces))
@@ -45,13 +54,13 @@ structure WmScope = struct
       val (_, sourceType) = WmParse.tyConName ([], original)
       val (_, aliasType) = WmParse.tyConName ([], alias)
       val value = SubsetList.find (values, fn (n, _, _) => n = sourceValue)
-      val typ = SubsetList.find (types, fn (n, _) => n = sourceType)
+      val typ = SubsetList.find (types, fn (n, _, _) => n = sourceType)
       val ns = SubsetList.find (namespaces, fn (n, _) => n = original)
       val error = case (value, typ, ns) of
           (NONE, NONE, NONE) => SOME ("unbound selected name " ^ original) | _ => NONE
       val declarations = case error of SOME _ => [] | NONE =>
         SubsetList.append (
-          (case typ of NONE => [] | SOME (_, parameters) =>
+          (case typ of NONE => [] | SOME (_, parameters, _) =>
             [DType (pos, [(parameters, aliasType,
               TyCon (SubsetList.map (parameters, TyVar), ([target], sourceType)))])]),
           (case value of NONE => [] | SOME (_, isConstructor, origin) =>
@@ -77,6 +86,85 @@ structure WmScope = struct
         | DLocal (_, hidden, body) => SubsetList.append (scan hidden, scan body)
         | _ => []))
     in scan ds end
+
+  (* Record literals need their layout before expressions can be parsed. Use already parsed
+     dependency interfaces, and snapshot lexical type bindings at each literal/update. A
+     type with no record origin shadows an older record binding rather than guessing a layout. *)
+  val recordResolver = fn (owner, imports, defaultTypes, defaultNamespaces, lexed) =>
+    let
+      val put = fn (name, item, entries) => (name, item) :: SubsetList.filter (entries, fn (n, _) => n <> name)
+      val scopeOf = fn target => case SubsetList.find (imports, fn (n, _) => n = target) of
+          SOME (_, scope) => scope | NONE => empty
+      val selected = fn (target, items, records, namespaces) =>
+        let
+          val scope = scopeOf target
+          val rec add = fn (items, records, namespaces) => case items of
+              original :: alias :: rest =>
+                let val records = put (WmParse.decapitalize alias,
+                      recordType (scope, WmParse.decapitalize original), records)
+                    val namespaces = case namespace (scope, original) of
+                        SOME path => put (alias, path, namespaces) | NONE => namespaces
+                in add (rest, records, namespaces) end
+            | _ => (records, namespaces)
+        in add (items, records, namespaces) end
+      val opened = fn (target, records, namespaces) =>
+        let val Scope (_, types, names) = scopeOf target
+            val records = SubsetList.foldLeft (types, records,
+              fn ((name, _, origin), records) => put (name, origin, records))
+            val namespaces = SubsetList.foldLeft (names, namespaces,
+              fn ((name, path), namespaces) => put (name, path, namespaces))
+        in (records, namespaces) end
+      val resolve = fn (records, namespaces, path) => case path of
+          [name] => (case SubsetList.find (records, fn (n, _) => n = WmParse.decapitalize name) of
+            SOME (_, origin) => origin | NONE => NONE)
+        | head :: rest =>
+            let val path = case SubsetList.find (namespaces, fn (n, _) => n = head) of
+                    SOME (_, target) => SubsetList.append (target, rest) | NONE => path
+                val reversed = SubsetList.reverse path
+            in case reversed of name :: qs => importedRecord (imports,
+                (SubsetList.reverse qs, WmParse.decapitalize name)) | _ => NONE end
+        | _ => NONE
+      val rec scan = fn (tokens, records, namespaces, stack, typeGroup, found) => case tokens of
+          [] => found
+        | (WmLexer.WOpen ((marker :: target :: items) :: _), _) :: rest =>
+            if marker = "`import" orelse marker = "`export" then
+              let val (records, namespaces) = selected (target, items, records, namespaces)
+              in scan (rest, records, namespaces, stack, NONE, found) end
+            else scan (rest, records, namespaces, stack, typeGroup, found)
+        | (WmLexer.WOpen [[target]], _) :: rest =>
+            let val (records, namespaces) = opened (target, records, namespaces)
+            in scan (rest, records, namespaces, stack, NONE, found) end
+        | (WmLexer.WKey "record", _) :: (WmLexer.WName [name], _) :: rest =>
+            scan (rest, put (WmParse.decapitalize name, SOME (owner, WmParse.decapitalize name), records),
+              namespaces, stack, NONE, found)
+        | (WmLexer.WKey "type", _) :: (WmLexer.WName [name], _) :: rest =>
+            scan (rest, put (WmParse.decapitalize name, NONE, records), namespaces, stack,
+              SOME (SubsetList.length stack), found)
+        | (WmLexer.WKey "and", _) :: (WmLexer.WName [name], _) :: rest =>
+            scan (rest, case typeGroup of SOME depth =>
+              if depth = SubsetList.length stack then put (WmParse.decapitalize name, NONE, records) else records
+              | NONE => records, namespaces, stack, typeGroup, found)
+        | (WmLexer.WName path, p) :: (WmLexer.WKey "{", q) :: rest =>
+            scan ((WmLexer.WKey "{", q) :: rest, records, namespaces, stack, typeGroup,
+              (p, resolve (records, namespaces, path)) :: found)
+        | (WmLexer.WKey "{", _) :: rest =>
+            scan (rest, records, namespaces, (records, namespaces, typeGroup) :: stack, typeGroup, found)
+        | (WmLexer.WKey ".{", _) :: rest =>
+            scan (rest, records, namespaces, (records, namespaces, typeGroup) :: stack, typeGroup, found)
+        | (WmLexer.WKey "}", _) :: rest => (case stack of
+            (records, namespaces, group) :: stack => scan (rest, records, namespaces, stack, group, found)
+          | [] => scan (rest, records, namespaces, [], typeGroup, found))
+        | (WmLexer.WKey ";", _) :: rest => scan (rest, records, namespaces, stack, NONE, found)
+        | _ :: rest => scan (rest, records, namespaces, stack, typeGroup, found)
+      val records = SubsetList.map (defaultTypes, fn (name, id) => (name, importedRecord (imports, id)))
+      val namespaces = SubsetList.map (defaultNamespaces, fn (name, target) => (name, [target]))
+      val found = case lexed of
+          WmLexer.Tokens (tokens, _) => scan (tokens, records, namespaces, [], NONE, [])
+        | _ => []
+    in fn (pos, path) => case SubsetList.find (found, fn (p, _) => p = pos) of
+      SOME (_, SOME (moduleName, name)) =>
+        SOME (if moduleName = owner then [name] else [moduleName, name])
+    | _ => NONE end
 
   (* Each table maps a source spelling to its defining module and member. Namespace targets
      are canonical project names, rather than basenames or source aliases. *)
@@ -199,12 +287,19 @@ structure WmScope = struct
                     (p :: ps, e :: es) => (p, e) :: zip (ps, es) | _ => []
             in (DVal (pos, vs, zip (pp, pe), zip (rp, re)), plus (pd, rd)) end
         | DType (pos, bs) =>
-            (DType (pos, SubsetList.map (bs, fn (vs, n, t) => (vs, n, ty (env, t)))),
-             Scope ([], SubsetList.map (bs, fn (vs, n, _) => (n, vs)), []))
+            let val bs = SubsetList.map (bs, fn (vs, n, t) => (vs, n, ty (env, t)))
+                val origin = fn (vs, n, t) => case t of
+                    TyRecord _ => SOME (owner, n)
+                  | TyCon (args, (qs, name)) =>
+                      if SubsetBool.not (SubsetList.isEmpty qs) andalso args = SubsetList.map (vs, TyVar)
+                      then importedRecord (imports, (qs, name)) else NONE
+                  | _ => NONE
+            in (DType (pos, bs), Scope ([], SubsetList.map (bs,
+              fn binding => let val (vs, n, _) = binding in (n, vs, origin binding) end), [])) end
         | DDatatype (pos, bs) =>
             let val delta = Scope (SubsetList.concat (SubsetList.map (bs, fn (_, _, cs) =>
                       SubsetList.map (cs, fn (_, n, _) => (n, true, SOME ([owner], n))))),
-                    SubsetList.map (bs, fn (vs, n, _) => (n, vs)), [])
+                    SubsetList.map (bs, fn (vs, n, _) => (n, vs, NONE)), [])
                 val env = plus (env, delta)
             in (DDatatype (pos, SubsetList.map (bs, fn (vs, n, cs) => (vs, n,
                  SubsetList.map (cs, fn (p, c, t) => (p, c, case t of

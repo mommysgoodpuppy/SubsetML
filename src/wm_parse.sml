@@ -378,7 +378,7 @@ structure WmParse = struct
     | TyRecord fields => TyRecord (SmlList.map (fn (l, a) => (l, parameterType (variables, a))) fields)
     | TyVar _ => t
 
-  val parseModuleLowering = fn (layouts, owner, src, lexed, fieldPrefix) =>
+  val parseModuleLowering = fn (layouts, owner, src, lexed, fieldPrefix, recordResolver) =>
     let
       (* A private named record import keeps its lexical name for type/binding resolution.
          Its literal layout is still the defining record's layout. *)
@@ -391,12 +391,15 @@ structure WmParse = struct
               in pairs items end
           | _ => []))
         | _ => []
-      val recordPath = fn path => case path of
+      val legacyRecordPath = fn path => case path of
           [name] => if SubsetList.exists (layouts, fn Layout (moduleName, recordName, _, _) =>
               moduleName = owner andalso recordName = decapitalize name) then path else
             (case SubsetList.find (recordImports, fn (alias, _) => alias = name) of
               SOME (_, target) => target | NONE => path)
         | _ => path
+      val recordPath = fn (pos, path) => case recordResolver of
+          SOME resolve => resolve (pos, path)
+        | NONE => SOME (legacyRecordPath path)
       (* Export field-type witnesses through their owning record module. Consumers need
          not import private dependencies merely to type-check generated reconstruction. *)
       val fieldAlias = fn (recordName, label) =>
@@ -459,7 +462,8 @@ structure WmParse = struct
         let
           val rec scan = fn tokens =>
             case tokens of
-              (WName path, _) :: (WKey "{", _) :: rest => recordPath path :: scan rest
+              (WName path, p) :: (WKey "{", _) :: rest =>
+                (case recordPath (p, path) of SOME target => target :: scan rest | NONE => scan rest)
             | _ :: rest => scan rest
             | [] => []
         in case lexed of Tokens (tokens, _) => scan tokens | LexError (_, _) => [] end
@@ -977,11 +981,14 @@ structure WmParse = struct
   (* Named record layout is explicit; no inference is needed to enumerate copied fields. *)
   and parseNamedRecord = fn (p, path, ts) =>
     let
-      val path = recordPath path
+      val resolved = recordPath (p, path)
+      val originalPath = path
+      val path = case resolved of SOME target => target | NONE => path
       val (qualifiers, name, selections) = splitPath path
       val sourceOwner = if SubsetList.isEmpty qualifiers then owner else SubsetString.concatWith (qualifiers, ".")
-      val candidate = SmlList.find (fn Layout (moduleName, recordName, _, _) =>
-        moduleName = sourceOwner andalso recordName = decapitalize name) layouts
+      val candidate = case resolved of NONE => NONE | SOME _ =>
+        SmlList.find (fn Layout (moduleName, recordName, _, _) =>
+          moduleName = sourceOwner andalso recordName = decapitalize name) layouts
       val part = fn ts =>
         case peek ts of
           (WKey "..", _) => bind (parseExp (advance ts)) (fn e => fn ts => Done (Spread e, ts))
@@ -993,7 +1000,7 @@ structure WmParse = struct
     in
       if SubsetBool.not (SubsetList.isEmpty selections) then Fail ("expected a nominal record type name", p)
       else case candidate of
-        NONE => Fail ("unknown record layout " ^ SubsetString.concatWith (path, ".") ^ "; supply its declaration when translating", p)
+        NONE => Fail ("unknown record layout " ^ SubsetString.concatWith (originalPath, ".") ^ "; supply its declaration when translating", p)
       | SOME (Layout (_, recordName, variables, fields)) =>
           bind (separated (part, ",", "}", ts)) (fn parts => fn ts =>
             bind (expect ("}", ts)) (fn _ => fn ts =>
@@ -1321,16 +1328,21 @@ structure WmParse = struct
                 in [DLocal (p, hidden, scope rest')] end
         in
           case items ([], [], ts) of
-            Done ((decs, exps), _) => Module (SubsetList.append (aliases, scope decs), exps, comments)
+            Done ((decs, exps), _) => Module (
+              if SubsetList.isEmpty aliases then scope decs else [DLocal (0, aliases, scope decs)],
+              exps, comments)
           | Fail (message, pos) => ParseError (message, pos)
         end
     end
 
   val parseModuleTokens = fn (layouts, owner, src, lexed) =>
-    parseModuleLowering (layouts, owner, src, lexed, NONE)
+    parseModuleLowering (layouts, owner, src, lexed, NONE, NONE)
 
   val parseModuleProject = fn (layouts, owner, src, lexed, prefix) =>
-    parseModuleLowering (layouts, owner, src, lexed, SOME prefix)
+    parseModuleLowering (layouts, owner, src, lexed, SOME prefix, NONE)
+
+  val parseModuleRecordScope = fn (layouts, owner, src, lexed, prefix, resolve) =>
+    parseModuleLowering (layouts, owner, src, lexed, SOME prefix, SOME resolve)
 
   val parseModuleWithLayouts = fn (layouts, owner, src) =>
     parseModuleTokens (layouts, owner, src, WmLexer.lex src)

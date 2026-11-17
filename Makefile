@@ -32,7 +32,7 @@ wm-selfcheck: wm
 # own temp directory and log; `make test JOBS=1` runs them one at a time.
 TEST_SCRIPTS = run integer roundtrip translation pipes wm-modules \
   wm-entry wm-scope wm-reexports native-adapters mlworks-host sml-targets sml-compiler backend-names \
-  no-sml-declarations pattern-lowering selector-scope record-updates record-constructors carrier-lowering \
+  no-sml-declarations pattern-lowering selector-scope record-updates record-constructors wm-record-facades carrier-lowering \
   basis char-basis custom-basis text-basis won-basis utf16-source \
   lexer-bytes doc-portable sml-printer wm-printer kernel-portable io-portable \
   process-panic process-os panic-lowering cli-portable module-loading alias-module templates inline-records carrier-groups monad portable-output

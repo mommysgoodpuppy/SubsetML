@@ -56,8 +56,8 @@ from "./subset_list.wm" import * as SubsetList;
 from "./translate.wm" import * as Translate;
 from "./sml_list_pair.wm" import * as SmlListPair;
 from "./wm_project.wm" import * as WmProject;
-from "./wm_parse.wm" import * as WmParse;
 from "./wm_scope.wm" import * as WmScope;
+from "./wm_parse.wm" import * as WmParse;
 from "./subset_string.wm" import * as SubsetString;
 from "./module_project.wm" import * as ModuleProject;
 from "./subset_bool.wm" import * as SubsetBool;
@@ -272,6 +272,55 @@ let fromWmLoaded = (outDir, basis, runtimePath, entryPath, adapterSpecs, sources
         }
       )
     };
+    let parseGraph = (sources, layouts) => {
+      let rec parse = (sources, scopes) => {
+        match(sources) {
+          [] => { SubsetResult.Ok([], []) },
+          [WmProject.Source(unit, edges, aliases, tokens), ..rest] => {
+            let owner = WmProject.name(unit);
+            let path = WmProject.pathOf(unit);
+            let src = WmProject.textOf(unit);
+            let (values, types, namespaces) = WmProject.defaultScope(basis, units, unit);
+            let records = WmScope.recordResolver(owner, scopes, types, namespaces, tokens);
+            match(WmParse.parseModuleRecordScope(layouts, owner, src, tokens, keywordPrefix, records)) {
+              WmParse.ParseError(message, pos) => { WmProject.failure(path, src, message, pos) },
+              WmParse.Module(ds, es, cs) => {
+                let errors = SubsetList.map(
+                  WmScope.projectionErrors(scopes, ds),
+                  (p, message) => { (Translate.located(path, message), p) }
+                );
+                let (ds, scope) = WmScope.resolve(owner, values, types, namespaces, scopes, ds);
+                let scope = WmScope.exported(scope, aliases);
+                let WmScope.Scope(_, _, names) = scope;
+                let aliases = SubsetList.map(names, (alias, path) => { (0, alias, SubsetString.concatWith(path, ".")) });
+                let program = [
+                  Syntax.TopDecs([Syntax.SStructure(0, [(owner, aliases, ds)])]),
+                  ..SubsetList.map(es, (e) => { Syntax.TopExp(0, e) })
+                ];
+                SubsetResult.andThen(
+                  WmProject.imported(units, unit, edges),
+                  (dependencies) => {
+                    SubsetResult.map(
+                      parse(rest, [(owner, scope), ..scopes]),
+                      (rest, moreErrors) => {
+                        (
+                          [
+                            (owner, SubsetList.map(dependencies, WmProject.name), (path, src, program, cs)),
+                            ..rest
+                          ],
+                          SubsetList.append(errors, moreErrors)
+                        )
+                      }
+                    )
+                  }
+                )
+              }
+            }
+          }
+        }
+      };
+      parse(sources, [])
+    };
     SubsetResult.andThen(
       traverse(units, (unit) => { WmProject.prepare(basis, units, unit) }),
       (prepared) => {
@@ -295,91 +344,8 @@ let fromWmLoaded = (outDir, basis, runtimePath, entryPath, adapterSpecs, sources
               declarations,
               (groups) => {
                 SubsetResult.andThen(
-                  traverse(
-                    ordered,
-                    match {
-                      WmProject.Source(unit, edges, aliases, tokens) => {
-                        match(WmParse.parseModuleProject(
-                          SmlList.concat(groups),
-                          WmProject.name(unit),
-                          WmProject.textOf(unit),
-                          tokens,
-                          keywordPrefix
-                        )) {
-                          WmParse.ParseError(message, pos) => {
-                            WmProject.failure(WmProject.pathOf(unit), WmProject.textOf(unit), message, pos)
-                          },
-                          WmParse.Module(ds, es, cs) => {
-                            SubsetResult.map(
-                              WmProject.imported(units, unit, edges),
-                              (dependencies) => {
-                                (
-                                  WmProject.name(unit),
-                                  SmlList.map(WmProject.name)(dependencies),
-                                  (
-                                    WmProject.pathOf(unit),
-                                    WmProject.textOf(unit),
-                                    [
-                                      Syntax.TopDecs([Syntax.SStructure(0, [(WmProject.name(unit), aliases, ds)])]),
-                                      ..SmlList.map((e) => { Syntax.TopExp(0, e) })(es)
-                                    ],
-                                    cs
-                                  )
-                                )
-                              }
-                            )
-                          }
-                        }
-                      }
-                    }
-                  ),
-                  (modules) => {
-                    let rec defaults = (modules, scopes) => {
-                      match(modules) {
-                        [] => { ([], []) },
-                        [
-                          (
-                            Var(moduleName),
-                            Var(dependencies),
-                            (Var(path), Var(src), Var(program), Var(cs))
-                          ),
-                          ..rest
-                        ] => {
-                          let tables = match(SubsetList.find(units, (u) => { WmProject.name(u) == moduleName })) {
-                            None => { ([], [], []) },
-                            Some(unit) => { WmProject.defaultScope(basis, units, unit) }
-                          };
-                          let (values, types, namespaces) = tables;
-                          let (program, exported, errors) = match(program) {
-                            [
-                              Syntax.TopDecs([Syntax.SStructure(p, [(Var(n), Var(aliases), Var(ds))])]),
-                              ..tail
-                            ] => {
-                              let errors = WmScope.projectionErrors(scopes, ds);
-                              let (ds, scope) = WmScope.resolve(moduleName, values, types, namespaces, scopes, ds);
-                              let scope = WmScope.exported(scope, aliases);
-                              let WmScope.Scope(_, _, namespaces) = scope;
-                              let aliases = SubsetList.map(
-                                namespaces,
-                                (alias, path) => { (p, alias, SubsetString.concatWith(path, ".")) }
-                              );
-                              (
-                                [Syntax.TopDecs([Syntax.SStructure(p, [(n, aliases, ds)])]), ..tail],
-                                scope,
-                                SubsetList.map(errors, (p, message) => { (Translate.located(path, message), p) })
-                              )
-                            },
-                            _ => { (program, WmScope.Scope([], [], []), []) }
-                          };
-                          let (rest, moreErrors) = defaults(rest, [(moduleName, exported), ..scopes]);
-                          (
-                            [(moduleName, dependencies, (path, src, program, cs)), ..rest],
-                            SubsetList.append(errors, moreErrors)
-                          )
-                        }
-                      }
-                    };
-                    let (modules, projectionErrors) = defaults(modules, []);
+                  parseGraph(ordered, SmlList.concat(groups)),
+                  (modules, projectionErrors) => {
                     let libraries = match(basis) {
                       None => { [] },
                       Some(directory) => {

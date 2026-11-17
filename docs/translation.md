@@ -72,9 +72,8 @@ facade; it never creates a replacement datatype or exposes the dependency's unse
 to WM source. The generated native aliases are ordinary SML value bindings: hand-written SML
 patterns must name the defining constructor, as the generated WM consumer code does.
 
-Named record-literal/update syntax through a newly renamed type still requires its layout to
-be supplied under that name; calling the forwarded record constructor or annotating a record
-value uses the transparent type alias.
+Named record literals and updates also follow renamed record types through these facades;
+their transparent aliases preserve the defining layout and field types.
 
 The reader and Workman's compiler share `WmModuleScope` for library paths, namespace aliases,
 auto-open rules, pervasive values and pervasive types. With `--basis DIR`, source defaults
@@ -137,7 +136,12 @@ their current SML-shaped APIs are transitional. SubsetML does not support the SM
 as its standard library. See [basis.md](basis.md).
 
 Named Workman record literals and updates, such as `Token.Token { ..token, marks = marks }`,
-are reconstructed from declaration layouts supplied with the input files. An unnamed update,
+are reconstructed from declaration layouts supplied with the input files. Named imports and
+selective re-exports carry the original layout through renamed types and exported namespaces.
+Generic field constraints, private field types and evaluation order survive these facades;
+lexical type declarations shadow imported layouts from their declaration onward. Layout
+forwarding applies to aliases that preserve the original type parameters in order. Generated
+consumer-side field witnesses stay private. An unnamed update,
 `.{ ..point, x = 1 }`, takes its layout from the source's inferred type and becomes
 `let val u = point val u_x = 1 in {x = u_x, y = #y u} end`; the source's record type must be
 fixed within the declaration (annotate the receiver otherwise), and the spread must come first.

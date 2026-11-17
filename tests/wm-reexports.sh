@@ -25,13 +25,14 @@ export from "./base.wm" import { Shape as Figure, Circle as Ring, Square as Bloc
  entry.write_text('''from "./forward.wm" import * as F;
 let shape: F.Figure = F.make(3);
 let items: F.Items<Int32.Int> = [F.id(1), F.id(2)];
-let pair: F.Duo<Int32.Int> = F.Duo(4, 5);
+let pair: F.Duo<Int32.Int> = F.Duo { first = 4, second = 5 };
+let updated = F.Duo { ..pair, second = 6 };
 let read = (value: F.Figure) => { match(value) { F.Loop(n) => { n }, F.Block(n) => { n } } };
 let missing: F.Maybe<Int32.Int> = F.Nothing;
 let present: F.Maybe<Int32.Int> = F.Some(9);
 let ticket: F.Ticket = F.Ticket(10);
 let good = read(shape) + pair.first + pair.second == 12 && F.id("ok") == "ok"
-  && read(F.Loop(7)) == 7 && read(F.Block(8)) == 8
+  && read(F.Loop(7)) == 7 && read(F.Block(8)) == 8 && updated.second == 6
   && match(missing) { F.Nothing => { true }, _ => { false } }
   && match(present) { F.Some(n) => { n == 9 }, _ => { false } }
   && match(ticket) { F.Ticket(n) => { n == 10 } };
@@ -58,7 +59,10 @@ from "./forward.wm" import { Loop as Selected };
 let original = match(Selected(3)) { Selected(n) => { n == 3 } };
 type Local = | Selected<String>;
 let own = match(Selected("local")) { Selected(s) => { s == "local" } };
-let good = original && own && match(Q.Loop(4)) { Q.Loop(n) => { n == 4 }, _ => { false } };
+let pair = Q.Duo { first = 2, second = 3 };
+let updated = Q.Duo { ..pair, first = 4 };
+let good = original && own && updated.first == 4 && updated.second == 3
+  && match(Q.Loop(4)) { Q.Loop(n) => { n == 4 }, _ => { false } };
 ''')
  subprocess.run([compiler, 'sml-entry', out, entry], check=True)
  subprocess.run(['mlton', '-output', executable, mlb], check=True)
