@@ -265,9 +265,9 @@ let implicitBasis = (basis, path, tokens) => {
         ]);
         let used = uses(tokens, bareUses(tokens, []));
         /* The reader spells some Workman forms with Basis functions: `!` is SubsetBool.not,
-           `%` and `==` on reals and backtick text use SubsetInt32, SubsetReal64 and
-           SubsetString, and `print` is SubsetIo.printLine over a display that names SubsetList and
-           the Option and Result constructors. Import each module, under its
+           `%` and `==` on reals use SubsetInt32 and SubsetReal64, and backtick text and `print`
+           (SubsetIo.printLine) show values with a display that names those, SubsetString,
+           SubsetList and the Option and Result constructors. Import each module, under its
            structure name, when its form occurs and the module isn't imported already. */
         let alreadyImported = (file) => {
           if (SubsetList.exists(
@@ -312,9 +312,9 @@ let implicitBasis = (basis, path, tokens) => {
           ),
           formImport("string", "SubsetString", [text, print]),
           formImport("io", "SubsetIo", [print]),
-          formImport("list", "SubsetList", [print]),
-          formImport("option_value", "SubsetOptionValue", [print]),
-          formImport("result_value", "SubsetResultValue", [print])
+          formImport("list", "SubsetList", [text, print]),
+          formImport("option_value", "SubsetOptionValue", [text, print]),
+          formImport("result_value", "SubsetResultValue", [text, print])
         ]);
         SubsetList.concat([defaults, forms, SubsetList.concat(SubsetList.map(used, header)), tokens])
       }
@@ -392,6 +392,9 @@ let headerPaths = (path, src, tokens) => {
             }
           }
         }
+      },
+      [(WmLexer.WKey("from"), Var(pos)), (WmLexer.WName(["js", .._]), _), .._] => {
+        failure(path, src, "JavaScript imports (`from js...`) have no SML translation", pos)
       },
       [(WmLexer.WKey("from"), Var(pos)), .._] => {
         failure(path, src, "reverse discovery requires header namespace imports", pos)
@@ -1175,7 +1178,7 @@ let adapters = (units, specifications) => {
   let rec resolve = (remaining, seen) => {
     match(remaining) {
       [] => { SubsetResult.Ok(SubsetList.reverse(seen)) },
-      [(Var(checker), Var(native), Var(exported)), ..rest] => {
+      [(Var(checker), Var(native), Var(exported), Var(required)), ..rest] => {
         if (SubsetBool.not(structureIdentifier(exported))) {
           failure(checker, "", "native adapter export must be an SML structure identifier", 0)
         } else {
@@ -1184,7 +1187,9 @@ let adapters = (units, specifications) => {
               SubsetResult.Err(error) => { failure(checker, "", SubsetIo.errorText(error), 0) },
               SubsetResult.Ok(ModuleProject.Resolved(id, _)) => {
                 if (SubsetBool.not(SubsetList.exists(units, (unit) => { ModuleProject.same(identity(unit), id) }))) {
-                  failure(checker, "", "native adapter checker is not in the entry graph", 0)
+                  if (required) {
+                    failure(checker, "", "native adapter checker is not in the entry graph", 0)
+                  } else { SubsetResult.Ok(None) }
                 } else {
                   if (SubsetList.exists(
                     seen,
@@ -1199,7 +1204,7 @@ let adapters = (units, specifications) => {
                       SubsetResult.Ok(ModuleProject.Resolved(_, path)) => {
                         match(SubsetIo.readFile(path)) {
                           SubsetResult.Err(error) => { failure(native, "", SubsetIo.errorText(error), 0) },
-                          SubsetResult.Ok(_) => { SubsetResult.Ok(Adapter(id, path, exported)) }
+                          SubsetResult.Ok(_) => { SubsetResult.Ok(Some(Adapter(id, path, exported))) }
                         }
                       }
                     }
@@ -1207,7 +1212,12 @@ let adapters = (units, specifications) => {
                 }
               }
             },
-            (adapter) => { resolve(rest, [adapter, ..seen]) }
+            (adapter) => {
+              match(adapter) {
+                None => { resolve(rest, seen) },
+                Some(selected) => { resolve(rest, [selected, ..seen]) }
+              }
+            }
           )
         }
       }

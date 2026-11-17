@@ -201,8 +201,9 @@ Reading Workman, a backtick string becomes a `^` chain of its text pieces, and e
 text of `e` by its inferred type: `e` itself for a string, `SubsetString.fromChar` for a char,
 `SubsetInt32.toString` or `SubsetReal64.toString` for a number (`Int64.toString` for the
 MLton-only Int64), and `"true"`/`"false"` for a bool. Number text matches Workman's display:
-`-3`, `0.30000000000000004`, `1e+21`. Other types have no text conversion and are errors, as is
-a `${ x }` whose type nothing decides; annotate it. A number only literals decide takes
+`-3`, `0.30000000000000004`, `1e+21`. With the SubsetML Basis, a value of another type shows as
+`print` shows it (below): `${[1, 2]}` is `[1, 2]`. Types with no display are errors, as is a
+`${ x }` whose type nothing decides; annotate it. A number only literals decide takes
 Workman's literal default, Int32 or Real64. A backtick string without `${ }` is a plain string
 constant.
 
@@ -492,7 +493,9 @@ mlton -output program OUTDIR/project.mlb
 Each option supplies a checker WM module, native SML file and exported structure identifier.
 Selection uses the checker's canonical filesystem identity, including symlinks; it never
 matches a basename. The checker must be reachable from the entry/runtime roots and can have
-only one selected adapter. Generated checker SML remains intact. The MLB instead loads the
+only one selected adapter; `--native-adapter-if-used` takes the same arguments but skips a
+checker the program doesn't reach, for a driver that stages every host adapter whatever the
+program imports (`wm sml`). Generated checker SML remains intact. The MLB instead loads the
 native implementation privately and exports it under the graph's allocated backend name.
 Native paths are canonical and quoted in the build file.
 

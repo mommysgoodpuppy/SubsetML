@@ -45,6 +45,11 @@ let good = match(Actual.value) { Result.Ok(n) => {n == 7 && Decoy.value == 99} }
  subprocess.run([root / 'crossed'], check=True)
  rejected = root / 'rejected'; rejected.mkdir()
  unused = root / 'unused.wm'; unused.write_text('let x = 0;\n')
+ # An optional adapter whose checker the program doesn't import is skipped, not an error.
+ optional = root / 'optional'; optional.mkdir()
+ subprocess.run([compiler, 'sml-entry', optional, *options, '--native-adapter-if-used', unused, native, 'FixedHost',
+                 entry], check=True)
+ assert str(native) in (optional / 'project.mlb').read_text()
  for args, message in [
   (['--native-adapter', unused, native, 'FixedHost'], b'not in the entry graph'),
   (options + ['--native-adapter', checker, native, 'FixedHost'], b'duplicate native adapter'),

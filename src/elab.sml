@@ -347,17 +347,25 @@ structure Elab = struct
     let val (env, level, _) = ctx in
       case e of
         EScon (q, c) => literalConst (q, c, level, false, st)
-      (* A backtick string's `${ e }`, read from Workman: text of a string, char, int, real or
-         bool, resolved by type during translation (Translate.templateText). *)
+      (* A backtick string's `${ e }`, read from Workman: the value's text, resolved by type during
+         translation (Translate.templateText). *)
       | EId (q, ([], "`show")) =>
           let
-            val (a, st') = fresh (st, KClass [stringName, charName, intName, int64Name, realName, boolName], level)
+            (* With the SubsetML Basis a value shows as `print` shows it; without, SML has text only
+               for the primitive types. *)
+            val kind = case Env.structureAt (env, ["SubsetList"]) of
+                SOME _ => KPlain
+              | NONE => KClass [stringName, charName, intName, int64Name, realName, boolName]
+            val (a, st') = fresh (st, kind, level)
             val t = TArrow (a, stringTy)
             val State (vs, nx, sels, recs, sites) = st'
           in
             case sites of
               SOME xs => Ok (t, State (vs, nx, sels, recs, SOME (Operand (q, t) :: xs)))
-            | NONE => Err ("a backtick string has no SML counterpart outside translation from Workman", q)
+            (* The target check: a marker translation left has a type with no display. *)
+            | NONE => Err ("the type of a value in a backtick string's ${ } is undecided in part, or has no "
+                           ^ "portable display; annotate it, or show text, numbers, booleans, characters, void, "
+                           ^ "tuples, lists, records, Option or Result", q)
           end
       (* Workman's `print`, read from Workman: any value, shown by type during translation
          (Translate.printing). A marker left in place has a type with no portable display. *)

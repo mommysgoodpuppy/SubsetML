@@ -584,22 +584,30 @@ let rec exp = (ctx, e, st) => {
   let (env, level, _) = ctx;
   match(e) {
     EScon(q, c) => { literalConst(q, c, level, false, st) },
-    /* A backtick string's `${ e }`, read from Workman: text of a string, char, int, real or
-       bool, resolved by type during translation (Translate.templateText). */
+    /* A backtick string's `${ e }`, read from Workman: the value's text, resolved by type during
+       translation (Translate.templateText). */
     EId(q, ([], "`show")) => {
-      let (a, st') = fresh(
-        st,
-        KClass([stringName, charName, intName, int64Name, realName, boolName]),
-        level
-      );
+      /* With the SubsetML Basis a value shows as `print` shows it; without, SML has text only
+         for the primitive types. */
+      let kind = match(Env.structureAt(env, ["SubsetList"])) {
+        Some(_) => { KPlain },
+        None => {
+          KClass([stringName, charName, intName, int64Name, realName, boolName])
+        }
+      };
+      let (a, st') = fresh(st, kind, level);
       let t = TArrow(a, stringTy);
       let State(vs, nx, sels, recs, sites) = st';
       match(sites) {
         Some(xs) => {
           Ok(t, State(vs, nx, sels, recs, Some([Operand(q, t), ..xs])))
         },
+        // The target check: a marker translation left has a type with no display.
         None => {
-          Err("a backtick string has no SML counterpart outside translation from Workman", q)
+          Err(
+            "the type of a value in a backtick string's ${ } is undecided in part, or has no " ++ "portable display; annotate it, or show text, numbers, booleans, characters, void, " ++ "tuples, lists, records, Option or Result",
+            q
+          )
         }
       }
     },

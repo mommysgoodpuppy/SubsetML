@@ -166,7 +166,7 @@ let sourceErrorText = match {
 
 let usage = () => {
   (
-    eprint("usage: subsetml (check-portable | check | parse | fmt | roundtrip) FILE...\n       subsetml native OUTDIR FILE.sml...\n       subsetml sml-target (mlton | mlworks) OUTDIR [--adapter CHECKER.sml NATIVE.sml]... FILE.sml...\n       subsetml wm OUTDIR FILE...\n       subsetml sml OUTDIR [--panic-runtime R.wm] FILE.wm...\n       subsetml sml-entry OUTDIR [--basis DIR] [--panic-runtime R.wm] [--native-adapter CHECKER.wm NATIVE.sml STRUCTURE]... ENTRY.wm\n");
+    eprint("usage: subsetml (check-portable | check | parse | fmt | roundtrip) FILE...\n       subsetml native OUTDIR FILE.sml...\n       subsetml sml-target (mlton | mlworks) OUTDIR [--adapter CHECKER.sml NATIVE.sml]... FILE.sml...\n       subsetml wm OUTDIR FILE...\n       subsetml sml OUTDIR [--panic-runtime R.wm] FILE.wm...\n       subsetml sml-entry OUTDIR [--basis DIR] [--panic-runtime R.wm] [--native-adapter[-if-used] CHECKER.wm NATIVE.sml STRUCTURE]... ENTRY.wm\n");
     SubsetProcess.exit(SubsetProcess.failure)
   )
 };
@@ -707,7 +707,10 @@ let main = () => {
             }
           },
           ["--native-adapter", checker, native, exported, ..rest] => {
-            parse(rest, basis, runtime, [(checker, native, exported), ..adapters])
+            parse(rest, basis, runtime, [(checker, native, exported, true), ..adapters])
+          },
+          ["--native-adapter-if-used", checker, native, exported, ..rest] => {
+            parse(rest, basis, runtime, [(checker, native, exported, false), ..adapters])
           },
           _ => { usage() }
         }

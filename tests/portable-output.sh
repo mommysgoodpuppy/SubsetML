@@ -1,7 +1,7 @@
 #!/bin/sh
-# Workman forms the reader spells with Basis functions: `!`, `%`, `==` on reals, backtick text
-# and `print` at any arity and type. The translation passes check-portable, and with the host
-# adapters staged it prints what Workman prints.
+# Workman forms the reader spells with Basis functions: `!`, `%`, `==` on reals, and backtick
+# text and `print` of any value Workman shows. The translation passes check-portable, and with
+# the host adapters staged it prints what Workman prints.
 set -eu
 python3 <<'PY'
 from pathlib import Path
@@ -28,6 +28,7 @@ let failed: Result<Int32.Int, String> = Err("e");
 let _ = print([1, 2], Some(3.5), failed, .{ x = -1, s = "q" }, (0.1 + 0.2, [Some(1), None]));
 let shout = (text: String) => { text ++ "!" };
 let _ = List.forEach(["one", "two"], (word) => { print(shout(word)) });
+let _ = print(`${[1, 2]} ${.{ x = -2, s = "q" }} ${(1, Some(2.5))} ${failed}`);
 ''')
     adapters = []
     for name, structure in [('subset_host', 'SubsetHost'), ('subset_text_host', 'SubsetTextHost'),
@@ -40,12 +41,18 @@ let _ = List.forEach(["one", "two"], (word) => { print(shout(word)) });
     expected = (b'n=-1 r=-1.5 flag=true same=true c=x big=1e+21 small=1.5e-7\n'
                 b'(1, a, true)\nvoid\n'
                 b'([1, 2], Some(3.5), Err(e), { s = q, x = -1 }, (0.30000000000000004, [Some(1), None]))\n'
-                b'one!\ntwo!\n')
+                b'one!\ntwo!\n'
+                b'[1, 2] { s = q, x = -2 } (1, Some(2.5)) Err(e)\n')
     assert result.stdout == expected, result.stdout
     # A module that binds its own `print` is rejected rather than misread.
     shadow = root / 'shadow.wm'
     shadow.write_text('let print = (text: String) => { text };\nlet _ = print("x");\n')
     rejected = subprocess.run([compiler, 'sml-entry', root / 'shadow', '--basis', wm, shadow], capture_output=True)
     assert rejected.returncode != 0 and b"reads `print` as Workman's print" in rejected.stderr, rejected.stderr
+    # A value with no type to show it by is an error that says what to do.
+    generic = root / 'generic.wm'
+    generic.write_text('let show = (x) => { `${x}` };\nlet _ = print(show(1));\n')
+    rejected = subprocess.run([compiler, 'sml-entry', root / 'generic', '--basis', wm, generic], capture_output=True)
+    assert rejected.returncode != 0 and b'annotate it' in rejected.stderr, rejected.stderr
 print('portable output: Basis spellings pass check-portable and print as Workman does')
 PY

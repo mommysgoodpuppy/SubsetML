@@ -1005,27 +1005,9 @@ let remainders = (env, st, prog) => {
   mapProgram(rewrite, prog)
 };
 
-/* Workman's `print`, once its argument type is known: `SubsetIo.printLine` of the value's
-   display, as Workman shows it. Text and characters appear as they are, numbers as Workman
-   writes them, `void` as `void`, and tuples, lists, records, Option and Result structurally:
-   `(1, a)`, `[1, 2]`, `{ x = 1 }`, `Some(2)`. A tuple argument is several arguments,
-   `print(a, b)`. A type with no display here keeps the marker, which the target check reports. */
-let printing = (env, st, prog) => {
-  let Unify.State(_, _, _, _, sites) = st;
-  let resolved = SmlList.mapPartial((site) => {
-    match(site) {
-      Unify.Operand(p, t) => {
-        match(Unify.prune(st, t)) {
-          Types.TArrow(a, _) => { Some(p, a) },
-          _ => { None }
-        }
-      },
-      _ => { None }
-    }
-  })(match(sites) {
-    Some(xs) => { xs },
-    None => { [] }
-  });
+/* Workman's display of a value as text, as `print` and backtick strings show it: a function
+   from the type's values to their text, or NONE for a type with no portable display. */
+let displayOf = (st) => {
   let text = (p, value) => { EScon(p, SString(value)) };
   let rec join = (p, pieces) => {
     match(pieces) {
@@ -1167,6 +1149,31 @@ let printing = (env, st, prog) => {
       _ => { None }
     }
   };
+  display
+};
+
+/* Workman's `print`, once its argument type is known: `SubsetIo.printLine` of the value's
+   display, as Workman shows it. Text and characters appear as they are, numbers as Workman
+   writes them, `void` as `void`, and tuples, lists, records, Option and Result structurally:
+   `(1, a)`, `[1, 2]`, `{ x = 1 }`, `Some(2)`. A tuple argument is several arguments,
+   `print(a, b)`. A type with no display here keeps the marker, which the target check reports. */
+let printing = (env, st, prog) => {
+  let Unify.State(_, _, _, _, sites) = st;
+  let resolved = SmlList.mapPartial((site) => {
+    match(site) {
+      Unify.Operand(p, t) => {
+        match(Unify.prune(st, t)) {
+          Types.TArrow(a, _) => { Some(p, a) },
+          _ => { None }
+        }
+      },
+      _ => { None }
+    }
+  })(match(sites) {
+    Some(xs) => { xs },
+    None => { [] }
+  });
+  let display = displayOf(st);
   let line = (p, shown) => { EApp(EId(p, (["SubsetIo"], "printLine")), shown) };
   let rewrite = (e) => {
     match(e) {
@@ -1215,12 +1222,7 @@ let templateText = (env, st, prog) => {
     match(site) {
       Unify.Operand(p, t) => {
         match(Unify.prune(st, t)) {
-          Types.TArrow(a, _) => {
-            match(decided(st, a)) {
-              Types.TCon(n, []) => { Some(p, n) },
-              _ => { None }
-            }
-          },
+          Types.TArrow(a, _) => { Some(p, a) },
           _ => { None }
         }
       },
@@ -1230,6 +1232,7 @@ let templateText = (env, st, prog) => {
     Some(xs) => { xs },
     None => { [] }
   });
+  let display = displayOf(st);
   let call = (p, path, e) => { EApp(EId(p, path), e) };
   let spelled = (structureName, name, fallback) => {
     if (hasStructure(env, structureName)) { ([structureName], name) } else { fallback }
@@ -1240,26 +1243,40 @@ let templateText = (env, st, prog) => {
         match(SmlList.find((q, _) => { p == q })(resolved)) {
           None => { e },
           Some(found) => {
-            let (_, n) = found;
-            let is = (m) => { Unify.sameName(n, m) };
-            if (is(Types.stringName)) { value } else {
-              if (is(Types.charName)) {
-                call(p, spelled("SubsetString", "fromChar", (["String"], "str")), value)
-              } else {
-                if (is(Types.intName)) {
-                  call(p, spelled("SubsetInt32", "toString", (["Int"], "toString")), value)
-                } else {
-                  if (is(Types.int64Name)) { call(p, (["Int64"], "toString"), value) } else {
-                    if (is(Types.realName)) {
-                      call(p, spelled("SubsetReal64", "toString", (["Real"], "toString")), value)
+            let (_, t) = found;
+            // Other types show as `print` shows them, with the Basis.
+            let shown = () => {
+              if (SubsetBool.not(hasStructure(env, "SubsetList"))) { e } else {
+                match(display(p, 0, t)) {
+                  None => { e },
+                  Some(f) => { EApp(f, value) }
+                }
+              }
+            };
+            match(decided(st, t)) {
+              Types.TCon(n, []) => {
+                let is = (m) => { Unify.sameName(n, m) };
+                if (is(Types.stringName)) { value } else {
+                  if (is(Types.charName)) {
+                    call(p, spelled("SubsetString", "fromChar", (["String"], "str")), value)
+                  } else {
+                    if (is(Types.intName)) {
+                      call(p, spelled("SubsetInt32", "toString", (["Int"], "toString")), value)
                     } else {
-                      if (is(Types.boolName)) {
-                        EIf(value, EScon(p, SString("true")), EScon(p, SString("false")))
-                      } else { e }
+                      if (is(Types.int64Name)) { call(p, (["Int64"], "toString"), value) } else {
+                        if (is(Types.realName)) {
+                          call(p, spelled("SubsetReal64", "toString", (["Real"], "toString")), value)
+                        } else {
+                          if (is(Types.boolName)) {
+                            EIf(value, EScon(p, SString("true")), EScon(p, SString("false")))
+                          } else { shown() }
+                        }
+                      }
                     }
                   }
                 }
-              }
+              },
+              _ => { shown() }
             }
           }
         }

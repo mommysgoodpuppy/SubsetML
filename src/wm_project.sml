@@ -155,9 +155,9 @@ structure WmProject = struct
             defaultOpen ("result", ["Result", "Ok", "Err"])]
           val used = uses (tokens, bareUses (tokens, []))
           (* The reader spells some Workman forms with Basis functions: `!` is SubsetBool.not,
-             `%` and `==` on reals and backtick text use SubsetInt32, SubsetReal64 and
-             SubsetString, and `print` is SubsetIo.printLine over a display that names SubsetList and
-             the Option and Result constructors. Import each module, under its
+             `%` and `==` on reals use SubsetInt32 and SubsetReal64, and backtick text and `print`
+             (SubsetIo.printLine) show values with a display that names those, SubsetString,
+             SubsetList and the Option and Result constructors. Import each module, under its
              structure name, when its form occurs and the module isn't imported already. *)
           val alreadyImported = fn file =>
             SubsetList.exists (tokens, fn (token, _) =>
@@ -180,9 +180,9 @@ structure WmProject = struct
             formImport ("real64", "SubsetReal64", [WmLexer.WKey "%", WmLexer.WKey "==", WmLexer.WKey "!=", text, print]),
             formImport ("string", "SubsetString", [text, print]),
             formImport ("io", "SubsetIo", [print]),
-            formImport ("list", "SubsetList", [print]),
-            formImport ("option_value", "SubsetOptionValue", [print]),
-            formImport ("result_value", "SubsetResultValue", [print])]
+            formImport ("list", "SubsetList", [text, print]),
+            formImport ("option_value", "SubsetOptionValue", [text, print]),
+            formImport ("result_value", "SubsetResultValue", [text, print])]
         in SubsetList.concat [defaults, forms, SubsetList.concat (SubsetList.map (used, header)), tokens] end
     end
 
@@ -212,6 +212,8 @@ structure WmProject = struct
           | SOME tail => if SubsetBool.not (validSpecifier specifier) then
               failure (path, src, "imports require explicit relative .wm paths or basis/ modules in the local source profile", pos)
             else SubsetResult.map (scan tail, fn paths => (specifier, pos) :: paths) end
+      | (WmLexer.WKey "from", pos) :: (WmLexer.WName ("js" :: _), _) :: _ =>
+          failure (path, src, "JavaScript imports (`from js...`) have no SML translation", pos)
       | (WmLexer.WKey "from", pos) :: _ =>
           failure (path, src, "reverse discovery requires header namespace imports", pos)
       | (WmLexer.WName ["export"], _) :: (WmLexer.WKey "from", pos) :: rest =>
@@ -622,14 +624,15 @@ structure WmProject = struct
   val adapters = fn (units, specifications) =>
     let val rec resolve = fn (remaining, seen) => case remaining of
         [] => SubsetResult.Ok (SubsetList.reverse seen)
-      | (checker, native, exported) :: rest =>
+      | (checker, native, exported, required) :: rest =>
           if SubsetBool.not (structureIdentifier exported) then
             failure (checker, "", "native adapter export must be an SML structure identifier", 0)
           else SubsetResult.andThen (case ModuleProject.identify checker of
                 SubsetResult.Err error => failure (checker, "", SubsetIo.errorText error, 0)
               | SubsetResult.Ok (ModuleProject.Resolved (id, _)) =>
                   if SubsetBool.not (SubsetList.exists (units, fn unit => ModuleProject.same (identity unit, id))) then
-                    failure (checker, "", "native adapter checker is not in the entry graph", 0)
+                    (if required then failure (checker, "", "native adapter checker is not in the entry graph", 0)
+                     else SubsetResult.Ok NONE)
                   else (if SubsetList.exists (seen, fn Adapter (key, _, _) => ModuleProject.same (id, key)) then
                     failure (checker, "", "duplicate native adapter selection", 0)
                   else (case ModuleProject.identify native of
@@ -637,8 +640,10 @@ structure WmProject = struct
                   | SubsetResult.Ok (ModuleProject.Resolved (_, path)) =>
                       case SubsetIo.readFile path of
                         SubsetResult.Err error => failure (native, "", SubsetIo.errorText error, 0)
-                      | SubsetResult.Ok _ => SubsetResult.Ok (Adapter (id, path, exported)))),
-                fn adapter => resolve (rest, adapter :: seen))
+                      | SubsetResult.Ok _ => SubsetResult.Ok (SOME (Adapter (id, path, exported))))),
+                fn adapter => case adapter of
+                  NONE => resolve (rest, seen)
+                | SOME selected => resolve (rest, selected :: seen))
     in resolve (specifications, []) end
 
   (* One basis instance per canonical module. A module's body receives the standard Basis

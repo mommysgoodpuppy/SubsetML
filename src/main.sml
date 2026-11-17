@@ -119,7 +119,7 @@ structure Main = struct
     | ParseFailure (path, src, msg, pos) => errorLineKind (path, src, "parse error", msg, pos)
 
   val usage = fn () =>
-    (eprint "usage: subsetml (check-portable | check | parse | fmt | roundtrip) FILE...\n       subsetml native OUTDIR FILE.sml...\n       subsetml sml-target (mlton | mlworks) OUTDIR [--adapter CHECKER.sml NATIVE.sml]... FILE.sml...\n       subsetml wm OUTDIR FILE...\n       subsetml sml OUTDIR [--panic-runtime R.wm] FILE.wm...\n       subsetml sml-entry OUTDIR [--basis DIR] [--panic-runtime R.wm] [--native-adapter CHECKER.wm NATIVE.sml STRUCTURE]... ENTRY.wm\n";
+    (eprint "usage: subsetml (check-portable | check | parse | fmt | roundtrip) FILE...\n       subsetml native OUTDIR FILE.sml...\n       subsetml sml-target (mlton | mlworks) OUTDIR [--adapter CHECKER.sml NATIVE.sml]... FILE.sml...\n       subsetml wm OUTDIR FILE...\n       subsetml sml OUTDIR [--panic-runtime R.wm] FILE.wm...\n       subsetml sml-entry OUTDIR [--basis DIR] [--panic-runtime R.wm] [--native-adapter[-if-used] CHECKER.wm NATIVE.sml STRUCTURE]... ENTRY.wm\n";
      SubsetProcess.exit SubsetProcess.failure)
 
   val finish = fn ok => SubsetProcess.exit (if ok then SubsetProcess.success else SubsetProcess.failure)
@@ -395,7 +395,9 @@ structure Main = struct
           | "--panic-runtime" :: path :: rest =>
               (case runtime of NONE => parse (rest, basis, SOME path, adapters) | SOME _ => usage ())
           | "--native-adapter" :: checker :: native :: exported :: rest =>
-              parse (rest, basis, runtime, (checker, native, exported) :: adapters)
+              parse (rest, basis, runtime, (checker, native, exported, true) :: adapters)
+          | "--native-adapter-if-used" :: checker :: native :: exported :: rest =>
+              parse (rest, basis, runtime, (checker, native, exported, false) :: adapters)
           | _ => usage ()
         in parse (options, NONE, NONE, []) end
     | "sml" :: outDir :: "--panic-runtime" :: runtime :: files =>

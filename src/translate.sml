@@ -633,19 +633,10 @@ structure Translate = struct
       mapProgram (rewrite, prog)
     end
 
-  (* Workman's `print`, once its argument type is known: `SubsetIo.printLine` of the value's
-     display, as Workman shows it. Text and characters appear as they are, numbers as Workman
-     writes them, `void` as `void`, and tuples, lists, records, Option and Result structurally:
-     `(1, a)`, `[1, 2]`, `{ x = 1 }`, `Some(2)`. A tuple argument is several arguments,
-     `print(a, b)`. A type with no display here keeps the marker, which the target check reports. *)
-  val printing = fn (env, st, prog) =>
+  (* Workman's display of a value as text, as `print` and backtick strings show it: a function
+     from the type's values to their text, or NONE for a type with no portable display. *)
+  val displayOf = fn st =>
     let
-      val Unify.State (_, _, _, _, sites) = st
-      val resolved = SmlList.mapPartial (fn site => case site of
-          Unify.Operand (p, t) => (case Unify.prune (st, t) of
-             Types.TArrow (a, _) => SOME (p, a)
-           | _ => NONE)
-        | _ => NONE) (case sites of SOME xs => xs | NONE => [])
       val text = fn (p, value) => EScon (p, SString value)
       val rec join = fn (p, pieces) => case pieces of
           [] => text (p, "")
@@ -727,6 +718,22 @@ structure Translate = struct
               else NONE
           | _ => NONE
         end
+    in display end
+
+  (* Workman's `print`, once its argument type is known: `SubsetIo.printLine` of the value's
+     display, as Workman shows it. Text and characters appear as they are, numbers as Workman
+     writes them, `void` as `void`, and tuples, lists, records, Option and Result structurally:
+     `(1, a)`, `[1, 2]`, `{ x = 1 }`, `Some(2)`. A tuple argument is several arguments,
+     `print(a, b)`. A type with no display here keeps the marker, which the target check reports. *)
+  val printing = fn (env, st, prog) =>
+    let
+      val Unify.State (_, _, _, _, sites) = st
+      val resolved = SmlList.mapPartial (fn site => case site of
+          Unify.Operand (p, t) => (case Unify.prune (st, t) of
+             Types.TArrow (a, _) => SOME (p, a)
+           | _ => NONE)
+        | _ => NONE) (case sites of SOME xs => xs | NONE => [])
+      val display = displayOf st
       val line = fn (p, shown) => EApp (EId (p, (["SubsetIo"], "printLine")), shown)
       val rewrite = fn e =>
         case e of
@@ -761,11 +768,10 @@ structure Translate = struct
       val Unify.State (_, _, _, _, sites) = st
       val resolved = SmlList.mapPartial (fn site => case site of
           Unify.Operand (p, t) => (case Unify.prune (st, t) of
-             Types.TArrow (a, _) => (case decided (st, a) of
-               Types.TCon (n, []) => SOME (p, n)
-             | _ => NONE)
+             Types.TArrow (a, _) => SOME (p, a)
            | _ => NONE)
         | _ => NONE) (case sites of SOME xs => xs | NONE => [])
+      val display = displayOf st
       val call = fn (p, path, e) => EApp (EId (p, path), e)
       val spelled = fn (structureName, name, fallback) =>
         if hasStructure (env, structureName) then ([structureName], name) else fallback
@@ -776,9 +782,15 @@ structure Translate = struct
                NONE => e
              | SOME found =>
                  let
-                   val (_, n) = found
-                   val is = fn m => Unify.sameName (n, m)
+                   val (_, t) = found
+                   (* Other types show as `print` shows them, with the Basis. *)
+                   val shown = fn () =>
+                     if SubsetBool.not (hasStructure (env, "SubsetList")) then e else
+                     (case display (p, 0, t) of NONE => e | SOME f => EApp (f, value))
                  in
+                   case decided (st, t) of
+                     Types.TCon (n, []) =>
+                   let val is = fn m => Unify.sameName (n, m) in
                    if is Types.stringName then value
                    else (if is Types.charName then call (p, spelled ("SubsetString", "fromChar", (["String"], "str")), value)
                    else (if is Types.intName then call (p, spelled ("SubsetInt32", "toString", (["Int"], "toString")), value)
@@ -786,7 +798,9 @@ structure Translate = struct
                    else (if is Types.realName then call (p, spelled ("SubsetReal64", "toString", (["Real"], "toString")), value)
                    else (if is Types.boolName
                      then EIf (value, EScon (p, SString "true"), EScon (p, SString "false"))
-                   else e)))))
+                   else shown ())))))
+                   end
+                   | _ => shown ()
                  end)
         | _ => e
     in
