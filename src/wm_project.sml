@@ -40,6 +40,10 @@ structure WmProject = struct
   val sourceUnit = fn Source (unit, _, _, _) => unit
   val edgesOf = fn Source (_, edges, _, _) => edges
 
+  (* The file that runs the entry's `main`, as Workman's runner does; no module's output takes it. *)
+  val mainStem = "project_main"
+  val mainFile = mainStem ^ ".sml"
+
   (* Default aliases are hygienic: their exact spelling never appears in authored tokens.
      Explicit imports and translator form dependencies always retain their effects. *)
   val isDefaultEdge = fn (unit, Edge (_, _, alias, _)) =>
@@ -322,7 +326,7 @@ structure WmProject = struct
         Unify.Err (message, pos) => failure ("translation", "", message, pos)
       | Unify.Ok (Env.Env (structures, _, _), _) =>
           SubsetResult.map (identify (sources, []), fn inputs =>
-            allocate (inputs, SubsetList.map (structures, fn (name, _) => (name, "")), []))
+            allocate (inputs, ("", mainStem) :: SubsetList.map (structures, fn (name, _) => (name, "")), []))
     end
 
   (* Inline record types, `Point{ a: Int32 }` in a type, are shorthand for a `record Point`
@@ -696,7 +700,26 @@ structure WmProject = struct
   (* One basis instance per canonical module. A module's body receives the standard Basis
      and only its direct dependencies; the `in` part exports only its own structure.
      Native implementations use source import aliases in separately captured basis scopes. *)
-  val mlb = fn (units, sources, modules, entry, adapters) =>
+  (* The entry's `main` call, in `mainFile`. *)
+  val mainCall = fn entry => "val _ = " ^ name entry ^ ".main ()\n"
+
+  (* Whether a module's declarations bind `main` at the top level to a `() => ...` function,
+     the form Workman's runner calls without arguments. *)
+  val declaresMain = fn decs =>
+    let val rec named = fn pat => case pat of
+          Syntax.PId (_, ([], "main")) => true
+        | Syntax.PTyped (inner, _) => named inner
+        | _ => false
+        val rec runnable = fn exp => case exp of
+          Syntax.EFn [(Syntax.PTuple [], _)] => true
+        | Syntax.ETyped (inner, _) => runnable inner
+        | _ => false
+    in SubsetList.exists (decs, fn dec => case dec of
+        Syntax.DVal (_, _, plain, recursive) =>
+          SubsetList.exists (SubsetList.append (plain, recursive), fn (pat, exp) => named pat andalso runnable exp)
+      | _ => false) end
+
+  val mlb = fn (units, sources, modules, entry, adapters, runsMain) =>
     let
       val scopeName = fn name => "SubsetBuild_" ^ name
       val rec emit = fn modules => case modules of
@@ -741,7 +764,8 @@ structure WmProject = struct
       and nameOf = fn unit => name unit
     in SubsetResult.map (emit modules, fn text =>
       "local\n  basis SubsetBuild_Standard = bas $(SML_LIB)/basis/basis.mlb end\n" ^ text ^
-      "in\n  open SubsetBuild_Standard " ^ scopeName (name entry) ^ "\nend\n") end
+      "in\n  open SubsetBuild_Standard " ^ scopeName (name entry) ^ "\n" ^
+      (if runsMain then "  \"" ^ mainFile ^ "\"\n" else "") ^ "end\n") end
 
   val metadata = fn dependencies =>
     if SubsetList.isEmpty dependencies then "" else

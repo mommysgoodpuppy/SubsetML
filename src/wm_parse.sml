@@ -99,7 +99,9 @@ structure WmParse = struct
     case CompilerText.characters s of [] => "" | c :: rest => CompilerText.stringOf (SubsetChar.toLower c :: rest)
 
   val valueName = fn
-      (qs, "None") => (qs, "NONE")
+      ([], "Nil") => ([], "nil")
+    | ([], "Cons") => ([], "::")
+    | (qs, "None") => (qs, "NONE")
     | (qs, "Some") => (qs, "SOME")
     | id =>
         (case SmlList.find (fn (_, wm) => wm = id) WmPrint.numNames of

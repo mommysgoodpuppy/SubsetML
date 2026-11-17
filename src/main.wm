@@ -516,10 +516,25 @@ let fromWmLoaded = (outDir, basis, runtimePath, entryPath, adapterSpecs, sources
                                     match(SubsetList.find(units, (unit) => { ModuleProject.same(WmProject.identity(unit), id) })) {
                                       None => { WmProject.failure(path, "", "missing build entry", 0) },
                                       Some(entry) => {
+                                        let runsMain = SubsetList.exists(
+                                          SmlListPair.zip(ordered, recovered),
+                                          match {
+                                            (WmProject.Source(unit, _, _, _), (_, _, Var(prog), _)) => {
+                                              if (ModuleProject.same(WmProject.identity(unit), WmProject.identity(entry))) {
+                                                let (_, phrases) = Translate.module(prog);
+                                                let (ds, _) = Translate.parts(phrases);
+                                                WmProject.declaresMain(ds)
+                                              } else { false }
+                                            }
+                                          }
+                                        );
+                                        let runner = if (runsMain) {
+                                          [(outDir ++ "/" ++ WmProject.mainFile, WmProject.mainCall(entry))]
+                                        } else { [] };
                                         SubsetResult.map(
-                                          WmProject.mlb(units, ordered, renamed, entry, adapters),
+                                          WmProject.mlb(units, ordered, renamed, entry, adapters, runsMain),
                                           (text) => {
-                                            SubsetList.append(results, [(outDir ++ "/project.mlb", text)])
+                                            SubsetList.append(results, SubsetList.append(runner, [(outDir ++ "/project.mlb", text)]))
                                           }
                                         )
                                       }

@@ -129,6 +129,8 @@ let decapitalize = (s) => {
 };
 
 let valueName = match {
+  ([], "Nil") => { ([], "nil") },
+  ([], "Cons") => { ([], "::") },
   (Var(qs), "None") => { (qs, "NONE") },
   (Var(qs), "Some") => { (qs, "SOME") },
   Var(id) => {

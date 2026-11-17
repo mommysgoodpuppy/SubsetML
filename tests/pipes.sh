@@ -110,9 +110,7 @@ let main = () => {
 };
 ''')
     run([compiler, 'sml-entry', out, source])
-    (out / 'driver.sml').write_text('val _ = Pipe.main ()\n')
-    (out / 'run.mlb').write_text('project.mlb\ndriver.sml\n')
-    run(['mlton', '-output', root / 'native', out / 'run.mlb'])
+    run(['mlton', '-output', root / 'native', out / 'project.mlb'])
     native = run([root / 'native']).stdout
     js = run(['deno', 'run', '-A', wm / 'src/main.ts', 'run', source], cwd=wm).stdout
     expected = b'arg\nfactory\ninput\napply\nfactory\ninput\napply\ncallee\ninput\narg\nsecond\nfirst\ninput\ncondition\nelse\nok\n'

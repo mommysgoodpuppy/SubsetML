@@ -76,6 +76,10 @@ let edgesOf = match {
   Source(_, edges, _, _) => { edges }
 };
 
+// The file that runs the entry's `main`, as Workman's runner does; no module's output takes it.
+let mainStem = "project_main";
+let mainFile = mainStem ++ ".sml";
+
 /* Default aliases are hygienic: their exact spelling never appears in authored tokens.
    Explicit imports and translator form dependencies always retain their effects. */
 let isDefaultEdge = match {
@@ -642,7 +646,11 @@ let plan = (sources) => {
       SubsetResult.map(
         identify(sources, []),
         (inputs) => {
-          allocate(inputs, SubsetList.map(structures, (name, _) => { (name, "") }), [])
+          allocate(
+            inputs,
+            [("", mainStem), ..SubsetList.map(structures, (name, _) => { (name, "") })],
+            []
+          )
         }
       )
     }
@@ -1400,7 +1408,43 @@ let adapters = (units, specifications) => {
 /* One basis instance per canonical module. A module's body receives the standard Basis
    and only its direct dependencies; the `in` part exports only its own structure.
    Native implementations use source import aliases in separately captured basis scopes. */
-let mlb = (units, sources, modules, entry, adapters) => {
+// The entry's `main` call, in `mainFile`.
+let mainCall = (entry) => { "val _ = " ++ name(entry) ++ ".main ()\n" };
+
+/* Whether a module's declarations bind `main` at the top level to a `() => ...` function,
+   the form Workman's runner calls without arguments. */
+let declaresMain = (decs) => {
+  let rec named = (pat) => {
+    match(pat) {
+      Syntax.PId(_, ([], "main")) => { true },
+      Syntax.PTyped(inner, _) => { named(inner) },
+      _ => { false }
+    }
+  };
+  let rec runnable = (exp) => {
+    match(exp) {
+      Syntax.EFn([(Syntax.PTuple([]), _)]) => { true },
+      Syntax.ETyped(inner, _) => { runnable(inner) },
+      _ => { false }
+    }
+  };
+  SubsetList.exists(
+    decs,
+    (dec) => {
+      match(dec) {
+        Syntax.DVal(_, _, plain, recursive) => {
+          SubsetList.exists(
+            SubsetList.append(plain, recursive),
+            (pat, exp) => { if (named(pat)) { runnable(exp) } else { false } }
+          )
+        },
+        _ => { false }
+      }
+    }
+  )
+};
+
+let mlb = (units, sources, modules, entry, adapters, runsMain) => {
   let scopeName = (name) => { "SubsetBuild_" ++ name };
   let rec emit = (modules) => {
     match(modules) {
@@ -1499,7 +1543,7 @@ let mlb = (units, sources, modules, entry, adapters) => {
   SubsetResult.map(
     emit(modules),
     (text) => {
-      "local\n  basis SubsetBuild_Standard = bas $(SML_LIB)/basis/basis.mlb end\n" ++ text ++ "in\n  open SubsetBuild_Standard " ++ scopeName(name(entry)) ++ "\nend\n"
+      "local\n  basis SubsetBuild_Standard = bas $(SML_LIB)/basis/basis.mlb end\n" ++ text ++ "in\n  open SubsetBuild_Standard " ++ scopeName(name(entry)) ++ "\n" ++ (if (runsMain) { "  \"" ++ mainFile ++ "\"\n" } else { "" }) ++ "end\n"
     }
   )
 };

@@ -296,8 +296,17 @@ structure Main = struct
                         | SubsetResult.Ok (ModuleProject.Resolved (id, _)) =>
                             (case SubsetList.find (units, fn unit => ModuleProject.same (WmProject.identity unit, id)) of
                               NONE => WmProject.failure (path, "", "missing build entry", 0)
-                            | SOME entry => SubsetResult.map (WmProject.mlb (units, ordered, renamed, entry, adapters),
-                                fn text => SubsetList.append (results, [(outDir ^ "/project.mlb", text)]))))) end)) end)) end
+                            | SOME entry =>
+                                let val runsMain = SubsetList.exists (SmlListPair.zip (ordered, recovered),
+                                      fn (WmProject.Source (unit, _, _, _), (_, _, prog, _)) =>
+                                        ModuleProject.same (WmProject.identity unit, WmProject.identity entry) andalso
+                                        (let val (_, phrases) = Translate.module prog
+                                             val (ds, _) = Translate.parts phrases
+                                         in WmProject.declaresMain ds end))
+                                    val runner = if runsMain
+                                      then [(outDir ^ "/" ^ WmProject.mainFile, WmProject.mainCall entry)] else []
+                                in SubsetResult.map (WmProject.mlb (units, ordered, renamed, entry, adapters, runsMain),
+                                  fn text => SubsetList.append (results, SubsetList.append (runner, [(outDir ^ "/project.mlb", text)]))) end))) end)) end)) end
     in
       case SubsetResult.andThen (WmProject.plan sources, fn units =>
         SubsetResult.andThen (WmProject.adapters (units, adapterSpecs), fn adapters => translate (units, adapters))) of
