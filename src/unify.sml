@@ -44,6 +44,9 @@ structure Unify = struct
     (* A `# lab` whose record type was known only from the one declared record type with that
        label, as Workman resolves `user.score`: the selection's position and the labels. *)
     | FieldRecord of Syntax.pos * string list
+    (* A record pattern naming some of its annotated record type's fields, as Workman allows
+       (`.{ succeed, map }: Carrier<...>`): the pattern's position and all the type's labels. *)
+    | PatternRecord of Syntax.pos * string list
 
   (* Variables, the next fresh number (also used for type name stamps), pending selections,
      the label sets of the record type declarations so far (spec R2), and, when translating

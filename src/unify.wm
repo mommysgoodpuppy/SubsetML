@@ -54,7 +54,10 @@ type Site =
   | Generalized<Int32.Int>
   /* A `# lab` whose record type was known only from the one declared record type with that
      label, as Workman resolves `user.score`: the selection's position and the labels. */
-  | FieldRecord<Syntax.Pos, List<String>>;
+  | FieldRecord<Syntax.Pos, List<String>>
+  /* A record pattern naming some of its annotated record type's fields, as Workman allows
+     (`.{ succeed, map }: Carrier<...>`): the pattern's position and all the type's labels. */
+  | PatternRecord<Syntax.Pos, List<String>>;
 
 /* Variables, the next fresh number (also used for type name stamps), pending selections,
    the label sets of the record type declarations so far (spec R2), and, when translating

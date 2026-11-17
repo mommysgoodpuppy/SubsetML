@@ -396,11 +396,18 @@ let resolve = (owner, values, types, namespaces, imports, declarations) => {
   };
   /* The standalone reader's bootstrap numeric spellings precede this scope pass. Undo
      them only when the source namespace is supplied by the selected library. */
+  /* An SML builtin the parser already read a Workman path as (`div` for `Int32.div`) stays
+     the builtin; only qualified names map back to their Workman namespace. */
   let sourceId = (id) => {
     match(SubsetList.find(
       WmPrint.numNames,
       (sml, wm) => {
-        if (sml == id) {
+        if (if (sml == id) {
+          match(sml) {
+            ([], _) => { false },
+            _ => { true }
+          }
+        } else { false }) {
           match(wm) {
             ([head, .._], _) => {
               match(defaultNamespace(head)) {

@@ -307,7 +307,36 @@ structure Elab = struct
                  | _ => Err ("constructor " ^ longName id ^ " takes no argument", q)
                end
            | _ => Err ("`" ^ longName id ^ "` is not a constructor", q))
-      | PTyped (inner, t) =>
+      | PTyped (PRecord (q, fields), t) =>
+          (* Reading Workman, a record pattern annotated with a record type may name only some
+             of its fields; the others match anything. SubsetML writes every label (R3). *)
+          bind (scopedTy (ctx, at (0, SOME q), t, st)) (fn annotated => fn st =>
+            let
+              val named = SmlList.map (fn (l, _) => l) fields
+              val missing = case (st, resolve (st, annotated)) of
+                  (State (_, _, _, _, SOME _), TRecord declared) =>
+                    let val labels = SmlList.map (fn (l, _) => l) declared in
+                      if SmlList.all (fn l => SmlList.exists (fn m => m = l) labels) named
+                      then SmlList.filter (fn l => SubsetBool.not (SmlList.exists (fn m => m = l) named)) labels
+                      else []
+                    end
+                | _ => []
+            in
+              case missing of
+                [] => typedPat (ctx, PRecord (q, fields), t, st)
+              | _ =>
+                  let
+                    val st = case st of
+                        State (vs, nx, sels, rs, SOME xs) =>
+                          State (vs, nx, sels, rs, SOME (PatternRecord (q, missing) :: xs))
+                      | _ => st
+                  in typedPat (ctx, PRecord (q, SubsetList.append (fields, SmlList.map (fn l => (l, PWild)) missing)), t, st) end
+            end)
+      | PTyped (inner, t) => typedPat (ctx, inner, t, st)
+    end
+
+  and typedPat = fn (ctx, inner, t, st) =>
+    let val (env, level, _) = ctx in
           bind (pat (ctx, inner, st)) (fn (ti, vars) => fn st =>
             bind (scopedTy (ctx, at (0, patPos inner), t, st)) (fn t' => fn st =>
               bind (unifyAt (st, at (0, patPos inner), "type annotation", t', ti)) (fn _ => fn st =>

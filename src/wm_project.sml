@@ -122,9 +122,17 @@ structure WmProject = struct
              except for a bare type name the compiler owns (`String`, `List`): that names the
              type wherever a type may stand, and the namespace only as a carrier, in `via X` or a
              group `X|a, b|`. *)
+          (* `Int32.Int`, `Int32.div`: paths the parser reads as SML builtins use no module. *)
+          val builtinPath = fn path => case path of
+              [head, last] =>
+                let val (typeQualifiers, _) = WmParse.tyConName ([head], last)
+                    val (valueQualifiers, _) = WmParse.valueName ([head], last)
+                in SubsetList.isEmpty typeQualifiers orelse SubsetList.isEmpty valueQualifiers end
+            | _ => false
           val rec namespaceUse = fn (name, tokens) => case tokens of
               [] => false
-            | (WmLexer.WName (head :: _ :: _), _) :: rest => head = name orelse namespaceUse (name, rest)
+            | (WmLexer.WName (head :: second :: more), _) :: rest =>
+                (head = name andalso SubsetBool.not (builtinPath (head :: second :: more))) orelse namespaceUse (name, rest)
             | (WmLexer.WName ["via"], _) :: (WmLexer.WName [head], _) :: rest =>
                 head = name orelse namespaceUse (name, rest)
             | (WmLexer.WName [head], _) :: (WmLexer.WKey "|", _) :: rest =>
@@ -143,7 +151,6 @@ structure WmProject = struct
             fn {modulePath, name, sourceName} => modulePath)
           val namespaces = if std then [] else SubsetList.filter (paths, fn modulePath =>
             WmModuleScope.isAutoOpened (modulePath, paths) andalso
-            WmModuleScope.moduleAlias modulePath <> "Int32" andalso
             namespaceUse (WmModuleScope.moduleAlias modulePath, tokens))
           val needed = SubsetList.foldLeft (SubsetList.append (needed, namespaces), [], fn (p, acc) =>
             if SubsetList.exists (acc, fn n => n = p) orelse
@@ -198,7 +205,7 @@ structure WmProject = struct
           val types = bindings (if std then WmModuleScope.builtinTypes else
             SubsetList.append (WmModuleScope.builtinTypes, WmModuleScope.pervasiveTypes), true)
           val namespaces = if std then [] else SubsetList.concat (SubsetList.map (paths, fn p =>
-            if WmModuleScope.isAutoOpened (p, paths) andalso WmModuleScope.moduleAlias p <> "Int32"
+            if WmModuleScope.isAutoOpened (p, paths)
             then (case target p of SOME target => [(WmModuleScope.moduleAlias p, target)] | NONE => [])
             else []))
         in (values, types, namespaces) end
@@ -578,11 +585,21 @@ structure WmProject = struct
                      | NONE =>
                     case SubsetList.find (aliases, fn (alias, _) => alias = head) of
                        NONE =>
-                         if SubsetBool.not (SubsetList.isEmpty tail) andalso
+                         (* `Int32.Int`, `Int32.div`: paths the parser reads as SML builtins name
+                            no module, whatever modules exist. *)
+                         let val builtin = case tail of
+                               [last] =>
+                                 let val (typeQualifiers, _) = WmParse.tyConName ([head], last)
+                                     val (valueQualifiers, _) = WmParse.valueName ([head], last)
+                                 in SubsetList.isEmpty typeQualifiers orelse SubsetList.isEmpty valueQualifiers end
+                             | _ => false
+                         in
+                         if SubsetBool.not (SubsetList.isEmpty tail) andalso SubsetBool.not builtin andalso
                             SubsetList.exists (units, fn u => name u = head) andalso
                             SubsetBool.not (SubsetList.exists (defaultNamespaces, fn (alias, _) => alias = head)) then
                            failure (path, src, "namespace " ^ head ^ " is not explicitly imported under that name", pos)
                          else rewrite (rest, (WmLexer.WName (head :: tail), pos) :: acc)
+                         end
                      | SOME (_, target) =>
                          (* A carrier group's namespace, `Result|a, b|`, is the module. Any other
                             bare alias keeps its spelling, marked with its target: as a value it
@@ -699,17 +716,22 @@ structure WmProject = struct
                       case SubsetList.find (sources, fn source => ModuleProject.same (identity (sourceUnit source), identity unit)) of
                         NONE => failure (pathOf unit, "", "missing native adapter imports", 0)
                       | SOME source =>
+                          (* A native adapter names its dependencies by its source imports; the
+                             hygienic default aliases never appear in it. *)
                           let val rec aliases = fn edges => case edges of
                               [] => SubsetResult.Ok ("", "")
-                            | Edge (_, pos, alias, target) :: rest =>
-                                if SubsetBool.not (structureIdentifier alias) then
+                            | edge :: rest =>
+                                let val Edge (_, pos, alias, target) = edge in
+                                if isDefaultEdge (sourceUnit source, edge) then aliases rest
+                                else (if SubsetBool.not (structureIdentifier alias) then
                                   failure (pathOf unit, textOf unit, "native adapter import alias must be an SML structure identifier", pos)
                                 else (case SubsetList.find (units, fn child => ModuleProject.same (identity child, target)) of
                                   NONE => failure (pathOf unit, "", "missing native adapter dependency", 0)
                                 | SOME child => SubsetResult.map (aliases rest, fn (declarations, opens) =>
                                     ("      basis SubsetNative_" ^ alias ^ " = bas local open " ^ scopeName (nameOf child) ^
                                      " in structure " ^ alias ^ " = " ^ nameOf child ^ " end end\n" ^ declarations,
-                                     " SubsetNative_" ^ alias ^ opens)))
+                                     " SubsetNative_" ^ alias ^ opens))))
+                                end
                           in SubsetResult.map (aliases (edgesOf source), fn (declarations, opens) =>
                             "      open SubsetBuild_Standard\n" ^ declarations ^ "      open SubsetBuild_Standard" ^ opens ^
                             "\n    in\n      local\n        \"" ^ CompilerText.escapeSmlString native ^

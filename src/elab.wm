@@ -531,14 +531,50 @@ let rec pat = (ctx, p, st) => {
         _ => { Err("`" ++ longName(id) ++ "` is not a constructor", q) }
       }
     },
-    PTyped(inner, t) => {
-      bind(pat(ctx, inner, st))((ti, vars) => (st) => {
-        bind(scopedTy(ctx, at(0, patPos(inner)), t, st))((t') => (st) => {
-          bind(unifyAt(st, at(0, patPos(inner)), "type annotation", t', ti))((_) => (st) => { Ok((t', vars), st) })
-        })
+    PTyped(PRecord(q, fields), t) => {
+      /* Reading Workman, a record pattern annotated with a record type may name only some
+         of its fields; the others match anything. SubsetML writes every label (R3). */
+      bind(scopedTy(ctx, at(0, Some(q)), t, st))((annotated) => (st) => {
+        let named = SmlList.map((l, _) => { l })(fields);
+        let missing = match(st, resolve(st, annotated)) {
+          (State(_, _, _, _, Some(_)), TRecord(declared)) => {
+            let labels = SmlList.map((l, _) => { l })(declared);
+            if (SmlList.all((l) => { SmlList.exists((m) => { m == l })(labels) })(named)) {
+              SmlList.filter((l) => { SubsetBool.not(SmlList.exists((m) => { m == l })(named)) })(labels)
+            } else { [] }
+          },
+          _ => { [] }
+        };
+        match(missing) {
+          [] => { typedPat(ctx, PRecord(q, fields), t, st) },
+          _ => {
+            let st = match(st) {
+              State(vs, nx, sels, rs, Some(xs)) => {
+                State(vs, nx, sels, rs, Some([PatternRecord(q, missing), ..xs]))
+              },
+              _ => { st }
+            };
+            typedPat(
+              ctx,
+              PRecord(q, SubsetList.append(fields, SmlList.map((l) => { (l, PWild) })(missing))),
+              t,
+              st
+            )
+          }
+        }
       })
-    }
+    },
+    PTyped(inner, t) => { typedPat(ctx, inner, t, st) }
   }
+}
+
+and typedPat = (ctx, inner, t, st) => {
+  let (env, level, _) = ctx;
+  bind(pat(ctx, inner, st))((ti, vars) => (st) => {
+    bind(scopedTy(ctx, at(0, patPos(inner)), t, st))((t') => (st) => {
+      bind(unifyAt(st, at(0, patPos(inner)), "type annotation", t', ti))((_) => (st) => { Ok((t', vars), st) })
+    })
+  })
 }
 
 and pats = (ctx, pos, ps, st) => {

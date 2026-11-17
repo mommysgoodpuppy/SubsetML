@@ -242,10 +242,23 @@ let implicitBasis = (basis, path, tokens) => {
            except for a bare type name the compiler owns (`String`, `List`): that names the
            type wherever a type may stand, and the namespace only as a carrier, in `via X` or a
            group `X|a, b|`. */
+        // `Int32.Int`, `Int32.div`: paths the parser reads as SML builtins use no module.
+        let builtinPath = (path) => {
+          match(path) {
+            [head, last] => {
+              let (typeQualifiers, _) = WmParse.tyConName([head], last);
+              let (valueQualifiers, _) = WmParse.valueName([head], last);
+              if (SubsetList.isEmpty(typeQualifiers)) { true } else { SubsetList.isEmpty(valueQualifiers) }
+            },
+            _ => { false }
+          }
+        };
         let rec namespaceUse = (name, tokens) => {
           match(tokens) {
             [] => { false },
-            [(WmLexer.WName([head, _, .._]), _), ..rest] => { if (head == name) { true } else { namespaceUse(name, rest) } },
+            [(WmLexer.WName([head, second, ..more]), _), ..rest] => {
+              if (if (head == name) { SubsetBool.not(builtinPath([head, second, ..more])) } else { false }) { true } else { namespaceUse(name, rest) }
+            },
             [(WmLexer.WName(["via"]), _), (WmLexer.WName([head]), _), ..rest] => { if (head == name) { true } else { namespaceUse(name, rest) } },
             [(WmLexer.WName([head]), _), (WmLexer.WKey("|"), _), ..rest] => { if (head == name) { true } else { namespaceUse(name, rest) } },
             [(WmLexer.WName([head]), _), ..rest] => {
@@ -280,7 +293,7 @@ let implicitBasis = (basis, path, tokens) => {
           SubsetList.filter(
             paths,
             (modulePath) => {
-              if (if (WmModuleScope.isAutoOpened(modulePath, paths)) { WmModuleScope.moduleAlias(modulePath) != "Int32" } else { false }) { namespaceUse(WmModuleScope.moduleAlias(modulePath), tokens) } else { false }
+              if (WmModuleScope.isAutoOpened(modulePath, paths)) { namespaceUse(WmModuleScope.moduleAlias(modulePath), tokens) } else { false }
             }
           )
         };
@@ -395,7 +408,7 @@ let defaultScope = (basis, units, unit) => {
           SubsetList.concat(SubsetList.map(
             paths,
             (p) => {
-              if (if (WmModuleScope.isAutoOpened(p, paths)) { WmModuleScope.moduleAlias(p) != "Int32" } else { false }) {
+              if (WmModuleScope.isAutoOpened(p, paths)) {
                 match(target(p)) {
                   Some(target) => { [(WmModuleScope.moduleAlias(p), target)] },
                   None => { [] }
@@ -1162,7 +1175,17 @@ let prepare = (basis, units, unit) => {
                 None => {
                   match(SubsetList.find(aliases, (alias, _) => { alias == head })) {
                     None => {
-                      if (if (if (SubsetBool.not(SubsetList.isEmpty(tail))) { SubsetList.exists(units, (u) => { name(u) == head }) } else { false }) {
+                      /* `Int32.Int`, `Int32.div`: paths the parser reads as SML builtins name
+                         no module, whatever modules exist. */
+                      let builtin = match(tail) {
+                        [last] => {
+                          let (typeQualifiers, _) = WmParse.tyConName([head], last);
+                          let (valueQualifiers, _) = WmParse.valueName([head], last);
+                          if (SubsetList.isEmpty(typeQualifiers)) { true } else { SubsetList.isEmpty(valueQualifiers) }
+                        },
+                        _ => { false }
+                      };
+                      if (if (if (if (SubsetBool.not(SubsetList.isEmpty(tail))) { SubsetBool.not(builtin) } else { false }) { SubsetList.exists(units, (u) => { name(u) == head }) } else { false }) {
                         SubsetBool.not(SubsetList.exists(defaultNamespaces, (alias, _) => { alias == head }))
                       } else { false }) {
                         failure(
@@ -1409,32 +1432,37 @@ let mlb = (units, sources, modules, entry, adapters) => {
                     failure(pathOf(unit), "", "missing native adapter imports", 0)
                   },
                   Some(source) => {
+                    /* A native adapter names its dependencies by its source imports; the
+                       hygienic default aliases never appear in it. */
                     let rec aliases = (edges) => {
                       match(edges) {
                         [] => { SubsetResult.Ok("", "") },
-                        [Edge(_, pos, alias, target), ..rest] => {
-                          if (SubsetBool.not(structureIdentifier(alias))) {
-                            failure(
-                              pathOf(unit),
-                              textOf(unit),
-                              "native adapter import alias must be an SML structure identifier",
-                              pos
-                            )
-                          } else {
-                            match(SubsetList.find(units, (child) => { ModuleProject.same(identity(child), target) })) {
-                              None => {
-                                failure(pathOf(unit), "", "missing native adapter dependency", 0)
-                              },
-                              Some(child) => {
-                                SubsetResult.map(
-                                  aliases(rest),
-                                  (declarations, opens) => {
-                                    (
-                                      "      basis SubsetNative_" ++ alias ++ " = bas local open " ++ scopeName(nameOf(child)) ++ " in structure " ++ alias ++ " = " ++ nameOf(child) ++ " end end\n" ++ declarations,
-                                      " SubsetNative_" ++ alias ++ opens
-                                    )
-                                  }
-                                )
+                        [edge, ..rest] => {
+                          let Edge(_, pos, alias, target) = edge;
+                          if (isDefaultEdge(sourceUnit(source), edge)) { aliases(rest) } else {
+                            if (SubsetBool.not(structureIdentifier(alias))) {
+                              failure(
+                                pathOf(unit),
+                                textOf(unit),
+                                "native adapter import alias must be an SML structure identifier",
+                                pos
+                              )
+                            } else {
+                              match(SubsetList.find(units, (child) => { ModuleProject.same(identity(child), target) })) {
+                                None => {
+                                  failure(pathOf(unit), "", "missing native adapter dependency", 0)
+                                },
+                                Some(child) => {
+                                  SubsetResult.map(
+                                    aliases(rest),
+                                    (declarations, opens) => {
+                                      (
+                                        "      basis SubsetNative_" ++ alias ++ " = bas local open " ++ scopeName(nameOf(child)) ++ " in structure " ++ alias ++ " = " ++ nameOf(child) ++ " end end\n" ++ declarations,
+                                        " SubsetNative_" ++ alias ++ opens
+                                      )
+                                    }
+                                  )
+                                }
                               }
                             }
                           }

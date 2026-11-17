@@ -175,8 +175,10 @@ structure WmScope = struct
           SOME (_, target) => SOME target | NONE => NONE
       (* The standalone reader's bootstrap numeric spellings precede this scope pass. Undo
          them only when the source namespace is supplied by the selected library. *)
+      (* An SML builtin the parser already read a Workman path as (`div` for `Int32.div`) stays
+         the builtin; only qualified names map back to their Workman namespace. *)
       val sourceId = fn id => case SubsetList.find (WmPrint.numNames, fn (sml, wm) =>
-          sml = id andalso (case wm of (head :: _, _) =>
+          sml = id andalso (case sml of ([], _) => false | _ => true) andalso (case wm of (head :: _, _) =>
             (case defaultNamespace head of SOME _ => true | NONE => false) | _ => false)) of
           SOME (_, wm) => wm | NONE => id
       val localNamespace = namespace

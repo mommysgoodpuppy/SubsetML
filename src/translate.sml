@@ -656,6 +656,26 @@ structure Translate = struct
       mapProgram (rewrite, prog)
     end
 
+  (* A Workman record pattern that names some of its annotated record type's fields writes the
+     others as wildcards, since a SubsetML record pattern has every label (R3). *)
+  val patternRecords = fn (st, prog) =>
+    let
+      val Unify.State (_, _, _, _, sites) = st
+      val partial = SmlList.mapPartial (fn Unify.PatternRecord (p, labels) => SOME (p, labels) | _ => NONE)
+        (case sites of SOME xs => xs | NONE => [])
+      val rewrite = fn pat =>
+        case pat of
+          PRecord (q, fields) =>
+            (case SmlList.find (fn (p, _) => p = q) partial of
+               NONE => pat
+             | SOME found =>
+                 let val (_, missing) = found
+                 in PRecord (q, SubsetList.append (fields, SmlList.map (fn l => (l, PWild)) missing)) end)
+        | _ => pat
+    in
+      mapProgramWith (fn e => e, rewrite, prog)
+    end
+
   (* The structures a program declares: a translated module is one. *)
   val ownStructures = fn prog =>
     concatMap (fn TopDecs sds => concatMap (fn SStructure (_, bs) => SmlList.map (fn (n, _, _) => n) bs | _ => [], sds)
@@ -1131,7 +1151,7 @@ structure Translate = struct
             let val Unify.State (vars, next, sels, recs, _) = st in
               Unify.bind (portableValues (env, prog, Unify.State (vars, next, sels, recs, SOME [])))
                 (fn (env, prog) => fn st => Unify.bind (wmNumbers st) (fn _ => fn st =>
-                  elaborate (env, rest, st, SubsetList.append (acc, [(path, src, recordUpdates (st, printing (smlSpelling, st, remainders (smlSpelling, st, templateText (smlSpelling, st, realLiterals (st, realEquality (smlSpelling, st, fieldRecords (st, prog))))))), comments)]))))
+                  elaborate (env, rest, st, SubsetList.append (acc, [(path, src, recordUpdates (st, printing (smlSpelling, st, remainders (smlSpelling, st, templateText (smlSpelling, st, realLiterals (st, realEquality (smlSpelling, st, fieldRecords (st, patternRecords (st, prog)))))))), comments)]))))
             end
       val rec strict = fn
           (_, [], st) => Unify.Ok ((), st)
@@ -1197,7 +1217,7 @@ structure Translate = struct
                   Unify.Err (message, pos) => Unify.Err (located (path, message), pos)
                 | Unify.Ok ((body, rewritten), next) =>
                     rewrite (basis, rest, (name, body) :: cache, next,
-                      (name, dependencies, (path, src, recordUpdates (next, printing (Env.plus (env, body), next, remainders (env, next, templateText (Env.plus (env, body), next, realLiterals (next, realEquality (env, next, fieldRecords (next, rewritten))))))), cs)) :: acc)
+                      (name, dependencies, (path, src, recordUpdates (next, printing (Env.plus (env, body), next, remainders (env, next, templateText (Env.plus (env, body), next, realLiterals (next, realEquality (env, next, fieldRecords (next, patternRecords (next, rewritten)))))))), cs)) :: acc)
               end)
       val rec strict = fn (basis, remaining, cache, st) =>
         case remaining of

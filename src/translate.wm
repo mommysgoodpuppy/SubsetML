@@ -1038,6 +1038,34 @@ let fieldRecords = (st, prog) => {
   mapProgram(rewrite, prog)
 };
 
+/* A Workman record pattern that names some of its annotated record type's fields writes the
+   others as wildcards, since a SubsetML record pattern has every label (R3). */
+let patternRecords = (st, prog) => {
+  let Unify.State(_, _, _, _, sites) = st;
+  let partial = SmlList.mapPartial(match {
+    Unify.PatternRecord(p, labels) => { Some(p, labels) },
+    _ => { None }
+  })(match(sites) {
+    Some(xs) => { xs },
+    None => { [] }
+  });
+  let rewrite = (pat) => {
+    match(pat) {
+      PRecord(q, fields) => {
+        match(SmlList.find((p, _) => { p == q })(partial)) {
+          None => { pat },
+          Some(found) => {
+            let (_, missing) = found;
+            PRecord(q, SubsetList.append(fields, SmlList.map((l) => { (l, PWild) })(missing)))
+          }
+        }
+      },
+      _ => { pat }
+    }
+  };
+  mapProgramWith((e) => { e }, rewrite, prog)
+};
+
 // The structures a program declares: a translated module is one.
 let ownStructures = (prog) => {
   concatMap(
@@ -1926,7 +1954,7 @@ let recover = (modules, target) => {
                         templateText(
                           smlSpelling,
                           st,
-                          realLiterals(st, realEquality(smlSpelling, st, fieldRecords(st, prog)))
+                          realLiterals(st, realEquality(smlSpelling, st, fieldRecords(st, patternRecords(st, prog))))
                         )
                       )
                     )
@@ -2055,7 +2083,10 @@ let recoverProjectWithRuntime = (runtime, modules) => {
                             templateText(
                               Env.plus(env, body),
                               next,
-                              realLiterals(next, realEquality(env, next, fieldRecords(next, rewritten)))
+                              realLiterals(
+                                next,
+                                realEquality(env, next, fieldRecords(next, patternRecords(next, rewritten)))
+                              )
                             )
                           )
                         )
