@@ -37,6 +37,7 @@ structure Print = struct
     | PScon (_, c) => scon c
     | PId (_, id) => longid id
     | PPinned (_, id) => node ("pin", [longid id])
+    | PComputed (_, _) => node ("computed", [])
     | PRecord (_, fields) => node ("record", SmlList.map (fn (l, p) => node (l, [pat p])) fields)
     | PTuple ps => node ("tuple", SmlList.map pat ps)
     | PList ps => node ("list", SmlList.map pat ps)

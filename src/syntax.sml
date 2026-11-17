@@ -40,13 +40,14 @@ structure Syntax = struct
     | PId of pos * longid               (* variable or constructor *)
     (* Internal reverse-WM pattern; resolved and lowered before target checking. *)
     | PPinned of pos * longid
+    | PComputed of pos * exp
     | PRecord of pos * (string * pat) list
     | PTuple of pat list                (* [] is (); never one component *)
     | PList of pat list
     | PApp of pos * longid * pat        (* constructor application *)
     | PTyped of pat * ty
 
-  datatype exp =
+  and exp =
       EScon of pos * scon
     | EId of pos * longid
     | ERecord of pos * (string * exp) list

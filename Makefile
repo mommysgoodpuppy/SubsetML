@@ -1,12 +1,16 @@
 # Sources in dependency order; also the input to the self-check.
+.DEFAULT_GOAL := bin/subsetml
 TEXT_HOST = src/subset_text_host.sml
 
 CUSTOM_BASIS = src/subset_option_value.sml src/subset_result_value.sml src/subset_bool.sml src/subset_result.sml src/subset_host.sml src/subset_option.sml src/subset_list.sml src/subset_list_pair.sml src/subset_order.sml src/subset_char.sml src/subset_bytes.sml src/subset_unicode.sml src/subset_utf8.sml src/subset_utf16.sml src/subset_string.sml src/subset_text.sml src/subset_int32.sml src/subset_string_cvt.sml src/subset_path.sml src/subset_natural.sml src/subset_source.sml src/subset_utf16_source.sml src/subset_sml_escape.sml src/subset_io.sml src/subset_process.sml
 
 SRCS = $(TEXT_HOST) $(CUSTOM_BASIS) src/sml_list.sml src/sml_list_pair.sml src/sml_option.sml src/syntax.sml src/compiler_text.sml src/lexer.sml src/parser.sml src/print.sml src/int_map.sml src/types.sml \
-       src/unify.sml src/env.sml src/elab.sml src/basis.sml src/doc.sml \
+       src/unify.sml src/env.sml src/elab.sml src/basis_source.sml src/basis.sml src/doc.sml \
        src/sml_print.sml src/wm_print.sml src/wm_lexer.sml \
        src/backend_names.sml src/wm_parse.sml src/normalize.sml src/translate.sml src/module_imports.sml src/module_project.sml src/wm_project.sml src/native_int.sml src/sml_target.sml src/main.sml
+
+src/basis_source.sml: src/subset_option_value.sml scripts/generate-basis-source.py
+	python3 scripts/generate-basis-source.py
 
 bin/subsetml: $(SRCS) src/subsetml.mlb lib/subset_text_host.sml lib/subset_host.sml
 	mkdir -p bin

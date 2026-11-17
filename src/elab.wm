@@ -86,6 +86,7 @@ let rec patPos = (p) => {
     PScon(q, _) => { Some(q) },
     PId(q, _) => { Some(q) },
     PPinned(q, _) => { Some(q) },
+    PComputed(q, _) => { Some(q) },
     PRecord(q, _) => { Some(q) },
     PApp(q, _, _) => { Some(q) },
     PTuple(ps) => {
@@ -454,6 +455,7 @@ let rec pat = (ctx, p, st) => {
       bind(literalConst(q, c, level, true, st))((t) => (st) => { Ok((t, []), st) })
     },
     PPinned(q, _) => { Err("internal pinned pattern was not lowered", q) },
+    PComputed(q, _) => { Err("internal computed pattern was not lowered", q) },
     PId(q, id) => {
       match(constructorScheme(Env.value(env, id)), id) {
         (Some(scheme), _) => {

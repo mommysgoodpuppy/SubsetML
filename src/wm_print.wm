@@ -237,6 +237,7 @@ let rec pat = (inMatch, binds, p) => {
     PScon(pos, c) => { atom(pos, scon(c)) },
     PId(pos, ([], "nil")) => { atom(pos, "[]") },
     PPinned(pos, id) => { atom(pos, valueName(id)) },
+    PComputed(pos, _) => { atom(pos, "UNLOWERED_COMPUTED_PATTERN") },
     PId(pos, id) => {
       if (if (isConName(id)) { true } else { binds }) { atom(pos, valueName(id)) } else { cats([text("Var("), atom(pos, valueName(id)), text(")")]) }
     },

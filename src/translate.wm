@@ -72,14 +72,15 @@ let rec patQuals = match {
   PScon(_, _) => { [] },
   PId(_, (Var(qs), _)) => { head(qs) },
   PPinned(_, (Var(qs), _)) => { head(qs) },
+  PComputed(_, e) => { expQuals(e) },
   PRecord(_, fields) => { concatMap((_, p) => { patQuals(p) }, fields) },
   PTuple(ps) => { concatMap(patQuals, ps) },
   PList(ps) => { concatMap(patQuals, ps) },
   PApp(_, (Var(qs), _), p) => { SubsetList.append(head(qs), patQuals(p)) },
   PTyped(p, t) => { SubsetList.append(patQuals(p), tyQuals(t)) }
-};
+}
 
-let rec expQuals = match {
+and expQuals = match {
   EScon(_, _) => { [] },
   EId(_, (Var(qs), _)) => { head(qs) },
   ERecord(_, fields) => { concatMap((_, e) => { expQuals(e) }, fields) },

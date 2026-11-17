@@ -288,9 +288,12 @@ let lex = (src) => {
       };
 
       let lexSymbol = (i) => {
-        match(SmlList.find((s) => { startsWith(i, s) })(symbols)) {
-          Some(s) => { Ok(WKey(s), i + CompilerText.size(s)) },
-          None => { Err("unexpected character", i) }
+        // Binding `=`, immediately followed by a bare lambda's `=>`, is legal WM.
+        if (startsWith(i, "==>")) { Ok(WKey("="), i + 1) } else {
+          match(SmlList.find((s) => { startsWith(i, s) })(symbols)) {
+            Some(s) => { Ok(WKey(s), i + CompilerText.size(s)) },
+            None => { Err("unexpected character", i) }
+          }
         }
       };
 

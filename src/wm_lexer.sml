@@ -216,7 +216,9 @@ structure WmLexer = struct
         end
 
       val lexSymbol = fn i =>
-        case SmlList.find (fn s => startsWith (i, s)) symbols of
+        (* Binding `=`, immediately followed by a bare lambda's `=>`, is legal WM. *)
+        if startsWith (i, "==>") then Ok (WKey "=", i + 1)
+        else case SmlList.find (fn s => startsWith (i, s)) symbols of
           SOME s => Ok (WKey s, i + CompilerText.size s)
         | NONE => Err ("unexpected character", i)
 

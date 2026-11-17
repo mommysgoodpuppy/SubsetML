@@ -242,10 +242,18 @@ structure Main = struct
       (case runtimePath of NONE => files | SOME path => path :: files))
 
   val fromWmEntry = fn (outDir, basis, runtimePath, adapterSpecs, entry) =>
-    case WmProject.discover (basis, case runtimePath of NONE => [entry] | SOME runtime => [runtime, entry]) of
+    let val selectedRuntime = case runtimePath of
+        SOME path => SOME path
+      | NONE => (case basis of
+          NONE => NONE
+        | SOME directory => (case ModuleProject.identify (directory ^ "/subset_process.wm") of
+            SubsetResult.Ok _ => SOME (directory ^ "/subset_process.wm")
+          | SubsetResult.Err _ => NONE))
+    in case WmProject.discover (basis, case selectedRuntime of NONE => [entry] | SOME runtime => [runtime, entry]) of
       SubsetResult.Err (WmProject.Error (path, src, message, pos)) =>
         (eprint (errorLine (path, src, message, pos)); false)
-    | SubsetResult.Ok sources => fromWmLoaded (outDir, basis, runtimePath, SOME entry, adapterSpecs, sources)
+    | SubsetResult.Ok sources => fromWmLoaded (outDir, basis, selectedRuntime, SOME entry, adapterSpecs, sources)
+    end
 
   (* SML -> Workman -> SML must give back the same declarations, up to Normalize. *)
   val roundTrip = fn parsed =>

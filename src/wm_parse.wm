@@ -18,8 +18,8 @@ from "./sml_option.sml" import * as SmlOption;
 
    It accepts the Workman fragment that corresponds to SubsetML, plus the expression compatibility forms that
    WmPrint emits (`div`, `mod`, `@`, `o`, `before`, `#lab`, `~`). Workman features outside
-   the reverse profile (`%`, receiver pipes, JSON, FFI imports, ...) are reported as errors.
-   Numeric and pinned match patterns survive internally until binding resolution lowers them. */
+   the reverse profile (JS receivers, JSON, FFI imports, ...) are reported as errors.
+   Numeric, pinned and computed match patterns survive internally until binding resolution lowers them. */
 
 from "./subset_option_value.wm" import * as SubsetOptionValue;
 from "./syntax.wm" import * as Syntax;
@@ -30,8 +30,8 @@ from "./compiler_text.wm" import * as CompilerText;
 from "./subset_char.wm" import * as SubsetChar;
 from "./wm_print.wm" import * as WmPrint;
 from "./backend_names.wm" import * as BackendNames;
-from "./subset_bool.wm" import * as SubsetBool;
 from "./subset_list.wm" import * as SubsetList;
+from "./subset_bool.wm" import * as SubsetBool;
 from "./sml_option.wm" import * as SmlOption;
 
 export from "./subset_option_value.wm" import *;
@@ -220,10 +220,6 @@ and typeName = (quals, name, ts) => {
   } else { Done(TyCon([], tyConName(quals, name)), ts) }
 };
 
-// ---------------------------------------------------------------------------------------
-/* Patterns. As in WmPrint, `inMatch` marks a match arm and `binds` whether a bare name binds
-   at this position. */
-
 let negativeLiteral = (minusPos, ts) => {
   match(peek(ts)) {
     (WScon(SInt(s)), Var(p)) => {
@@ -288,109 +284,33 @@ let listItems = (item, ts) => {
   go([], ts)
 };
 
-let rec parsePat = (inMatch, binds, ts) => {
-  let child = (b) => (ts) => {
-    parseAnnotated(inMatch, if (b) { true } else { SubsetBool.not(inMatch) }, ts)
-  };
-  match(peek(ts)) {
-    (WKey("_"), _) => { Done(PWild, advance(ts)) },
-    (WKey("void"), _) => { Done(PTuple([]), advance(ts)) },
-    (WKey("true"), Var(p)) => { Done(PId(p, ([], "true")), advance(ts)) },
-    (WKey("false"), Var(p)) => { Done(PId(p, ([], "false")), advance(ts)) },
-    (WScon(SInt(s)), Var(p)) => { Done(PScon(p, SInt(s)), advance(ts)) },
-    (WScon(SReal(s)), Var(p)) => { Done(PScon(p, SReal(s)), advance(ts)) },
-    (WScon(c), Var(p)) => { Done(PScon(p, c), advance(ts)) },
-    (WKey("-"), Var(p)) => {
-      match(negativeLiteral(p, advance(ts))) {
-        Some(c) => { Done(PScon(p, c), advance(advance(ts))) },
-        _ => { expected("a pattern", ts) }
-      }
-    },
-    (WKey(".{"), Var(p)) => {
-      let field = (ts) => {
-        match(peek(ts)) {
-          (WName([l]), Var(lp)) => {
-            if (isKey("=", advance(ts))) {
-              bind(child(false)(advance(advance(ts))))((q) => (ts) => { Done((l, q), ts) })
-            } else { Done((l, PId(lp, ([], l))), advance(ts)) }
-          },
-          _ => { expected("a record field", ts) }
-        }
-      };
-      bind(separated(field, ",", "}", advance(ts)))((fields) => (ts) => {
-        bind(expect("}", ts))((_) => (ts) => { Done(PRecord(p, fields), ts) })
-      })
-    },
-    (WKey("["), Var(p)) => {
-      bind(listItems(child(true), advance(ts)))((items, tail) => (ts) => {
-        match(tail) {
-          None => { Done(PList(items), ts) },
-          Some(t) => { Done(consPat(p, items, t), ts) }
-        }
-      })
-    },
-    (WKey("("), _) => {
-      bind(delimited("(", child(false), ",", ")", ts))((ps) => (ts) => {
-        match(ps) {
-          [single] => { Done(single, ts) },
-          _ => { Done(PTuple(ps), ts) }
-        }
-      })
-    },
-    (WName(["Var"]), _) => {
-      match(peek(advance(ts)), peek(advance(advance(ts))), peek(advance(advance(advance(ts))))) {
-        ((WKey("("), _), (WName([x]), Var(p)), (WKey(")"), _)) => {
-          Done(PId(p, ([], x)), advance(advance(advance(advance(ts)))))
-        },
-        _ => { expected("`Var(name)`", ts) }
-      }
-    },
-    (WName(path), Var(p)) => {
-      let [name, ..reversedQuals] = SubsetList.reverse(path);
-      let quals = SubsetList.reverse(reversedQuals);
-      match(isUpperName(name), binds, SmlList.null(quals)) {
-        (true, _, _) => {
-          if (isKey("(", advance(ts))) {
-            bind(delimited("(", child(true), ",", ")", advance(ts)))((args) => (ts) => {
-              match(args) {
-                [single] => { Done(PApp(p, valueName(quals, name), single), ts) },
-                _ => { Done(PApp(p, valueName(quals, name), PTuple(args)), ts) }
-              }
-            })
-          } else {
-            Done(
-              if (inMatch) { PPinned(p, valueName(quals, name)) } else { PId(p, valueName(quals, name)) },
-              advance(ts)
-            )
-          }
-        },
-        (false, true, true) => { Done(PId(p, ([], name)), advance(ts)) },
-        (false, _, _) => { Done(PPinned(p, valueName(quals, name)), advance(ts)) }
-      }
-    },
-    _ => { expected("a pattern", ts) }
-  }
-}
-
-// A pattern that may carry a type annotation, as inside parentheses.
-and parseAnnotated = (inMatch, binds, ts) => {
-  bind(parsePat(inMatch, binds, ts))((p) => (rest) => {
-    if (isKey(":", rest)) {
-      bind(parseType(advance(rest)))((t) => (after) => {
-        Done(
-          match(p, isIntType(t), integerText(ts)) {
-            (PScon(q, _), true, Some(s)) => { PScon(q, SInt(s)) },
-            _ => { PTyped(p, t) }
-          },
-          after
-        )
-      })
-    } else { Done(p, rest) }
-  })
-};
-
 // ---------------------------------------------------------------------------------------
 // Expressions
+
+/* Capture contracts have no SML runtime representation. WM checks their lexical contract;
+   reverse translation retains ordinary lexical closure semantics after parsing the list. */
+let captureClause = (ts) => {
+  if (isKey("||", ts)) { Done(void, advance(ts)) } else {
+    if (isKey("|", ts)) {
+      let name = (ts) => {
+        match(peek(ts)) {
+          (WName([name]), _) => { Done(name, advance(ts)) },
+          _ => { expected("a capture name", ts) }
+        }
+      };
+      bind(separated(name, ",", "|", advance(ts)))((names) => (rest) => {
+        if (SubsetList.exists(
+          names,
+          (name) => {
+            SubsetList.length(SubsetList.filter(names, (other) => { other == name })) > 1
+          }
+        )) { Fail("a capture is listed more than once", posOf(ts)) } else {
+          bind(expect("|", rest))((_) => (rest) => { Done(void, rest) })
+        }
+      })
+    } else { Done(void, ts) }
+  }
+};
 
 /* Whether a result annotation `: T` at the head of ts is followed by `=>`. A type never
    contains `=>`, and a token no type can contain ends the search. */
@@ -400,12 +320,19 @@ let resultAnnotationAhead = (ts) => {
       (WEOF, _) => { false },
       (WKey(k), _) => {
         if (k == "=>") { depth == 0 } else {
-          if (if (k == "(") { true } else { k == "<" }) { scan(depth + 1, advance(ts)) } else {
-            if (if (k == ")") { true } else { k == ">" }) {
-              if (depth == 0) { false } else { scan(depth - 1, advance(ts)) }
-            } else {
-              if (k == ",") { if (depth == 0) { false } else { scan(depth, advance(ts)) } } else {
-                if (if (k == "->") { true } else { k == "." }) { scan(depth, advance(ts)) } else { false }
+          if (if (depth == 0) { if (k == "|") { true } else { k == "||" } } else { false }) {
+            match(captureClause(ts)) {
+              Done(_, rest) => { isKey("=>", rest) },
+              Fail(_) => { false }
+            }
+          } else {
+            if (if (k == "(") { true } else { k == "<" }) { scan(depth + 1, advance(ts)) } else {
+              if (if (k == ")") { true } else { k == ">" }) {
+                if (depth == 0) { false } else { scan(depth - 1, advance(ts)) }
+              } else {
+                if (k == ",") { if (depth == 0) { false } else { scan(depth, advance(ts)) } } else {
+                  if (if (k == "->") { true } else { k == "." }) { scan(depth, advance(ts)) } else { false }
+                }
               }
             }
           }
@@ -428,7 +355,12 @@ let lambdaAhead = (ts) => {
         if (if (if (if (k == "(") { true } else { k == "[" }) { true } else { k == "{" }) { true } else { k == ".{" }) { scan(depth + 1, advance(ts)) } else {
           if (if (if (k == ")") { true } else { k == "]" }) { true } else { k == "}" }) {
             if (depth == 1) {
-              if (isKey("=>", advance(ts))) { true } else { resultAnnotationAhead(advance(ts)) }
+              match(captureClause(advance(ts))) {
+                Done(_, rest) => {
+                  if (isKey("=>", rest)) { true } else { resultAnnotationAhead(rest) }
+                },
+                Fail(_) => { false }
+              }
             } else { scan(depth - 1, advance(ts)) }
           } else { scan(depth, advance(ts)) }
         }
@@ -707,28 +639,169 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
   // An `if` is an operand, so `if (c) { a } else { b } >= 0` compares the whole conditional.
   let rec parseExp = (ts) => {
     match(peek(ts)) {
-      (WKey("if"), _) => { parseFallback(ts) },
-      (WKey("match"), _) => {
-        if (isKey("{", advance(ts))) {
-          bind(parseArms(advance(ts)))((rules) => (ts) => { Done(EFn(rules), ts) })
-        } else {
-          if (lambdaAhead(advance(ts))) { parseMatchFunction(advance(ts)) } else {
-            bind(delimited("(", parseExp, ",", ")", advance(ts)))((values) => (ts) => {
-              bind(parseArms(ts))((rules) => (ts) => {
-                match(values) {
-                  [single] => { Done(ECase(single, rules), ts) },
-                  _ => { Done(ECase(ETuple(values), rules), ts) }
-                }
-              })
-            })
-          }
-        }
+      (WKey("=>"), _) => { parseBareLambda(advance(ts)) },
+      (WKey("|"), _) => {
+        bind(captureClause(ts))((_) => (ts) => {
+          bind(expect("=>", ts))((_) => (ts) => { parseBareLambda(ts) })
+        })
       },
+      (WKey("||"), _) => {
+        bind(captureClause(ts))((_) => (ts) => {
+          bind(expect("=>", ts))((_) => (ts) => { parseBareLambda(ts) })
+        })
+      },
+      (WKey("if"), _) => { parseFallback(ts) },
+      (WKey("match"), _) => { parseFallback(ts) },
       (WKey("("), _) => {
         if (lambdaAhead(ts)) { parseLambda(ts) } else { parseFallback(ts) }
       },
       _ => { parseFallback(ts) }
     }
+  }
+
+  and parseMatch = (ts) => {
+    if (isKey("{", advance(ts))) {
+      bind(parseArms(advance(ts)))((rules) => (ts) => { Done(EFn(rules), ts) })
+    } else {
+      if (lambdaAhead(advance(ts))) { parseMatchFunction(advance(ts)) } else {
+        bind(delimited("(", parseExp, ",", ")", advance(ts)))((values) => (ts) => {
+          bind(parseArms(ts))((rules) => (ts) => {
+            match(values) {
+              [single] => { Done(ECase(single, rules), ts) },
+              _ => { Done(ECase(ETuple(values), rules), ts) }
+            }
+          })
+        })
+      }
+    }
+  }
+
+  and parseBareLambda = (ts) => {
+    let p = posOf(ts);
+    let name = fresh("subsetmlPipeInput" ++ CompilerText.natural(p));
+    let input = (WName([name]), p);
+    let pipeline = if (isKey(":>", ts)) { true } else {
+      if (isKey("{", ts)) { isKey(":>", advance(ts)) } else { false }
+    };
+    let body = if (isKey(":>", ts)) { [input, ..ts] } else {
+      if (pipeline) { [peek(ts), input, ..advance(ts)] } else { ts }
+    };
+    bind(parseExp(body))((value) => (rest) => {
+      Done(EFn([(if (pipeline) { PId(p, ([], name)) } else { PTuple([]) }, value)]), rest)
+    })
+  }
+
+  // Patterns share the expression parser's recursion for `=(expression)`.
+  and parsePat = (inMatch, binds, ts) => {
+    let child = (b) => (ts) => {
+      parseAnnotated(inMatch, if (b) { true } else { SubsetBool.not(inMatch) }, ts)
+    };
+    match(peek(ts)) {
+      (WKey("_"), _) => { Done(PWild, advance(ts)) },
+      (WKey("="), Var(p)) => {
+        if (inMatch) {
+          bind(expect("(", advance(ts)))((_) => (ts) => {
+            bind(parseExp(ts))((value) => (ts) => {
+              bind(expect(")", ts))((_) => (ts) => { Done(PComputed(p, value), ts) })
+            })
+          })
+        } else {
+          Fail("computed patterns are only supported in match arms", p)
+        }
+      },
+      (WKey("void"), _) => { Done(PTuple([]), advance(ts)) },
+      (WKey("true"), Var(p)) => { Done(PId(p, ([], "true")), advance(ts)) },
+      (WKey("false"), Var(p)) => { Done(PId(p, ([], "false")), advance(ts)) },
+      (WScon(SInt(s)), Var(p)) => { Done(PScon(p, SInt(s)), advance(ts)) },
+      (WScon(SReal(s)), Var(p)) => { Done(PScon(p, SReal(s)), advance(ts)) },
+      (WScon(c), Var(p)) => { Done(PScon(p, c), advance(ts)) },
+      (WKey("-"), Var(p)) => {
+        match(negativeLiteral(p, advance(ts))) {
+          Some(c) => { Done(PScon(p, c), advance(advance(ts))) },
+          _ => { expected("a pattern", ts) }
+        }
+      },
+      (WKey(".{"), Var(p)) => {
+        let field = (ts) => {
+          match(peek(ts)) {
+            (WName([l]), Var(lp)) => {
+              if (isKey("=", advance(ts))) {
+                bind(child(false)(advance(advance(ts))))((q) => (ts) => { Done((l, q), ts) })
+              } else { Done((l, PId(lp, ([], l))), advance(ts)) }
+            },
+            _ => { expected("a record field", ts) }
+          }
+        };
+        bind(separated(field, ",", "}", advance(ts)))((fields) => (ts) => {
+          bind(expect("}", ts))((_) => (ts) => { Done(PRecord(p, fields), ts) })
+        })
+      },
+      (WKey("["), Var(p)) => {
+        bind(listItems(child(true), advance(ts)))((items, tail) => (ts) => {
+          match(tail) {
+            None => { Done(PList(items), ts) },
+            Some(t) => { Done(consPat(p, items, t), ts) }
+          }
+        })
+      },
+      (WKey("("), _) => {
+        bind(delimited("(", child(false), ",", ")", ts))((ps) => (ts) => {
+          match(ps) {
+            [single] => { Done(single, ts) },
+            _ => { Done(PTuple(ps), ts) }
+          }
+        })
+      },
+      (WName(["Var"]), _) => {
+        match(peek(advance(ts)), peek(advance(advance(ts))), peek(advance(advance(advance(ts))))) {
+          ((WKey("("), _), (WName([x]), Var(p)), (WKey(")"), _)) => {
+            Done(PId(p, ([], x)), advance(advance(advance(advance(ts)))))
+          },
+          _ => { expected("`Var(name)`", ts) }
+        }
+      },
+      (WName(path), Var(p)) => {
+        let [name, ..reversedQuals] = SubsetList.reverse(path);
+        let quals = SubsetList.reverse(reversedQuals);
+        match(isUpperName(name), binds, SmlList.null(quals)) {
+          (true, _, _) => {
+            if (isKey("(", advance(ts))) {
+              bind(delimited("(", child(true), ",", ")", advance(ts)))((args) => (ts) => {
+                match(args) {
+                  [single] => { Done(PApp(p, valueName(quals, name), single), ts) },
+                  _ => { Done(PApp(p, valueName(quals, name), PTuple(args)), ts) }
+                }
+              })
+            } else {
+              Done(
+                if (inMatch) { PPinned(p, valueName(quals, name)) } else { PId(p, valueName(quals, name)) },
+                advance(ts)
+              )
+            }
+          },
+          (false, true, true) => { Done(PId(p, ([], name)), advance(ts)) },
+          (false, _, _) => { Done(PPinned(p, valueName(quals, name)), advance(ts)) }
+        }
+      },
+      _ => { expected("a pattern", ts) }
+    }
+  }
+
+  // A pattern that may carry a type annotation, as inside parentheses.
+  and parseAnnotated = (inMatch, binds, ts) => {
+    bind(parsePat(inMatch, binds, ts))((p) => (rest) => {
+      if (isKey(":", rest)) {
+        bind(parseType(advance(rest)))((t) => (after) => {
+          Done(
+            match(p, isIntType(t), integerText(ts)) {
+              (PScon(q, _), true, Some(s)) => { PScon(q, SInt(s)) },
+              _ => { PTyped(p, t) }
+            },
+            after
+          )
+        })
+      } else { Done(p, rest) }
+    })
   }
 
   // `match(x, y) => { arms }`: a function of its named parameters.
@@ -740,17 +813,19 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
       }
     };
     bind(delimited("(", name, ",", ")", ts))((names) => (ts) => {
-      bind(expect("=>", ts))((_) => (ts) => {
-        bind(parseArms(ts))((rules) => (ts) => {
-          let param = match(names) {
-            [(Var(p), Var(x))] => { PId(p, ([], x)) },
-            _ => { PTuple(SmlList.map((p, x) => { PId(p, ([], x)) })(names)) }
-          };
-          let value = match(names) {
-            [(Var(p), Var(x))] => { EId(p, ([], x)) },
-            _ => { ETuple(SmlList.map((p, x) => { EId(p, ([], x)) })(names)) }
-          };
-          Done(EFn([(param, ECase(value, rules))]), ts)
+      bind(captureClause(ts))((_) => (ts) => {
+        bind(expect("=>", ts))((_) => (ts) => {
+          bind(parseArms(ts))((rules) => (ts) => {
+            let param = match(names) {
+              [(Var(p), Var(x))] => { PId(p, ([], x)) },
+              _ => { PTuple(SmlList.map((p, x) => { PId(p, ([], x)) })(names)) }
+            };
+            let value = match(names) {
+              [(Var(p), Var(x))] => { EId(p, ([], x)) },
+              _ => { ETuple(SmlList.map((p, x) => { EId(p, ([], x)) })(names)) }
+            };
+            Done(EFn([(param, ECase(value, rules))]), ts)
+          })
         })
       })
     })
@@ -773,17 +848,19 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
     };
     bind(delimited("(", param, ",", ")", ts))((ps) => (ts) => {
       bind(result(ts))((annotation) => (ts) => {
-        bind(expect("=>", ts))((_) => (ts) => {
-          bind(if (lambdaAhead(ts)) { parseLambda(ts) } else { parseBlock(ts) })((body) => (ts) => {
-            let p = match(ps) {
-              [single] => { single },
-              _ => { PTuple(ps) }
-            };
-            let constrained = match(annotation) {
-              None => { body },
-              Some(t) => { ETyped(body, t) }
-            };
-            Done(EFn([(p, constrained)]), ts)
+        bind(captureClause(ts))((_) => (ts) => {
+          bind(expect("=>", ts))((_) => (ts) => {
+            bind(if (lambdaAhead(ts)) { parseLambda(ts) } else { parseBlock(ts) })((body) => (ts) => {
+              let p = match(ps) {
+                [single] => { single },
+                _ => { PTuple(ps) }
+              };
+              let constrained = match(annotation) {
+                None => { body },
+                Some(t) => { ETyped(body, t) }
+              };
+              Done(EFn([(p, constrained)]), ts)
+            })
           })
         })
       })
@@ -894,27 +971,41 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
     }
   }
 
-  /* Pipes bind above unary/binary operators, chain left-to-right, and lower
-     only to ordinary applications. No type-directed receiver/carrier lookup. */
+  /* Pipes bind above unary/binary operators and chain left-to-right. Record member stages
+     become ordinary selections/calls; SML inference must establish a record receiver. */
   and parsePipe = (ts) => {
     let rec more = (left, ts) => {
       if (isKey(":>", ts)) {
         let stage = advance(ts);
         if (isKey(".", stage)) {
-          Fail(
-            "receiver pipes are outside the SubsetML translation profile; use a named function",
-            posOf(stage)
-          )
+          match(peek(advance(stage))) {
+            (WName(path), Var(p)) => {
+              let selected = SubsetList.foldLeft(path, left, (label, receiver) => { EApp(ESelect(p, label), receiver) });
+              let rest = advance(advance(stage));
+              if (isKey("(", rest)) {
+                bind(delimited("(", parseExp, ",", ")", rest))((args) => (rest) => { more(apply(selected, args), rest) })
+              } else { more(selected, rest) }
+            },
+            _ => { expected("a record member after `:> .`", advance(stage)) }
+          }
         } else {
-          bind(parsePostfixForm(stage))((right, insertion) => (rest) => {
-            more(
-              match(insertion) {
-                Some(callee, args) => { apply(callee, [left, ..args]) },
-                None => { EApp(right, left) }
-              },
-              rest
-            )
-          })
+          if (if (isKey("if", stage)) { isKey("{", advance(stage)) } else { false }) {
+            bind(parseBlock(advance(stage)))((yes) => (rest) => {
+              bind(expect("else", rest))((_) => (rest) => {
+                bind(parseBlock(rest))((no) => (rest) => { more(EIf(left, yes, no), rest) })
+              })
+            })
+          } else {
+            bind(parsePostfixForm(stage))((right, insertion) => (rest) => {
+              more(
+                match(insertion) {
+                  Some(callee, args) => { apply(callee, [left, ..args]) },
+                  None => { EApp(right, left) }
+                },
+                rest
+              )
+            })
+          }
         }
       } else { Done(left, ts) }
     };
@@ -1042,7 +1133,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
         })
       },
       (WKey("if"), _) => { parseIf(ts) },
-      (WKey("match"), _) => { parseExp(ts) },
+      (WKey("match"), _) => { parseMatch(ts) },
       _ => { expected("an expression", ts) }
     }
   }

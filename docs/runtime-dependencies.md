@@ -52,8 +52,12 @@ Result's datatype is likewise independent: `SubsetResultValue` declares
 type or constructors. Neither datatype module requires host operations.
 
 Compiler source and the old source-only list/option helpers use this datatype too.
-The compatibility checker retains SML's initial `option` for external fixtures;
-that is a separate nominal type. Full-SML comparison tests convert explicitly
+The compatibility checker derives its host `option` declaration by elaborating the
+embedded `SubsetOptionValue` source at a reserved host identity. There is no separate
+hand-authored Option constructor or type table. `scripts/generate-basis-source.py`
+embeds the source at build time, so checking requires no source file I/O at runtime.
+This compatibility identity stays distinct from a program's imported datatype, as
+SML host APIs such as `Int.fromString` require. Full-SML comparison tests convert explicitly
 at their boundary. Native SML's `Int32` shim can still use its host `SOME` without
 making host option a dependency of authored portable source.
 

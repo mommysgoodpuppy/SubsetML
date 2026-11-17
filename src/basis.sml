@@ -8,6 +8,7 @@ from "./lexer.sml" import * as Lexer;
 from "./unify.sml" import * as Unify;
 from "./parser.sml" import * as Parser;
 from "./elab.sml" import * as Elab;
+from "./basis_source.sml" import * as BasisSource;
 from "./sml_list.sml" import * as SmlList;
 *)
 
@@ -36,8 +37,6 @@ structure Basis = struct
   val listCons =
     [("nil", ([KPlain], listTy alpha)),
      ("::", ([KPlain], TArrow (tupleTy [alpha, listTy alpha], listTy alpha)))]
-  val optionTy = fn t => TCon (optionName, [t])
-  val optionCons = [("NONE", ([KPlain], optionTy alpha)), ("SOME", ([KPlain], TArrow (alpha, optionTy alpha)))]
   val orderTy = TCon (orderName, [])
   val orderCons = [("LESS", ([], orderTy)), ("EQUAL", ([], orderTy)), ("GREATER", ([], orderTy))]
 
@@ -51,7 +50,6 @@ structure Basis = struct
      ("string", tyStr stringName),
      ("char", tyStr charName),
      ("list", withCons (listName, listCons)),
-     ("option", withCons (optionName, optionCons)),
      ("order", withCons (orderName, orderCons))]
 
   (* Abstract Basis types. None is declared to admit equality: claiming equality the Basis
@@ -335,8 +333,28 @@ structure Basis = struct
             (Unify.Ok (plus (typesEnv, withValues tops), Unify.initial)) selectedStructures
     end
 
-  val initial = build (topTypes, SubsetList.concat [boolCons, listCons, optionCons, orderCons],
-    special, topValues, structures)
+  (* Host compatibility needs the native SML Option identity, but not another datatype
+     definition. Elaborate the shared declaration at its reserved host stamp; portableInitial
+     never installs these bindings. Source-imported Option still gets a fresh program stamp. *)
+  val compatibilityOption =
+    case Lexer.lex BasisSource.option of
+      Lexer.LexError (message, pos) => Unify.Err (message, pos)
+    | Lexer.Tokens (tokens, comments) =>
+        (case Parser.parseTokens (tokens, comments) of
+           Parser.ParseError (message, pos) => Unify.Err (message, pos)
+         | Parser.Program (phrases, _) =>
+             let val Unify.State (vars, _, sels, recs, sites) = Unify.initial in
+               Unify.bind (Elab.programExports (Env.empty, phrases,
+                 Unify.State (vars, 7, sels, recs, sites))) (fn exports => fn st =>
+                   case Env.structureAt (exports, ["SubsetOptionValue"]) of
+                     SOME (body, _) => Unify.Ok (body, st)
+                   | NONE => Unify.Err ("source Basis is missing SubsetOptionValue", 0))
+             end)
+
+  val initial = Unify.bind compatibilityOption (fn Env.Env (_, types, constructors) => fn _ =>
+    Unify.bind (build (SubsetList.append (types, topTypes),
+      SubsetList.concat [boolCons, listCons, orderCons], special, topValues, structures))
+      (fn env => fn st => Unify.Ok (Env.plus (env, Env.withValues constructors), st)))
 
   (* Portable authored source has no SML Basis structures or convenience values.
      Only representation-level operations remain; see docs/runtime-dependencies.md. *)

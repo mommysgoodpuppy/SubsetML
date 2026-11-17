@@ -34,6 +34,15 @@ let _ = run();
     subprocess.run(['mlton', '-output', root / 'run', mlb], check=True)
     result = subprocess.run([root / 'run'], capture_output=True)
     assert (result.returncode, result.stdout, result.stderr) == (1, b'once', b'unreachable\0\xff\n'), result
+    # An explicit Basis directory supplies its canonical process runtime by default.
+    default_out = root / 'default'; default_out.mkdir()
+    subprocess.run([compiler, 'sml-entry', default_out, '--basis', wm,
+        '--native-adapter', wm / 'subset_host.wm', repo / 'lib/subset_host.sml', 'SubsetHost',
+        '--native-adapter', wm / 'subset_text_host.wm', repo / 'lib/subset_text_host.sml', 'SubsetTextHost',
+        use], check=True)
+    subprocess.run(['mlton', '-output', default_out / 'run', default_out / 'project.mlb'], check=True)
+    default_result = subprocess.run([default_out / 'run'], capture_output=True)
+    assert (default_result.returncode, default_result.stdout, default_result.stderr) == (1, b'once', b'unreachable\0\xff\n'), default_result
     with open('/dev/full', 'wb') as stderr:
         result = subprocess.run([root / 'run'], stdout=subprocess.PIPE, stderr=stderr)
     assert (result.returncode, result.stdout) == (1, b'once'), result

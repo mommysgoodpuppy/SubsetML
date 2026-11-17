@@ -34,6 +34,7 @@ types.sml
 unify.sml
 env.sml
 elab.sml
+basis_source.sml
 basis.sml
 doc.sml
 sml_print.sml

@@ -72,6 +72,20 @@ val equal = number = SubsetOptionValue.SOME 42
 """)
     result = check(source)
     assert result.returncode == 0, result.stderr
+    # The compatibility environment elaborates the same source declaration for its host
+    # identity, but importing the source module still creates a distinct SML datatype.
+    source.write_text(header + """
+val wrong : int SubsetOptionValue.option = SOME 42
+""")
+    result = check(source, portable=False)
+    assert result.returncode != 0, "compatibility Option was conflated with an imported datatype"
+    source.write_text("""
+val parsed : int option = Int.fromString "42"
+val answer = case parsed of SOME value => value | NONE => 0
+val mapped = Option.map (fn value => value + 1) parsed
+""")
+    result = check(source, portable=False)
+    assert result.returncode == 0, result.stderr
     source.write_text(header + """
 datatype 'a option = NONE | SOME of 'a
 val wrong : int SubsetOptionValue.option = SOME 42

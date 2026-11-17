@@ -61,6 +61,7 @@ structure Elab = struct
       PScon (q, _) => SOME q
     | PId (q, _) => SOME q
     | PPinned (q, _) => SOME q
+    | PComputed (q, _) => SOME q
     | PRecord (q, _) => SOME q
     | PApp (q, _, _) => SOME q
     | PTuple ps => SmlList.foldl (fn (x, acc) => case acc of SOME _ => acc | NONE => patPos x) NONE ps
@@ -262,6 +263,7 @@ structure Elab = struct
         PWild => let val (t, st') = fresh (st, KPlain, level) in Ok ((t, []), st') end
       | PScon (q, c) => bind (literalConst (q, c, level, true, st)) (fn t => fn st => Ok ((t, []), st))
       | PPinned (q, _) => Err ("internal pinned pattern was not lowered", q)
+      | PComputed (q, _) => Err ("internal computed pattern was not lowered", q)
       | PId (q, id) =>
           (case (constructorScheme (Env.value (env, id)), id) of
              (SOME scheme, _) =>

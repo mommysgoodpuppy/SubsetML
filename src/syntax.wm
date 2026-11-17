@@ -43,13 +43,13 @@ type Pat =
   | PId<Pos, Longid> // variable or constructor
   // Internal reverse-WM pattern; resolved and lowered before target checking.
   | PPinned<Pos, Longid>
+  | PComputed<Pos, Exp>
   | PRecord<Pos, List<(String, Pat)>>
   | PTuple<List<Pat>> // [] is (); never one component
   | PList<List<Pat>>
   | PApp<Pos, Longid, Pat> // constructor application
-  | PTyped<Pat, Ty>;
-
-type Exp =
+  | PTyped<Pat, Ty>
+and Exp =
   | EScon<Pos, Scon>
   | EId<Pos, Longid>
   | ERecord<Pos, List<(String, Exp)>>

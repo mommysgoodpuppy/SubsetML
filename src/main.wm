@@ -433,16 +433,30 @@ let fromWm = (outDir, runtimePath, files) => {
 };
 
 let fromWmEntry = (outDir, basis, runtimePath, adapterSpecs, entry) => {
+  let selectedRuntime = match(runtimePath) {
+    Some(path) => { Some(path) },
+    None => {
+      match(basis) {
+        None => { None },
+        Some(directory) => {
+          match(ModuleProject.identify(directory ++ "/subset_process.wm")) {
+            SubsetResult.Ok(_) => { Some(directory ++ "/subset_process.wm") },
+            SubsetResult.Err(_) => { None }
+          }
+        }
+      }
+    }
+  };
   match(WmProject.discover(
     basis,
-    match(runtimePath) {
+    match(selectedRuntime) {
       None => { [entry] },
       Some(runtime) => { [runtime, entry] }
     }
   )) {
     SubsetResult.Err(WmProject.Error(path, src, message, pos)) => { (eprint(errorLine(path, src, message, pos)); false) },
     SubsetResult.Ok(sources) => {
-      fromWmLoaded(outDir, basis, runtimePath, Some(entry), adapterSpecs, sources)
+      fromWmLoaded(outDir, basis, selectedRuntime, Some(entry), adapterSpecs, sources)
     }
   }
 };

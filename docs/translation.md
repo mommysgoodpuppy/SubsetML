@@ -70,7 +70,9 @@ With `--basis`, bare `Option`, `Some` and `None` use the source datatype in
 supplies private opens when those names occur; it does not define another datatype or rewrite
 constructor spellings to a fixed module. Ordinary declarations and explicit imports can shadow
 these defaults. Values returned by Basis functions therefore match the same constructors used
-in authored patterns. Without `--basis`, the legacy bootstrap Option remains available.
+in authored patterns. Without `--basis`, host compatibility Option remains available; its
+constructor/type definitions now derive from the embedded shared source rather than a second
+checker table. Host compatibility and imported source datatypes retain distinct identities.
 
 `before` and `o` are infix in the SML Basis Library, so native output renames bindings with
 those names, as it does SML keywords.
@@ -233,9 +235,21 @@ Application evaluation order and once-only evaluation follow the lowered call:
 the callee (including stage construction) runs before its arguments, which are
 evaluated left-to-right. No synthetic variable or duplicated input is needed.
 
-Receiver forms (`:> .field`, `:> .method()`) are rejected. This feature adds no
-JS reflection, inferred member lookup, carrier coercion, or namespace-as-carrier
-support. A named adapter such as `SubsetResult.via(transform)` is an ordinary
+Record member stages (`:> .field`, `:> .method(args)`) lower to ordinary selections and
+calls, including nested paths such as `:> .inner.value`. Their receiver must have an
+ordinary SML record type established by inference or an annotation; this adds no JS
+reflection or nominal record-name guessing. A non-record receiver is an error.
+Piped conditionals `flag :> if { yes } else { no }` lower to SML `if`, evaluating the
+condition once and only the selected branch.
+
+Bare pipeline lambdas (`=> :> f :> g`, also `let transform ==> :> f`) receive a hygienic
+implicit parameter. The block form `=> { :> f; result }` uses the same parameter. A bare
+lambda without an initial pipe is nullary. Capture clauses on ordinary lambdas and match
+functions are parsed and erased; their capture contract is checked by WM before translation.
+The translator checks capture-list syntax and rejects duplicate entries.
+
+This adds no carrier coercion or namespace-as-carrier support.
+A named adapter such as `SubsetResult.via(transform)` is an ordinary
 function and can be used as a grouped or previously bound stage.
 
 `sh tests/pipes.sh` compares WM/JS and native MLton execution, including curry
@@ -256,6 +270,17 @@ Integer literals are ordinary SML constant patterns. Real literals use `Real.==`
 comparisons use the existing inferred equality pass. Function pins and non-equality values remain
 errors. Real and pinned `let` binding patterns are outside this profile and are diagnosed
 explicitly; use a match instead.
+
+Computed patterns `=(expression)` are supported in match arms, including nested constructors,
+tuples, lists and records. Their comparisons use inferred equality, so functions remain invalid.
+Guards run in source order, only for an attempted branch and after earlier structural checks.
+They are evaluated once when reached; a later mismatch does not skip earlier effects. A closure
+outside the arm's binders retains outer lexical names without evaluating the expression early.
+Cond-style `match { =(condition) => { value }, _ => { fallback } } true` uses the same lowering.
+
+With `sml-entry --basis DIR`, `DIR/subset_process.wm` is the default panic provider when present;
+`--panic-runtime` overrides it. Source-list translation without a Basis still requires an
+explicit provider. Native host adapters remain explicit target choices.
 
 The compiler-only `PPinned` representation does not add syntax to authored SubsetML. It must
 be eliminated before target checking. Ordinary SML round trips use the same resolution pass,

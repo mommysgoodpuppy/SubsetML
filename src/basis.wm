@@ -9,6 +9,7 @@ from "./lexer.sml" import * as Lexer;
 from "./unify.sml" import * as Unify;
 from "./parser.sml" import * as Parser;
 from "./elab.sml" import * as Elab;
+from "./basis_source.sml" import * as BasisSource;
 from "./sml_list.sml" import * as SmlList;
 */
 
@@ -28,6 +29,7 @@ from "./unify.wm" import * as Unify;
 from "./parser.wm" import * as Parser;
 from "./elab.wm" import * as Elab;
 from "./sml_list.wm" import * as SmlList;
+from "./basis_source.wm" import * as BasisSource;
 
 export from "./subset_option_value.wm" import *;
 
@@ -52,11 +54,6 @@ let listCons = [
   ("nil", ([KPlain], listTy(alpha))),
   ("::", ([KPlain], TArrow(tupleTy([alpha, listTy(alpha)]), listTy(alpha))))
 ];
-let optionTy = (t) => { TCon(optionName, [t]) };
-let optionCons = [
-  ("NONE", ([KPlain], optionTy(alpha))),
-  ("SOME", ([KPlain], TArrow(alpha, optionTy(alpha))))
-];
 let orderTy = TCon(orderName, []);
 let orderCons = [("LESS", ([], orderTy)), ("EQUAL", ([], orderTy)), ("GREATER", ([], orderTy))];
 
@@ -70,7 +67,6 @@ let topTypes = [
   ("string", tyStr(stringName)),
   ("char", tyStr(charName)),
   ("list", withCons(listName, listCons)),
-  ("option", withCons(optionName, optionCons)),
   ("order", withCons(orderName, orderCons))
 ];
 
@@ -454,13 +450,40 @@ let build = (
   }
 };
 
-let initial = build(
-  topTypes,
-  SubsetList.concat([boolCons, listCons, optionCons, orderCons]),
-  special,
-  topValues,
-  structures
-);
+/* Host compatibility needs the native SML Option identity, but not another datatype
+   definition. Elaborate the shared declaration at its reserved host stamp; portableInitial
+   never installs these bindings. Source-imported Option still gets a fresh program stamp. */
+let compatibilityOption = match(Lexer.lex(BasisSource.option)) {
+  Lexer.LexError(message, pos) => { Unify.Err(message, pos) },
+  Lexer.Tokens(tokens, comments) => {
+    match(Parser.parseTokens(tokens, comments)) {
+      Parser.ParseError(message, pos) => { Unify.Err(message, pos) },
+      Parser.Program(phrases, _) => {
+        let Unify.State(vars, _, sels, recs, sites) = Unify.initial;
+        Unify.bind(Elab.programExports(Env.empty, phrases, Unify.State(vars, 7, sels, recs, sites)))((exports) => (st) => {
+          match(Env.structureAt(exports, ["SubsetOptionValue"])) {
+            Some(body, _) => { Unify.Ok(body, st) },
+            None => { Unify.Err("source Basis is missing SubsetOptionValue", 0) }
+          }
+        })
+      }
+    }
+  }
+};
+
+let initial = Unify.bind(compatibilityOption)(match {
+  Env.Env(_, types, constructors) => {
+    (_) => {
+      Unify.bind(build(
+        SubsetList.append(types, topTypes),
+        SubsetList.concat([boolCons, listCons, orderCons]),
+        special,
+        topValues,
+        structures
+      ))((env) => (st) => { Unify.Ok(Env.plus(env, Env.withValues(constructors)), st) })
+    }
+  }
+});
 
 /* Portable authored source has no SML Basis structures or convenience values.
    Only representation-level operations remain; see docs/runtime-dependencies.md. */

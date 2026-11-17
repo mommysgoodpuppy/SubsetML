@@ -199,6 +199,7 @@ structure BackendNames = struct
       val rec guarded = fn pat => case pat of
           Syntax.PScon (_, Syntax.SReal _) => true
         | Syntax.PPinned _ => true
+        | Syntax.PComputed _ => true
         | Syntax.PRecord (_, fs) => SubsetList.exists (fs, fn (_, p) => guarded p)
         | Syntax.PTuple ps => SubsetList.exists (ps, guarded)
         | Syntax.PList ps => SubsetList.exists (ps, guarded)
@@ -242,6 +243,92 @@ structure BackendNames = struct
                       in (p :: rest, SubsetList.append (guards, more), SubsetList.append (aliases, moreAliases), next) end
       val rec conditions = fn (guards, yes, no) => case guards of
           [] => yes | guard :: rest => Syntax.EIf (guard, conditions (rest, yes, no), no)
+      val rec hasComputed = fn pat => case pat of
+          Syntax.PComputed _ => true
+        | Syntax.PRecord (_, fs) => SubsetList.exists (fs, fn (_, p) => hasComputed p)
+        | Syntax.PTuple ps => SubsetList.exists (ps, hasComputed)
+        | Syntax.PList ps => SubsetList.exists (ps, hasComputed)
+        | Syntax.PApp (_, _, p) => hasComputed p
+        | Syntax.PTyped (p, _) => hasComputed p
+        | _ => false
+      (* Place closures outside the arm's binders, but call them only when their guard is
+         reached. Safe authored names intentionally retain their spelling in this backend. *)
+      val rec computedAliases = fn (pat, supply) => case pat of
+          Syntax.PComputed (p, value) =>
+            let val (name, next) = generated (supply, owner, p, "computed")
+            in (Syntax.PComputed (p, Syntax.EApp (id (p, name), Syntax.ETuple [])),
+              [binding (p, name, Syntax.EFn [(Syntax.PTuple [], value)])], next) end
+        | Syntax.PPinned (p, path) =>
+            let val (name, next) = generated (supply, owner, p, "pin")
+            in (Syntax.PPinned (p, ([], name)), [binding (p, name, Syntax.EId (p, path))], next) end
+        | Syntax.PTuple ps => let val (ps, aliases, next) = computedAliasList (ps, supply)
+            in (Syntax.PTuple ps, aliases, next) end
+        | Syntax.PList ps => let val (ps, aliases, next) = computedAliasList (ps, supply)
+            in (Syntax.PList ps, aliases, next) end
+        | Syntax.PRecord (p, fs) =>
+            let val rec fields = fn (fs, supply) => case fs of
+                  [] => ([], [], supply)
+                | (name, pat) :: rest => let val (pat, aliases, next) = computedAliases (pat, supply)
+                                            val (rest, more, next) = fields (rest, next)
+                  in ((name, pat) :: rest, SubsetList.append (aliases, more), next) end
+                val (fs, aliases, next) = fields (fs, supply)
+            in (Syntax.PRecord (p, fs), aliases, next) end
+        | Syntax.PApp (p, constructor, inner) => let val (inner, aliases, next) = computedAliases (inner, supply)
+            in (Syntax.PApp (p, constructor, inner), aliases, next) end
+        | Syntax.PTyped (inner, t) => let val (inner, aliases, next) = computedAliases (inner, supply)
+            in (Syntax.PTyped (inner, t), aliases, next) end
+        | _ => (pat, [], supply)
+      and computedAliasList = fn (ps, supply) => case ps of
+          [] => ([], [], supply)
+        | p :: rest => let val (p, aliases, next) = computedAliases (p, supply)
+                           val (rest, more, next) = computedAliasList (rest, next)
+                       in (p :: rest, SubsetList.append (aliases, more), next) end
+      (* Computed guards can have effects. Match one structural layer at a time, then visit
+         children in source order: a later shape mismatch must not skip an earlier expression.
+         Outer expression closures are protected separately from same-spelled arm binders. *)
+      val rec matchPattern = fn (subject, pat, yes, no, supply) =>
+        let
+          val compare = fn (p, value, operator) =>
+            (Syntax.EIf (Syntax.EApp (Syntax.EId (p, operator), Syntax.ETuple [subject, value]), yes, no), supply)
+          val rec subjects = fn (ps, supply) => case ps of
+              [] => ([], supply)
+            | _ :: rest => let val (name, next) = generated (supply, owner, 0, "component")
+                                val (names, next) = subjects (rest, next)
+                            in (name :: names, next) end
+          val split = fn (ps, build) =>
+            let val (names, next) = subjects (ps, supply)
+                val (body, next) = matchChildren (names, ps, yes, no, next)
+            in (Syntax.ECase (subject,
+              [(build (SubsetList.map (names, fn name => variable (0, name))), body), (Syntax.PWild, no)]), next) end
+        in case pat of
+          Syntax.PWild => (yes, supply)
+        | Syntax.PComputed (p, value) => compare (p, value, ([], "="))
+        | Syntax.PPinned (p, path) => compare (p, Syntax.EId (p, path), ([], "="))
+        | Syntax.PScon (p, Syntax.SReal value) => compare (p, Syntax.EScon (p, Syntax.SReal value), (["Real"], "=="))
+        | Syntax.PTyped (inner, t) => matchPattern (Syntax.ETyped (subject, t), inner, yes, no, supply)
+        | Syntax.PTuple ps => split (ps, Syntax.PTuple)
+        | Syntax.PRecord (p, fs) =>
+            let val rec fields = fn (fs, ps) => case (fs, ps) of
+                  ((name, _) :: rest, item :: items) => (name, item) :: fields (rest, items)
+                | _ => []
+            in split (SubsetList.map (fs, fn (_, p) => p), fn ps => Syntax.PRecord (p, fields (fs, ps))) end
+        | Syntax.PList [] => (Syntax.ECase (subject, [(pat, yes), (Syntax.PWild, no)]), supply)
+        | Syntax.PList (p :: ps) => matchPattern (subject,
+            Syntax.PApp (0, ([], "::"), Syntax.PTuple [p, Syntax.PList ps]), yes, no, supply)
+        | Syntax.PApp (p, ([], "::"), Syntax.PTuple ps) =>
+            split (ps, fn ps => Syntax.PApp (p, ([], "::"), Syntax.PTuple ps))
+        | Syntax.PApp (p, constructor, inner) =>
+            let val (name, next) = generated (supply, owner, p, "payload")
+                val (body, next) = matchPattern (id (p, name), inner, yes, no, next)
+            in (Syntax.ECase (subject,
+              [(Syntax.PApp (p, constructor, variable (p, name)), body), (Syntax.PWild, no)]), next) end
+        | _ => (Syntax.ECase (subject, [(pat, yes), (Syntax.PWild, no)]), supply)
+        end
+      and matchChildren = fn (names, ps, yes, no, supply) => case (names, ps) of
+          (name :: names, p :: ps) =>
+            let val (rest, next) = matchChildren (names, ps, yes, no, supply)
+            in matchPattern (id (0, name), p, rest, no, next) end
+        | _ => (yes, supply)
       (* Continuations live outside branch binders. Their bodies are not duplicated, and
          constructing a thunk does not execute later branches or evaluate their pins. *)
       val rec matchRules = fn (subject, rs, supply) =>
@@ -249,7 +336,11 @@ structure BackendNames = struct
         else case rs of [] => (Syntax.ECase (subject, []), supply)
         | (pat, body) :: rest =>
             let
-              val (pat, guards, aliases, next) = checks (pat, supply)
+              val computed = hasComputed pat
+              val (pat, guards, aliases, next) = if computed then
+                let val (pat, aliases, next) = computedAliases (pat, supply)
+                in (pat, [], aliases, next) end
+                else checks (pat, supply)
               val (name, next) = generated (next, owner, 0, "next")
               val (fallback, next) = case rest of
                   [] => let val (result, next) = generated (next, owner, 0, "unmatched")
@@ -257,8 +348,9 @@ structure BackendNames = struct
                           [(Syntax.PList [variable (0, result)], id (0, result))]), next) end
                 | _ => matchRules (subject, rest, next)
               val call = Syntax.EApp (id (0, name), Syntax.ETuple [])
-              val branch = Syntax.ECase (subject,
-                [(pat, conditions (guards, body, call)), (Syntax.PWild, call)])
+              val (branch, next) = if computed then matchPattern (subject, pat, body, call, next)
+                else (Syntax.ECase (subject,
+                  [(pat, conditions (guards, body, call)), (Syntax.PWild, call)]), next)
             in (Syntax.ELet (binding (0, name, Syntax.EFn [(Syntax.PTuple [], fallback)]) :: aliases,
                  [branch]), next) end
       val matchCase = fn (subject, rs, supply) =>
@@ -326,10 +418,34 @@ structure BackendNames = struct
                           val (rest, next) = expressions (env, rest, next) in (e :: rest, next) end
       and rules = fn (env, rs, supply) => case rs of
           [] => ([], supply)
-        | (pat, e) :: rest => let val (pat, bindings, next) = pattern (env, pat, supply)
+        | (pat, e) :: rest => let val (pat, next) = computedPattern (env, pat, supply)
+                                 val (pat, bindings, next) = pattern (env, pat, next)
                                  val (e, next) = expression (plus (env, bindings), e, next)
                                  val (rest, next) = rules (env, rest, next)
                              in ((pat, e) :: rest, next) end
+      and computedPattern = fn (env, pat, supply) => case pat of
+          Syntax.PComputed (p, value) =>
+            let val (value, next) = expression (env, value, supply) in (Syntax.PComputed (p, value), next) end
+        | Syntax.PTuple ps => let val (ps, next) = computedPatterns (env, ps, supply) in (Syntax.PTuple ps, next) end
+        | Syntax.PList ps => let val (ps, next) = computedPatterns (env, ps, supply) in (Syntax.PList ps, next) end
+        | Syntax.PRecord (p, fs) =>
+            let val rec fields = fn (fs, supply) => case fs of
+                  [] => ([], supply)
+                | (name, pat) :: rest => let val (pat, next) = computedPattern (env, pat, supply)
+                                            val (rest, next) = fields (rest, next)
+                                        in ((name, pat) :: rest, next) end
+                val (fs, next) = fields (fs, supply)
+            in (Syntax.PRecord (p, fs), next) end
+        | Syntax.PApp (p, constructor, inner) =>
+            let val (inner, next) = computedPattern (env, inner, supply) in (Syntax.PApp (p, constructor, inner), next) end
+        | Syntax.PTyped (inner, t) =>
+            let val (inner, next) = computedPattern (env, inner, supply) in (Syntax.PTyped (inner, t), next) end
+        | _ => (pat, supply)
+      and computedPatterns = fn (env, ps, supply) => case ps of
+          [] => ([], supply)
+        | pat :: rest => let val (pat, next) = computedPattern (env, pat, supply)
+                            val (rest, next) = computedPatterns (env, rest, next)
+                        in (pat :: rest, next) end
       and declaration = fn (env, d, supply) =>
         case d of
           Syntax.DVal (p, vs, plain, recs) =>

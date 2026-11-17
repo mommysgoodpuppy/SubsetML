@@ -157,6 +157,7 @@ structure WmPrint = struct
       | PScon (pos, c) => atom (pos, scon c)
       | PId (pos, ([], "nil")) => atom (pos, "[]")
       | PPinned (pos, id) => atom (pos, valueName id)
+      | PComputed (pos, _) => atom (pos, "UNLOWERED_COMPUTED_PATTERN")
       | PId (pos, id) =>
           if isConName id orelse binds then atom (pos, valueName id)
           else cats [text "Var(", atom (pos, valueName id), text ")"]

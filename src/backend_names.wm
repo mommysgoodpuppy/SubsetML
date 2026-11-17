@@ -493,6 +493,7 @@ let moduleWithRuntime = (runtime, owner, imports, prog, initial) => {
     match(pat) {
       Syntax.PScon(_, Syntax.SReal(_)) => { true },
       Syntax.PPinned(_) => { true },
+      Syntax.PComputed(_) => { true },
       Syntax.PRecord(_, fs) => { SubsetList.exists(fs, (_, p) => { guarded(p) }) },
       Syntax.PTuple(ps) => { SubsetList.exists(ps, guarded) },
       Syntax.PList(ps) => { SubsetList.exists(ps, guarded) },
@@ -568,6 +569,173 @@ let moduleWithRuntime = (runtime, owner, imports, prog, initial) => {
       [guard, ..rest] => { Syntax.EIf(guard, conditions(rest, yes, no), no) }
     }
   };
+  let rec hasComputed = (pat) => {
+    match(pat) {
+      Syntax.PComputed(_) => { true },
+      Syntax.PRecord(_, fs) => { SubsetList.exists(fs, (_, p) => { hasComputed(p) }) },
+      Syntax.PTuple(ps) => { SubsetList.exists(ps, hasComputed) },
+      Syntax.PList(ps) => { SubsetList.exists(ps, hasComputed) },
+      Syntax.PApp(_, _, p) => { hasComputed(p) },
+      Syntax.PTyped(p, _) => { hasComputed(p) },
+      _ => { false }
+    }
+  };
+  /* Place closures outside the arm's binders, but call them only when their guard is
+     reached. Safe authored names intentionally retain their spelling in this backend. */
+  let rec computedAliases = (pat, supply) => {
+    match(pat) {
+      Syntax.PComputed(p, value) => {
+        let (name, next) = generated(supply, owner, p, "computed");
+        (
+          Syntax.PComputed(p, Syntax.EApp(id(p, name), Syntax.ETuple([]))),
+          [binding(p, name, Syntax.EFn([(Syntax.PTuple([]), value)]))],
+          next
+        )
+      },
+      Syntax.PPinned(p, path) => {
+        let (name, next) = generated(supply, owner, p, "pin");
+        (Syntax.PPinned(p, ([], name)), [binding(p, name, Syntax.EId(p, path))], next)
+      },
+      Syntax.PTuple(ps) => {
+        let (ps, aliases, next) = computedAliasList(ps, supply);
+        (Syntax.PTuple(ps), aliases, next)
+      },
+      Syntax.PList(ps) => {
+        let (ps, aliases, next) = computedAliasList(ps, supply);
+        (Syntax.PList(ps), aliases, next)
+      },
+      Syntax.PRecord(p, fs) => {
+        let rec fields = (fs, supply) => {
+          match(fs) {
+            [] => { ([], [], supply) },
+            [(Var(name), Var(pat)), ..rest] => {
+              let (pat, aliases, next) = computedAliases(pat, supply);
+              let (rest, more, next) = fields(rest, next);
+              ([(name, pat), ..rest], SubsetList.append(aliases, more), next)
+            }
+          }
+        };
+        let (fs, aliases, next) = fields(fs, supply);
+        (Syntax.PRecord(p, fs), aliases, next)
+      },
+      Syntax.PApp(p, constructor, inner) => {
+        let (inner, aliases, next) = computedAliases(inner, supply);
+        (Syntax.PApp(p, constructor, inner), aliases, next)
+      },
+      Syntax.PTyped(inner, t) => {
+        let (inner, aliases, next) = computedAliases(inner, supply);
+        (Syntax.PTyped(inner, t), aliases, next)
+      },
+      _ => { (pat, [], supply) }
+    }
+  }
+  and computedAliasList = (ps, supply) => {
+    match(ps) {
+      [] => { ([], [], supply) },
+      [p, ..rest] => {
+        let (p, aliases, next) = computedAliases(p, supply);
+        let (rest, more, next) = computedAliasList(rest, next);
+        ([p, ..rest], SubsetList.append(aliases, more), next)
+      }
+    }
+  };
+  /* Computed guards can have effects. Match one structural layer at a time, then visit
+     children in source order: a later shape mismatch must not skip an earlier expression.
+     Outer expression closures are protected separately from same-spelled arm binders. */
+  let rec matchPattern = (subject, pat, yes, no, supply) => {
+    let compare = (p, value, operator) => {
+      (
+        Syntax.EIf(Syntax.EApp(Syntax.EId(p, operator), Syntax.ETuple([subject, value])), yes, no),
+        supply
+      )
+    };
+    let rec subjects = (ps, supply) => {
+      match(ps) {
+        [] => { ([], supply) },
+        [_, ..rest] => {
+          let (name, next) = generated(supply, owner, 0, "component");
+          let (names, next) = subjects(rest, next);
+          ([name, ..names], next)
+        }
+      }
+    };
+    let split = (ps, build) => {
+      let (names, next) = subjects(ps, supply);
+      let (body, next) = matchChildren(names, ps, yes, no, next);
+      (
+        Syntax.ECase(
+          subject,
+          [
+            (build(SubsetList.map(names, (name) => { variable(0, name) })), body),
+            (Syntax.PWild, no)
+          ]
+        ),
+        next
+      )
+    };
+    match(pat) {
+      Syntax.PWild => { (yes, supply) },
+      Syntax.PComputed(p, value) => { compare(p, value, ([], "=")) },
+      Syntax.PPinned(p, path) => { compare(p, Syntax.EId(p, path), ([], "=")) },
+      Syntax.PScon(p, Syntax.SReal(value)) => {
+        compare(p, Syntax.EScon(p, Syntax.SReal(value)), (["Real"], "=="))
+      },
+      Syntax.PTyped(inner, t) => {
+        matchPattern(Syntax.ETyped(subject, t), inner, yes, no, supply)
+      },
+      Syntax.PTuple(ps) => { split(ps, Syntax.PTuple) },
+      Syntax.PRecord(p, fs) => {
+        let rec fields = (fs, ps) => {
+          match(fs, ps) {
+            ([(Var(name), _), ..rest], [item, ..items]) => { [(name, item), ..fields(rest, items)] },
+            _ => { [] }
+          }
+        };
+        split(
+          SubsetList.map(fs, (_, p) => { p }),
+          (ps) => { Syntax.PRecord(p, fields(fs, ps)) }
+        )
+      },
+      Syntax.PList([]) => {
+        (Syntax.ECase(subject, [(pat, yes), (Syntax.PWild, no)]), supply)
+      },
+      Syntax.PList([p, ..ps]) => {
+        matchPattern(
+          subject,
+          Syntax.PApp(0, ([], "::"), Syntax.PTuple([p, Syntax.PList(ps)])),
+          yes,
+          no,
+          supply
+        )
+      },
+      Syntax.PApp(p, ([], "::"), Syntax.PTuple(ps)) => {
+        split(ps, (ps) => { Syntax.PApp(p, ([], "::"), Syntax.PTuple(ps)) })
+      },
+      Syntax.PApp(p, constructor, inner) => {
+        let (name, next) = generated(supply, owner, p, "payload");
+        let (body, next) = matchPattern(id(p, name), inner, yes, no, next);
+        (
+          Syntax.ECase(
+            subject,
+            [(Syntax.PApp(p, constructor, variable(p, name)), body), (Syntax.PWild, no)]
+          ),
+          next
+        )
+      },
+      _ => {
+        (Syntax.ECase(subject, [(pat, yes), (Syntax.PWild, no)]), supply)
+      }
+    }
+  }
+  and matchChildren = (names, ps, yes, no, supply) => {
+    match(names, ps) {
+      ([name, ..names], [p, ..ps]) => {
+        let (rest, next) = matchChildren(names, ps, yes, no, supply);
+        matchPattern(id(0, name), p, rest, no, next)
+      },
+      _ => { (yes, supply) }
+    }
+  };
   /* Continuations live outside branch binders. Their bodies are not duplicated, and
      constructing a thunk does not execute later branches or evaluate their pins. */
   let rec matchRules = (subject, rs, supply) => {
@@ -575,7 +743,11 @@ let moduleWithRuntime = (runtime, owner, imports, prog, initial) => {
       match(rs) {
         [] => { (Syntax.ECase(subject, []), supply) },
         [(Var(pat), Var(body)), ..rest] => {
-          let (pat, guards, aliases, next) = checks(pat, supply);
+          let computed = hasComputed(pat);
+          let (pat, guards, aliases, next) = if (computed) {
+            let (pat, aliases, next) = computedAliases(pat, supply);
+            (pat, [], aliases, next)
+          } else { checks(pat, supply) };
           let (name, next) = generated(next, owner, 0, "next");
           let (fallback, next) = match(rest) {
             [] => {
@@ -588,7 +760,12 @@ let moduleWithRuntime = (runtime, owner, imports, prog, initial) => {
             _ => { matchRules(subject, rest, next) }
           };
           let call = Syntax.EApp(id(0, name), Syntax.ETuple([]));
-          let branch = Syntax.ECase(subject, [(pat, conditions(guards, body, call)), (Syntax.PWild, call)]);
+          let (branch, next) = if (computed) { matchPattern(subject, pat, body, call, next) } else {
+            (
+              Syntax.ECase(subject, [(pat, conditions(guards, body, call)), (Syntax.PWild, call)]),
+              next
+            )
+          };
           (
             Syntax.ELet(
               [binding(0, name, Syntax.EFn([(Syntax.PTuple([]), fallback)])), ..aliases],
@@ -723,10 +900,60 @@ let moduleWithRuntime = (runtime, owner, imports, prog, initial) => {
     match(rs) {
       [] => { ([], supply) },
       [(Var(pat), Var(e)), ..rest] => {
-        let (pat, bindings, next) = pattern(env, pat, supply);
+        let (pat, next) = computedPattern(env, pat, supply);
+        let (pat, bindings, next) = pattern(env, pat, next);
         let (e, next) = expression(plus(env, bindings), e, next);
         let (rest, next) = rules(env, rest, next);
         ([(pat, e), ..rest], next)
+      }
+    }
+  }
+  and computedPattern = (env, pat, supply) => {
+    match(pat) {
+      Syntax.PComputed(p, value) => {
+        let (value, next) = expression(env, value, supply);
+        (Syntax.PComputed(p, value), next)
+      },
+      Syntax.PTuple(ps) => {
+        let (ps, next) = computedPatterns(env, ps, supply);
+        (Syntax.PTuple(ps), next)
+      },
+      Syntax.PList(ps) => {
+        let (ps, next) = computedPatterns(env, ps, supply);
+        (Syntax.PList(ps), next)
+      },
+      Syntax.PRecord(p, fs) => {
+        let rec fields = (fs, supply) => {
+          match(fs) {
+            [] => { ([], supply) },
+            [(Var(name), Var(pat)), ..rest] => {
+              let (pat, next) = computedPattern(env, pat, supply);
+              let (rest, next) = fields(rest, next);
+              ([(name, pat), ..rest], next)
+            }
+          }
+        };
+        let (fs, next) = fields(fs, supply);
+        (Syntax.PRecord(p, fs), next)
+      },
+      Syntax.PApp(p, constructor, inner) => {
+        let (inner, next) = computedPattern(env, inner, supply);
+        (Syntax.PApp(p, constructor, inner), next)
+      },
+      Syntax.PTyped(inner, t) => {
+        let (inner, next) = computedPattern(env, inner, supply);
+        (Syntax.PTyped(inner, t), next)
+      },
+      _ => { (pat, supply) }
+    }
+  }
+  and computedPatterns = (env, ps, supply) => {
+    match(ps) {
+      [] => { ([], supply) },
+      [pat, ..rest] => {
+        let (pat, next) = computedPattern(env, pat, supply);
+        let (rest, next) = computedPatterns(env, rest, next);
+        ([pat, ..rest], next)
       }
     }
   }

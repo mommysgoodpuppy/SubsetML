@@ -54,6 +54,7 @@ structure SmlPrint = struct
     | PScon (p, c) => (3, atom (p, scon c))
     | PId (p, id) => (3, atom (p, longid id))
     | PPinned (p, id) => (3, atom (p, "UNLOWERED_PIN_" ^ longid id))
+    | PComputed (p, _) => (3, atom (p, "UNLOWERED_COMPUTED_PATTERN"))
     | PRecord (p, fields) =>
         (3, cats [atom (p, ""),
                   group ("{", ",", "}", SmlList.map (fn (l, q) => cats [text (l ^ " = "), pat q]) fields)])

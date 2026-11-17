@@ -49,13 +49,14 @@ structure Translate = struct
     | PScon (_, _) => []
     | PId (_, (qs, _)) => head qs
     | PPinned (_, (qs, _)) => head qs
+    | PComputed (_, e) => expQuals e
     | PRecord (_, fields) => concatMap (fn (_, p) => patQuals p, fields)
     | PTuple ps => concatMap (patQuals, ps)
     | PList ps => concatMap (patQuals, ps)
     | PApp (_, (qs, _), p) => SubsetList.append (head qs, patQuals p)
     | PTyped (p, t) => SubsetList.append (patQuals p, tyQuals t)
 
-  val rec expQuals = fn
+  and expQuals = fn
       EScon (_, _) => []
     | EId (_, (qs, _)) => head qs
     | ERecord (_, fields) => concatMap (fn (_, e) => expQuals e, fields)
