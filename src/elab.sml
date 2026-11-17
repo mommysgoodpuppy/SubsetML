@@ -808,9 +808,27 @@ structure Elab = struct
   (* The scheme of one bound variable. *)
   and closeBinding = fn (level, explicit, generalizable, pos, x, t, st) =>
     let
-      (* Appendix E: default unresolved numeric classes at declaration closure. *)
-      val defaults = SmlList.filter (fn v => case lookup (st, v) of
-        Free (KClass _, l) => l > level | _ => false) (freeVars (st, t))
+      (* Appendix E: default unresolved numeric classes at declaration closure. The surrounding
+         text that may resolve them is "no larger than the smallest enclosing structure-level
+         declaration"; SubsetML takes the smallest enclosing `val` (spec §10). Reading Workman,
+         it takes the structure-level declaration, as Workman does, so a local `let r = 235;`
+         used as a real is a real: a local binding leaves its classes open, monomorphic, and
+         the structure-level binding defaults every literal and operand still undecided. *)
+      val undecided = fn v => case lookup (st, v) of Free (KClass _, l) => l > level | _ => false
+      val sites = case st of State (_, _, _, _, SOME xs) => SOME xs | _ => NONE
+      val siteVars = fn xs => SmlList.foldl (fn (site, acc) =>
+        case site of
+          Literal (_, ty) => (case prune (st, ty) of TVar v => if undecided v andalso SubsetBool.not (member (v, acc)) then v :: acc else acc | _ => acc)
+        | Operand (_, ty) => (case prune (st, ty) of TVar v => if undecided v andalso SubsetBool.not (member (v, acc)) then v :: acc else acc | _ => acc)
+        | _ => acc) [] xs
+      val own = SmlList.filter undecided (freeVars (st, t))
+      val (defaults, st) = case sites of
+          NONE => (own, st)
+        | SOME xs =>
+            if level > 0 then
+              ([], SmlList.foldl (fn (v, st) => case lookup (st, v) of
+                  Free (k, _) => set (st, v, Free (k, level)) | _ => st) st own)
+            else (SubsetList.append (own, SmlList.filter (fn v => SubsetBool.not (member (v, own))) (siteVars xs)), st)
       val rec settle = fn (vars, st) => case vars of
         [] => Ok ((), st)
       | v :: rest =>

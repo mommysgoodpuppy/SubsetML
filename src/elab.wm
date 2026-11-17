@@ -1303,13 +1303,67 @@ and settleSelections = (level, st) => {
 
 // The scheme of one bound variable.
 and closeBinding = (level, explicit, generalizable, pos, x, t, st) => {
-  // Appendix E: default unresolved numeric classes at declaration closure.
-  let defaults = SmlList.filter((v) => {
+  /* Appendix E: default unresolved numeric classes at declaration closure. The surrounding
+     text that may resolve them is "no larger than the smallest enclosing structure-level
+     declaration"; SubsetML takes the smallest enclosing `val` (spec §10). Reading Workman,
+     it takes the structure-level declaration, as Workman does, so a local `let r = 235;`
+     used as a real is a real: a local binding leaves its classes open, monomorphic, and
+     the structure-level binding defaults every literal and operand still undecided. */
+  let undecided = (v) => {
     match(lookup(st, v)) {
       Free(KClass(_), l) => { l > level },
       _ => { false }
     }
-  })(freeVars(st, t));
+  };
+  let sites = match(st) {
+    State(_, _, _, _, Some(xs)) => { Some(xs) },
+    _ => { None }
+  };
+  let siteVars = (xs) => {
+    SmlList.foldl((site, acc) => {
+      match(site) {
+        Literal(_, ty) => {
+          match(prune(st, ty)) {
+            TVar(v) => {
+              if (if (undecided(v)) { SubsetBool.not(member(v, acc)) } else { false }) { [v, ..acc] } else { acc }
+            },
+            _ => { acc }
+          }
+        },
+        Operand(_, ty) => {
+          match(prune(st, ty)) {
+            TVar(v) => {
+              if (if (undecided(v)) { SubsetBool.not(member(v, acc)) } else { false }) { [v, ..acc] } else { acc }
+            },
+            _ => { acc }
+          }
+        },
+        _ => { acc }
+      }
+    })([])(xs)
+  };
+  let own = SmlList.filter(undecided)(freeVars(st, t));
+  let (defaults, st) = match(sites) {
+    None => { (own, st) },
+    Some(xs) => {
+      if (level > 0) {
+        (
+          [],
+          SmlList.foldl((v, st) => {
+            match(lookup(st, v)) {
+              Free(k, _) => { set(st, v, Free(k, level)) },
+              _ => { st }
+            }
+          })(st)(own)
+        )
+      } else {
+        (
+          SubsetList.append(own, SmlList.filter((v) => { SubsetBool.not(member(v, own)) })(siteVars(xs))),
+          st
+        )
+      }
+    }
+  };
   let rec settle = (vars, st) => {
     match(vars) {
       [] => { Ok(void, st) },
