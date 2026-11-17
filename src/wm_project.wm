@@ -265,6 +265,18 @@ let implicitBasis = (basis, path, tokens) => {
             },
             [(WmLexer.WName(["via"]), _), (WmLexer.WName([head]), _), ..rest] => { if (head == name) { true } else { namespaceUse(name, rest) } },
             [(WmLexer.WName([head]), _), (WmLexer.WKey("|"), _), ..rest] => { if (head == name) { true } else { namespaceUse(name, rest) } },
+            /* A bare name between argument delimiters is a value, the carrier in
+               `Monad.map(x, Result, f)`; as a type argument it would be followed by `<` or `>`. */
+            [
+              (WmLexer.WKey(opening), _),
+              (WmLexer.WName([head]), _),
+              (WmLexer.WKey(closing), Var(p)),
+              ..rest
+            ] => {
+              if (if (if (head == name) { if (opening == "(") { true } else { opening == "," } } else { false }) { if (closing == ")") { true } else { closing == "," } } else { false }) { true } else {
+                namespaceUse(name, [(WmLexer.WName([head]), 0), (WmLexer.WKey(closing), p), ..rest])
+              }
+            },
             [(WmLexer.WName([head]), _), ..rest] => {
               if (if (head == name) {
                 SubsetBool.not(SubsetList.exists(WmModuleScope.primitiveTypeNames, (n) => { n == name }))

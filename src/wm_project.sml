@@ -141,6 +141,11 @@ structure WmProject = struct
                 head = name orelse namespaceUse (name, rest)
             | (WmLexer.WName [head], _) :: (WmLexer.WKey "|", _) :: rest =>
                 head = name orelse namespaceUse (name, rest)
+            (* A bare name between argument delimiters is a value, the carrier in
+               `Monad.map(x, Result, f)`; as a type argument it would be followed by `<` or `>`. *)
+            | (WmLexer.WKey opening, _) :: (WmLexer.WName [head], _) :: (WmLexer.WKey closing, p) :: rest =>
+                (head = name andalso (opening = "(" orelse opening = ",") andalso (closing = ")" orelse closing = ","))
+                orelse namespaceUse (name, (WmLexer.WName [head], 0) :: (WmLexer.WKey closing, p) :: rest)
             | (WmLexer.WName [head], _) :: rest =>
                 (head = name andalso SubsetBool.not (SubsetList.exists (WmModuleScope.primitiveTypeNames,
                   fn n => n = name))) orelse namespaceUse (name, rest)
