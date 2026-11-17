@@ -33,9 +33,13 @@ let text = (r: Result<Int32.Int, String>) => { match(r) { Ok(n) => { `${n}` }, E
 let list = (r: Result<List<Int32.Int>, Int32.Int>) => { match(r) { Ok(ns) => { String.concatWith(List.map(ns, (n: Int32.Int) => { `${n}` }), ",") }, Err(n) => { `stop ${0 - n}` } } };
 let _ = print(show(staged("12")) ++ " " ++ show(staged("x")) ++ " " ++ text(doubled) ++ " " ++ text(chained) ++ " " ++ text(renamed) ++ " " ++ list(all) ++ " " ++ list(stopped) ++ " " ++ text(summed) ++ " " ++ text(viaStage(Ok(1))));
 ''')
-    subprocess.run([compiler, 'sml-entry', out, '--basis', wm, use], check=True)
+    adapters = []
+    for name, structure in [('subset_host', 'SubsetHost'), ('subset_text_host', 'SubsetTextHost'),
+                            ('subset_real_host', 'SubsetRealHost')]:
+        adapters += ['--native-adapter', wm / (name + '.wm'), repo / 'lib' / (name + '.sml'), structure]
+    subprocess.run([compiler, 'sml-entry', out, '--basis', wm, *adapters, use], check=True)
     subprocess.run(['mlton', '-output', out / 'run', out / 'project.mlb'], check=True)
     result = subprocess.run([out / 'run'], capture_output=True, check=True)
-    assert result.stdout == b'12 parse x 8 5 x! 10,20,30 stop 2 3 2', result.stdout
+    assert result.stdout == b'12 parse x 8 5 x! 10,20,30 stop 2 3 2\n', result.stdout
 print('monad: Basis carriers and bare namespaces run with MLton')
 PY

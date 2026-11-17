@@ -25,9 +25,13 @@ let stopped = match(failed) { Ok((Var(a), Var(b), Var(c))) => { `${a}+${b}+${c}`
 let one = match(single) { Ok(a) => { `${a}` }, Err(e) => { e } };
 let _ = print(two ++ " " ++ three ++ " " ++ stopped ++ " " ++ one);
 ''')
-    subprocess.run([compiler, 'sml-entry', out, '--basis', wm, use], check=True)
+    adapters = []
+    for name, structure in [('subset_host', 'SubsetHost'), ('subset_text_host', 'SubsetTextHost'),
+                            ('subset_real_host', 'SubsetRealHost')]:
+        adapters += ['--native-adapter', wm / (name + '.wm'), repo / 'lib' / (name + '.sml'), structure]
+    subprocess.run([compiler, 'sml-entry', out, '--basis', wm, *adapters, use], check=True)
     subprocess.run(['mlton', '-output', out / 'run', out / 'project.mlb'], check=True)
     result = subprocess.run([out / 'run'], capture_output=True, check=True)
-    assert result.stdout == b'ab+cde a+bb+ccc empty solo', result.stdout
+    assert result.stdout == b'ab+cde a+bb+ccc empty solo\n', result.stdout
 print('carrier groups: desugared and run with MLton')
 PY

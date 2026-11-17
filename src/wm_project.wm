@@ -263,11 +263,60 @@ let implicitBasis = (basis, path, tokens) => {
           defaultOpen("option_value", ["Option", "Some", "None"]),
           defaultOpen("result", ["Result", "Ok", "Err"])
         ]);
-        SubsetList.concat([
-          defaults,
-          SubsetList.concat(SubsetList.map(uses(tokens, bareUses(tokens, [])), header)),
-          tokens
-        ])
+        let used = uses(tokens, bareUses(tokens, []));
+        /* The reader spells some Workman forms with Basis functions: `!` is SubsetBool.not,
+           `%` and `==` on reals and backtick text use SubsetInt32, SubsetReal and
+           SubsetString, and `print` is SubsetIo.printLine over a display that names SubsetList and
+           the Option and Result constructors. Import each module, under its
+           structure name, when its form occurs and the module isn't imported already. */
+        let alreadyImported = (file) => {
+          if (SubsetList.exists(
+            tokens,
+            (token, _) => {
+              token == WmLexer.WScon(Syntax.SString("basis/" ++ file ++ ".wm"))
+            }
+          )) { true } else {
+            SubsetList.exists(used, (name, _) => { basisFile(name) == "subset_" ++ file ++ ".wm" })
+          }
+        };
+        let formImport = (file, structureName, forms) => {
+          if (if (if (SubsetList.exists(
+            tokens,
+            (token, _) => { SubsetList.exists(forms, (form) => { form == token }) }
+          )) { SubsetBool.not(alreadyImported(file)) } else { false }) {
+            match(ModuleProject.identify(directory ++ "/subset_" ++ file ++ ".wm")) {
+              SubsetResult.Ok(_) => { true },
+              SubsetResult.Err(_) => { false }
+            }
+          } else { false }) {
+            [
+              (WmLexer.WKey("from"), 0),
+              (WmLexer.WScon(Syntax.SString("basis/" ++ file ++ ".wm")), 0),
+              (WmLexer.WKey("import"), 0),
+              (WmLexer.WKey("*"), 0),
+              (WmLexer.WKey("as"), 0),
+              (WmLexer.WName([structureName]), 0),
+              (WmLexer.WKey(";"), 0)
+            ]
+          } else { [] }
+        };
+        let print = WmLexer.WName(["print"]);
+        let text = WmLexer.WKey("`(");
+        let forms = SubsetList.concat([
+          formImport("bool", "SubsetBool", [WmLexer.WKey("!"), WmLexer.WKey("!="), print]),
+          formImport("int32", "SubsetInt32", [WmLexer.WKey("%"), text, print]),
+          formImport(
+            "real",
+            "SubsetReal",
+            [WmLexer.WKey("%"), WmLexer.WKey("=="), WmLexer.WKey("!="), text, print]
+          ),
+          formImport("string", "SubsetString", [text, print]),
+          formImport("io", "SubsetIo", [print]),
+          formImport("list", "SubsetList", [print]),
+          formImport("option_value", "SubsetOptionValue", [print]),
+          formImport("result_value", "SubsetResultValue", [print])
+        ]);
+        SubsetList.concat([defaults, forms, SubsetList.concat(SubsetList.map(used, header)), tokens])
       }
     }
   }

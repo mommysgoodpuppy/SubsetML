@@ -817,11 +817,39 @@ let keywordProgram = (prefix, prog) => {
 
 /* Workman equality is ambiguous until elaboration. Only a scalar real comparison is
    rewritten; a second, strict elaboration rejects every remaining invalid SML equality. */
-let realEquality = (st, prog) => {
+/* Whether the module's environment has a structure: the reader's Basis spellings need theirs,
+   and translation without the SubsetML Basis keeps the SML Basis spellings. */
+let hasStructure = (env, name) => {
+  match(Env.structureAt(env, [name])) {
+    Some(_) => { true },
+    None => { false }
+  }
+};
+
+/* A type, with a numeric class that only literals decided closed to Workman's literal
+   default: Int32 for integer literals, Real64 for real ones. */
+let decided = (st, t) => {
+  match(Unify.prune(st, t)) {
+    Types.TVar(v) => {
+      match(Unify.lookup(st, v)) {
+        Unify.Free(Types.KClass(names), _) => {
+          let has = (m) => { SmlList.exists((n) => { Unify.sameName(n, m) })(names) };
+          if (has(Types.intName)) { Types.TCon(Types.intName, []) } else {
+            if (has(Types.realName)) { Types.TCon(Types.realName, []) } else { Types.TVar(v) }
+          }
+        },
+        _ => { Types.TVar(v) }
+      }
+    },
+    Var(resolved) => { resolved }
+  }
+};
+
+let realEquality = (env, st, prog) => {
   let Unify.State(_, _, _, _, sites) = st;
   let positions = SmlList.mapPartial(match {
     Unify.Operand(p, t) => {
-      match(Unify.prune(st, t)) {
+      match(decided(st, t)) {
         Types.TCon(n, []) => {
           if (Unify.sameName(n, Types.realName)) { Some(p) } else { None }
         },
@@ -837,7 +865,12 @@ let realEquality = (st, prog) => {
     match(e) {
       EApp(EId(p, ([], Var(opr))), a) => {
         if (if (if (opr == "=") { true } else { opr == "<>" }) { SmlList.exists((q) => { p == q })(positions) } else { false }) {
-          EApp(EId(p, (["Real"], if (opr == "=") { "==" } else { "!=" })), a)
+          if (hasStructure(env, "SubsetReal")) {
+            let equal = EApp(EId(p, (["SubsetReal"], "equal")), a);
+            if (opr == "=") { equal } else { EApp(EId(p, (["SubsetBool"], "not")), equal) }
+          } else {
+            EApp(EId(p, (["Real"], if (opr == "=") { "==" } else { "!=" })), a)
+          }
         } else { e }
       },
       _ => { e }
@@ -906,14 +939,284 @@ let recordUpdates = (st, prog) => {
 };
 
 // A backtick string's `${ e }`: the text of e by its resolved type.
-let templateText = (st, prog) => {
+/* Workman's `%`, once its operand type is known: `SubsetInt32.rem` or `SubsetReal.rem`.
+   Int64 is MLton-only, like the other sized numbers, and keeps `Int64.rem`. */
+let remainders = (env, st, prog) => {
+  let Unify.State(_, _, _, _, sites) = st;
+  let resolved = SmlList.mapPartial((site) => {
+    match(site) {
+      Unify.Operand(p, t) => {
+        match(Unify.prune(st, t)) {
+          Types.TArrow(_, r) => {
+            match(decided(st, r)) {
+              Types.TCon(n, []) => { Some(p, n) },
+              _ => { None }
+            }
+          },
+          _ => { None }
+        }
+      },
+      _ => { None }
+    }
+  })(match(sites) {
+    Some(xs) => { xs },
+    None => { [] }
+  });
+  let integer = (p) => {
+    EId(
+      p,
+      (
+        if (hasStructure(env, "SubsetInt32")) { ["SubsetInt32"] } else { ["Int"] },
+        "rem"
+      )
+    )
+  };
+  let rewrite = (e) => {
+    match(e) {
+      EId(p, ([], "`not")) => {
+        EId(
+          p,
+          if (hasStructure(env, "SubsetBool")) { (["SubsetBool"], "not") } else { ([], "not") }
+        )
+      },
+      EId(p, ([], "`rem")) => {
+        match(SmlList.find((q, _) => { p == q })(resolved)) {
+          // Operands that are only literals: Workman's literal default, Int32.
+          None => { integer(p) },
+          Some(found) => {
+            let (_, n) = found;
+            if (Unify.sameName(n, Types.realName)) {
+              EId(
+                p,
+                (
+                  if (hasStructure(env, "SubsetReal")) { ["SubsetReal"] } else { ["Real"] },
+                  "rem"
+                )
+              )
+            } else {
+              if (Unify.sameName(n, Types.int64Name)) { EId(p, (["Int64"], "rem")) } else { integer(p) }
+            }
+          }
+        }
+      },
+      _ => { e }
+    }
+  };
+  mapProgram(rewrite, prog)
+};
+
+/* Workman's `print`, once its argument type is known: `SubsetIo.printLine` of the value's
+   display, as Workman shows it. Text and characters appear as they are, numbers as Workman
+   writes them, `void` as `void`, and tuples, lists, records, Option and Result structurally:
+   `(1, a)`, `[1, 2]`, `{ x = 1 }`, `Some(2)`. A tuple argument is several arguments,
+   `print(a, b)`. A type with no display here keeps the marker, which the target check reports. */
+let printing = (env, st, prog) => {
+  let Unify.State(_, _, _, _, sites) = st;
+  let resolved = SmlList.mapPartial((site) => {
+    match(site) {
+      Unify.Operand(p, t) => {
+        match(Unify.prune(st, t)) {
+          Types.TArrow(a, _) => { Some(p, a) },
+          _ => { None }
+        }
+      },
+      _ => { None }
+    }
+  })(match(sites) {
+    Some(xs) => { xs },
+    None => { [] }
+  });
+  let text = (p, value) => { EScon(p, SString(value)) };
+  let rec join = (p, pieces) => {
+    match(pieces) {
+      [] => { text(p, "") },
+      [only] => { only },
+      [first, ..rest] => { EApp(EId(p, ([], "^")), ETuple([first, join(p, rest)])) }
+    }
+  };
+  let name = (depth, index) => {
+    "printValue" ++ CompilerText.natural(depth) ++ "_" ++ CompilerText.natural(index)
+  };
+  let named = (t, n) => { Types.nameOf(n) == t };
+  // A function from the type's values to their display, or NONE.
+  let rec display = (p, depth, t) => {
+    let variable = (index) => { (p, ([], name(depth, index))) };
+    let apply = (f, index) => { EApp(f, EId(variable(index))) };
+    let one = (body) => { Some(EFn([(PId(variable(0)), body)])) };
+    match(decided(st, t)) {
+      Types.TCon(n, []) => {
+        if (Unify.sameName(n, Types.stringName)) { one(EId(variable(0))) } else {
+          if (Unify.sameName(n, Types.charName)) { Some(EId(p, (["SubsetString"], "fromChar"))) } else {
+            if (Unify.sameName(n, Types.intName)) { Some(EId(p, (["SubsetInt32"], "toString"))) } else {
+              if (Unify.sameName(n, Types.int64Name)) { Some(EId(p, (["Int64"], "toString"))) } else {
+                if (Unify.sameName(n, Types.realName)) { Some(EId(p, (["SubsetReal"], "toString"))) } else {
+                  if (Unify.sameName(n, Types.boolName)) {
+                    one(EIf(EId(variable(0)), text(p, "true"), text(p, "false")))
+                  } else { None }
+                }
+              }
+            }
+          }
+        }
+      },
+      Types.TRecord([]) => { Some(EFn([(PWild, text(p, "void"))])) },
+      Types.TRecord(fields) => {
+        let tuple = SmlList.exists((l, _) => { l == "1" })(fields);
+        let rec parts = (fields, index) => {
+          match(fields) {
+            [] => { Some([]) },
+            [(Var(label), Var(ft)), ..rest] => {
+              match(display(p, depth + 1, ft), parts(rest, index + 1)) {
+                (Some(f), Some(more)) => { Some([(label, index, f), ..more]) },
+                _ => { None }
+              }
+            }
+          }
+        };
+        match(parts(fields, 0)) {
+          None => { None },
+          Some(ps) => {
+            let shown = SmlList.map((label, index, f) => {
+              if (tuple) { apply(f, index) } else { join(p, [text(p, label ++ " = "), apply(f, index)]) }
+            })(ps);
+            let rec separated = (xs) => {
+              match(xs) {
+                [] => { [] },
+                [x] => { [x] },
+                [x, ..rest] => { [x, text(p, ", "), ..separated(rest)] }
+              }
+            };
+            let pattern = if (tuple) {
+              PTuple(SmlList.map((_, index, _) => { PId(variable(index)) })(ps))
+            } else {
+              PRecord(p, SmlList.map((label, index, _) => { (label, PId(variable(index))) })(ps))
+            };
+            Some(EFn([
+              (
+                pattern,
+                join(
+                  p,
+                  SubsetList.concat([
+                    [text(p, if (tuple) { "(" } else { "{ " })],
+                    separated(shown),
+                    [text(p, if (tuple) { ")" } else { " }" })]
+                  ])
+                )
+              )
+            ]))
+          }
+        }
+      },
+      Types.TCon(n, [element]) => {
+        if (Unify.sameName(n, Types.listName)) {
+          match(display(p, depth + 1, element)) {
+            None => { None },
+            Some(f) => {
+              one(join(
+                p,
+                [
+                  text(p, "["),
+                  EApp(
+                    EId(p, (["SubsetString"], "concatWith")),
+                    ETuple([
+                      EApp(EId(p, (["SubsetList"], "map")), ETuple([EId(variable(0)), f])),
+                      text(p, ", ")
+                    ])
+                  ),
+                  text(p, "]")
+                ]
+              ))
+            }
+          }
+        } else {
+          if (named("option", n)) {
+            match(display(p, depth + 1, element)) {
+              None => { None },
+              Some(f) => {
+                Some(EFn([
+                  (
+                    PApp(p, (["SubsetOptionValue"], "SOME"), PId(variable(0))),
+                    join(p, [text(p, "Some("), apply(f, 0), text(p, ")")])
+                  ),
+                  (PId(p, (["SubsetOptionValue"], "NONE")), text(p, "None"))
+                ]))
+              }
+            }
+          } else { None }
+        }
+      },
+      Types.TCon(n, [okType, errType]) => {
+        if (named("result", n)) {
+          match(display(p, depth + 1, okType), display(p, depth + 1, errType)) {
+            (Some(f), Some(g)) => {
+              Some(EFn([
+                (
+                  PApp(p, (["SubsetResultValue"], "Ok"), PId(variable(0))),
+                  join(p, [text(p, "Ok("), apply(f, 0), text(p, ")")])
+                ),
+                (
+                  PApp(p, (["SubsetResultValue"], "Err"), PId(variable(0))),
+                  join(p, [text(p, "Err("), apply(g, 0), text(p, ")")])
+                )
+              ]))
+            },
+            _ => { None }
+          }
+        } else { None }
+      },
+      _ => { None }
+    }
+  };
+  let line = (p, shown) => { EApp(EId(p, (["SubsetIo"], "printLine")), shown) };
+  let rewrite = (e) => {
+    match(e) {
+      // Without the SubsetML Basis, `print` is SML's, on text.
+      EId(p, ([], "`print")) => {
+        if (SubsetBool.not(hasStructure(env, "SubsetIo"))) { EId(p, ([], "print")) } else {
+          match(SmlList.find((q, _) => { p == q })(resolved)) {
+            None => { e },
+            Some(found) => {
+              let (_, t) = found;
+              match(display(p, 0, t)) {
+                None => { e },
+                Some(f) => {
+                  EFn([
+                    (PId(p, ([], "printArgument")), line(p, EApp(f, EId(p, ([], "printArgument")))))
+                  ])
+                }
+              }
+            }
+          }
+        }
+      },
+      EApp(EId(p, ([], "`print")), value) => {
+        if (SubsetBool.not(hasStructure(env, "SubsetIo"))) { EApp(EId(p, ([], "print")), value) } else {
+          match(SmlList.find((q, _) => { p == q })(resolved)) {
+            None => { e },
+            Some(found) => {
+              let (_, t) = found;
+              match(display(p, 0, t)) {
+                None => { e },
+                Some(f) => { line(p, EApp(f, value)) }
+              }
+            }
+          }
+        }
+      },
+      _ => { e }
+    }
+  };
+  mapProgram(rewrite, prog)
+};
+
+let templateText = (env, st, prog) => {
   let Unify.State(_, _, _, _, sites) = st;
   let resolved = SmlList.mapPartial((site) => {
     match(site) {
       Unify.Operand(p, t) => {
         match(Unify.prune(st, t)) {
           Types.TArrow(a, _) => {
-            match(Unify.prune(st, a)) {
+            match(decided(st, a)) {
               Types.TCon(n, []) => { Some(p, n) },
               _ => { None }
             }
@@ -928,6 +1231,9 @@ let templateText = (st, prog) => {
     None => { [] }
   });
   let call = (p, path, e) => { EApp(EId(p, path), e) };
+  let spelled = (structureName, name, fallback) => {
+    if (hasStructure(env, structureName)) { ([structureName], name) } else { fallback }
+  };
   let rewrite = (e) => {
     match(e) {
       EApp(EId(p, ([], "`show")), value) => {
@@ -937,10 +1243,16 @@ let templateText = (st, prog) => {
             let (_, n) = found;
             let is = (m) => { Unify.sameName(n, m) };
             if (is(Types.stringName)) { value } else {
-              if (is(Types.charName)) { call(p, (["String"], "str"), value) } else {
-                if (is(Types.intName)) { call(p, (["Int"], "toString"), value) } else {
+              if (is(Types.charName)) {
+                call(p, spelled("SubsetString", "fromChar", (["String"], "str")), value)
+              } else {
+                if (is(Types.intName)) {
+                  call(p, spelled("SubsetInt32", "toString", (["Int"], "toString")), value)
+                } else {
                   if (is(Types.int64Name)) { call(p, (["Int64"], "toString"), value) } else {
-                    if (is(Types.realName)) { call(p, (["Real"], "toString"), value) } else {
+                    if (is(Types.realName)) {
+                      call(p, spelled("SubsetReal", "toString", (["Real"], "toString")), value)
+                    } else {
                       if (is(Types.boolName)) {
                         EIf(value, EScon(p, SString("true")), EScon(p, SString("false")))
                       } else { e }
@@ -1307,6 +1619,8 @@ let portableValues = (env, prog, st) => {
 /* Check dependencies before a module, regardless of the command-line order. Every
    recovery starts with its dependency closure, so unrelated input files remain independent. */
 let recover = (modules, target) => {
+  // A round trip reproduces the SML it started from, so the reader keeps SML's spellings.
+  let smlSpelling = Env.Env([], [], []);
   let nameOfModule = (_, _, prog, _) => {
     match(structureOf(prog)) {
       [n, .._] => { n },
@@ -1383,7 +1697,18 @@ let recover = (modules, target) => {
                 (
                   path,
                   src,
-                  recordUpdates(st, templateText(st, realLiterals(st, realEquality(st, prog)))),
+                  recordUpdates(
+                    st,
+                    printing(
+                      smlSpelling,
+                      st,
+                      remainders(
+                        smlSpelling,
+                        st,
+                        templateText(smlSpelling, st, realLiterals(st, realEquality(smlSpelling, st, prog)))
+                      )
+                    )
+                  ),
                   comments
                 )
               ]
@@ -1497,7 +1822,18 @@ let recoverProjectWithRuntime = (runtime, modules) => {
                     (
                       path,
                       src,
-                      recordUpdates(next, templateText(next, realLiterals(next, realEquality(next, rewritten)))),
+                      recordUpdates(
+                        next,
+                        printing(
+                          env,
+                          next,
+                          remainders(
+                            env,
+                            next,
+                            templateText(env, next, realLiterals(next, realEquality(env, next, rewritten)))
+                          )
+                        )
+                      ),
                       cs
                     )
                   ),

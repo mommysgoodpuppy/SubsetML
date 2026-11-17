@@ -153,7 +153,37 @@ structure WmProject = struct
           val defaults = SubsetList.concat [
             defaultOpen ("option_value", ["Option", "Some", "None"]),
             defaultOpen ("result", ["Result", "Ok", "Err"])]
-        in SubsetList.concat [defaults, SubsetList.concat (SubsetList.map (uses (tokens, bareUses (tokens, [])), header)), tokens] end
+          val used = uses (tokens, bareUses (tokens, []))
+          (* The reader spells some Workman forms with Basis functions: `!` is SubsetBool.not,
+             `%` and `==` on reals and backtick text use SubsetInt32, SubsetReal and
+             SubsetString, and `print` is SubsetIo.printLine over a display that names SubsetList and
+             the Option and Result constructors. Import each module, under its
+             structure name, when its form occurs and the module isn't imported already. *)
+          val alreadyImported = fn file =>
+            SubsetList.exists (tokens, fn (token, _) =>
+              token = WmLexer.WScon (Syntax.SString ("basis/" ^ file ^ ".wm"))) orelse
+            SubsetList.exists (used, fn (name, _) => basisFile name = "subset_" ^ file ^ ".wm")
+          val formImport = fn (file, structureName, forms) =>
+            if SubsetList.exists (tokens, fn (token, _) => SubsetList.exists (forms, fn form => form = token)) andalso
+               SubsetBool.not (alreadyImported file) andalso
+               (case ModuleProject.identify (directory ^ "/subset_" ^ file ^ ".wm") of
+                  SubsetResult.Ok _ => true | SubsetResult.Err _ => false)
+            then [(WmLexer.WKey "from", 0), (WmLexer.WScon (Syntax.SString ("basis/" ^ file ^ ".wm")), 0),
+                  (WmLexer.WKey "import", 0), (WmLexer.WKey "*", 0), (WmLexer.WKey "as", 0),
+                  (WmLexer.WName [structureName], 0), (WmLexer.WKey ";", 0)]
+            else []
+          val print = WmLexer.WName ["print"]
+          val text = WmLexer.WKey "`("
+          val forms = SubsetList.concat [
+            formImport ("bool", "SubsetBool", [WmLexer.WKey "!", WmLexer.WKey "!=", print]),
+            formImport ("int32", "SubsetInt32", [WmLexer.WKey "%", text, print]),
+            formImport ("real", "SubsetReal", [WmLexer.WKey "%", WmLexer.WKey "==", WmLexer.WKey "!=", text, print]),
+            formImport ("string", "SubsetString", [text, print]),
+            formImport ("io", "SubsetIo", [print]),
+            formImport ("list", "SubsetList", [print]),
+            formImport ("option_value", "SubsetOptionValue", [print]),
+            formImport ("result_value", "SubsetResultValue", [print])]
+        in SubsetList.concat [defaults, forms, SubsetList.concat (SubsetList.map (used, header)), tokens] end
     end
 
   (* Discovery reads only the supported import header. Preparation still validates aliases,

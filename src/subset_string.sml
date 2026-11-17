@@ -56,6 +56,8 @@ structure SubsetString = struct
   (* Checked byte-string helpers share the extraction/reconstruction boundaries. *)
   val size = fn value => SubsetResult.map (fromNative value, SubsetList.length)
   val str = fn c => toNative [c]
+  (* A one-character native string. Total: a character is always a host text unit. *)
+  val fromChar = fn c => SubsetTextHost.fromCodes [SubsetTextHost.charCode c]
 
   (* SML STRING counterparts, with data-first arguments and typed boundary errors.
      Validate complete operands even when a match could be decided early. *)

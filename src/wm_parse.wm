@@ -790,7 +790,12 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
               )
             }
           },
-          (false, true, true) => { Done(PId(p, ([], name)), advance(ts)) },
+          (false, true, true) => {
+            // The reader reads `print` as Workman's pervasive (Translate.printing).
+            if (name == "print") {
+              Fail("the translation reads `print` as Workman's print; rename this binding", p)
+            } else { Done(PId(p, ([], name)), advance(ts)) }
+          },
           (false, _, _) => { Done(PPinned(p, valueName(quals, name)), advance(ts)) }
         }
       },
@@ -819,7 +824,11 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
   and parseMatchFunction = (ts) => {
     let name = (ts) => {
       match(peek(ts)) {
-        (WName([x]), Var(p)) => { Done((p, x), advance(ts)) },
+        (WName([x]), Var(p)) => {
+          if (x == "print") {
+            Fail("the translation reads `print` as Workman's print; rename this binding", p)
+          } else { Done((p, x), advance(ts)) }
+        },
         _ => { expected("a parameter name", ts) }
       }
     };
@@ -938,11 +947,15 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
                       "&&" => { EAndalso(l, r) },
                       "||" => { EOrelse(l, r) },
                       _ => {
+                        /* Workman's `%` truncates toward zero; its SML spelling depends on
+                           the operand type (Translate.remainders), as does that of real
+                           `==` and `!=` (Translate.realEquality). */
                         match(opr, l) {
-                          ("==", ETyped(x, TyCon([], ([], "real")))) => { EApp(EId(p, (["Real"], "==")), ETuple([x, r])) },
-                          ("!=", ETyped(x, TyCon([], ([], "real")))) => { EApp(EId(p, (["Real"], "!=")), ETuple([x, r])) },
-                          // Workman's `%` truncates toward zero, as `Int.rem` does.
-                          ("%", _) => { EApp(EId(p, (["Int"], "rem")), ETuple([l, r])) },
+                          /* SML-to-Workman printing annotates a real `==` operand;
+                             the comparison itself is spelled after inference. */
+                          ("==", ETyped(x, TyCon([], ([], "real")))) => { infixApp("=", p, x, r) },
+                          ("!=", ETyped(x, TyCon([], ([], "real")))) => { infixApp("<>", p, x, r) },
+                          ("%", _) => { EApp(EId(p, ([], "`rem")), ETuple([l, r])) },
                           _ => { infixApp(smlOperator(opr), p, l, r) }
                         }
                       }
@@ -964,7 +977,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
   and parseUnary = (ts) => {
     match(peek(ts)) {
       (WKey("!"), Var(p)) => {
-        bind(parseUnary(advance(ts)))((e) => (ts) => { Done(EApp(EId(p, ([], "not")), e), ts) })
+        bind(parseUnary(advance(ts)))((e) => (ts) => { Done(EApp(EId(p, ([], "`not")), e), ts) })
       },
       (WKey("-"), Var(p)) => {
         match(negativeLiteral(p, advance(ts))) {
@@ -1131,8 +1144,11 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
   }
 
   and atomPath = (p, path, ts) => {
-    if (isKey("{", advance(ts))) { parseNamedRecord(p, path, advance(advance(ts))) } else {
-      if (if (isKey("|", advance(ts))) { CompilerText.firstIs(lastOf(path), SubsetChar.isUpper) } else { false }) { parseCarrierGroup(p, path, advance(advance(ts))) } else { Done(pathExp(p, path), advance(ts)) }
+    // Workman's pervasive `print` takes any value; Translate.printing writes its display.
+    if (path == ["print"]) { Done(EId(p, ([], "`print")), advance(ts)) } else {
+      if (isKey("{", advance(ts))) { parseNamedRecord(p, path, advance(advance(ts))) } else {
+        if (if (isKey("|", advance(ts))) { CompilerText.firstIs(lastOf(path), SubsetChar.isUpper) } else { false }) { parseCarrierGroup(p, path, advance(advance(ts))) } else { Done(pathExp(p, path), advance(ts)) }
+      }
     }
   }
 

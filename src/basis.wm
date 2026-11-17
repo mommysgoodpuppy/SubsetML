@@ -126,7 +126,8 @@ let structures = [
     [
       ("toString", "int -> string"),
       ("div", "int * int -> int"),
-      ("mod", "int * int -> int")
+      ("mod", "int * int -> int"),
+      ("rem", "int * int -> int")
     ]
   ),
   (["Real32"], [("real", real32Name)], []),
@@ -224,6 +225,7 @@ let structures = [
     [
       ("==", "real * real -> bool"),
       ("!=", "real * real -> bool"),
+      ("rem", "real * real -> real"),
       ("compare", "real * real -> order"),
       ("min", "real * real -> real"),
       ("max", "real * real -> real"),

@@ -198,12 +198,29 @@ type.
 | `#"c"` | `'c'` |
 
 Reading Workman, a backtick string becomes a `^` chain of its text pieces, and each `${ e }` the
-text of `e` by its inferred type: `e` itself for a string, `String.str` for a char,
-`Int.toString`, `Int64.toString` or `Real.toString` for a number, and `"true"`/`"false"` for a
-bool. Other types have no SML text conversion and are errors, as is a `${ x }` whose type nothing
-decides; annotate it. SML's number text differs from Workman's display in places (`~3` for
-`-3`); the portable Basis has no Workman-matching number formatting yet. A backtick string
-without `${ }` is a plain string constant.
+text of `e` by its inferred type: `e` itself for a string, `SubsetString.fromChar` for a char,
+`SubsetInt32.toString` or `SubsetReal.toString` for a number (`Int64.toString` for the
+MLton-only Int64), and `"true"`/`"false"` for a bool. Number text matches Workman's display:
+`-3`, `0.30000000000000004`, `1e+21`. Other types have no text conversion and are errors, as is
+a `${ x }` whose type nothing decides; annotate it. A number only literals decide takes
+Workman's literal default, Int32 or Real64. A backtick string without `${ }` is a plain string
+constant.
+
+The reader spells other Workman forms with Basis functions too, so its output passes
+`check-portable`: `!e` is `SubsetBool.not e`; `%` is `SubsetInt32.rem` or `SubsetReal.rem` by
+operand type (both truncate toward zero); `==` and `!=` on reals are `SubsetReal.equal`, IEEE
+equality. `print(a, b)` is `SubsetIo.printLine` of the arguments' display, which the translator
+writes from their types the way Workman shows them: text and characters as they are, numbers as
+above, `void`, `(1, a)`, `[1, 2]`, `{ s = q, x = 1 }`, `Some(2)`, `Ok(x)`. A tuple argument is
+several arguments. Other types, and types left partly undecided, are errors; annotate the value
+or print text. The reader treats `print` as Workman's pervasive, so a module binding its own
+`print` is an error. Each module these spellings name is imported automatically, under its
+structure name, when the form occurs. Real remainder and text are host primitives
+(`SubsetRealHost`, adapters in `lib/`); real equality is portable source. `print` writes through
+`SubsetHost`, so a native build that prints stages its adapter (`--native-adapter`); the checker
+declarations write nothing. Without the SubsetML Basis (`sml` without `--basis`, and round trips)
+the reader keeps the SML Basis spellings: `not`, `Int.rem`, `Real.==`, `Int.toString` and SML's
+`print` on text.
 
 A carrier group, `Result|a, b, c|`, is desugared as Workman does it: `Result.andThen(a, x =>
 Result.andThen(b, y => Result.map(c, z => (x, y, z))))`, through the named namespace's own

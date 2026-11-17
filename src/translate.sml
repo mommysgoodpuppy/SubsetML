@@ -515,11 +515,29 @@ structure Translate = struct
 
   (* Workman equality is ambiguous until elaboration. Only a scalar real comparison is
      rewritten; a second, strict elaboration rejects every remaining invalid SML equality. *)
-  val realEquality = fn (st, prog) =>
+  (* Whether the module's environment has a structure: the reader's Basis spellings need theirs,
+     and translation without the SubsetML Basis keeps the SML Basis spellings. *)
+  val hasStructure = fn (env, name) =>
+    case Env.structureAt (env, [name]) of SOME _ => true | NONE => false
+
+  (* A type, with a numeric class that only literals decided closed to Workman's literal
+     default: Int32 for integer literals, Real64 for real ones. *)
+  val decided = fn (st, t) =>
+    case Unify.prune (st, t) of
+      Types.TVar v => (case Unify.lookup (st, v) of
+          Unify.Free (Types.KClass names, _) =>
+            let val has = fn m => SmlList.exists (fn n => Unify.sameName (n, m)) names in
+              if has Types.intName then Types.TCon (Types.intName, [])
+              else (if has Types.realName then Types.TCon (Types.realName, []) else Types.TVar v)
+            end
+        | _ => Types.TVar v)
+    | resolved => resolved
+
+  val realEquality = fn (env, st, prog) =>
     let
       val Unify.State (_, _, _, _, sites) = st
       val positions = SmlList.mapPartial (fn
-          Unify.Operand (p, t) => (case Unify.prune (st, t) of
+          Unify.Operand (p, t) => (case decided (st, t) of
              Types.TCon (n, []) => if Unify.sameName (n, Types.realName) then SOME p else NONE
            | _ => NONE)
         | _ => NONE) (case sites of SOME xs => xs | NONE => [])
@@ -527,7 +545,12 @@ structure Translate = struct
         case e of
           EApp (EId (p, ([], opr)), a) =>
             if (opr = "=" orelse opr = "<>") andalso SmlList.exists (fn q => (p = q)) positions
-            then EApp (EId (p, (["Real"], if opr = "=" then "==" else "!=")), a)
+            then
+              (if hasStructure (env, "SubsetReal") then
+                 let val equal = EApp (EId (p, (["SubsetReal"], "equal")), a) in
+                   if opr = "=" then equal else EApp (EId (p, (["SubsetBool"], "not")), equal)
+                 end
+               else EApp (EId (p, (["Real"], if opr = "=" then "==" else "!=")), a))
             else e
         | _ => e
     in
@@ -576,17 +599,176 @@ structure Translate = struct
     end
 
   (* A backtick string's `${ e }`: the text of e by its resolved type. *)
-  val templateText = fn (st, prog) =>
+  (* Workman's `%`, once its operand type is known: `SubsetInt32.rem` or `SubsetReal.rem`.
+     Int64 is MLton-only, like the other sized numbers, and keeps `Int64.rem`. *)
+  val remainders = fn (env, st, prog) =>
     let
       val Unify.State (_, _, _, _, sites) = st
       val resolved = SmlList.mapPartial (fn site => case site of
           Unify.Operand (p, t) => (case Unify.prune (st, t) of
-             Types.TArrow (a, _) => (case Unify.prune (st, a) of
+             Types.TArrow (_, r) => (case decided (st, r) of
+               Types.TCon (n, []) => SOME (p, n)
+             | _ => NONE)
+           | _ => NONE)
+        | _ => NONE) (case sites of SOME xs => xs | NONE => [])
+      val integer = fn p =>
+        EId (p, (if hasStructure (env, "SubsetInt32") then ["SubsetInt32"] else ["Int"], "rem"))
+      val rewrite = fn e =>
+        case e of
+          EId (p, ([], "`not")) =>
+            EId (p, if hasStructure (env, "SubsetBool") then (["SubsetBool"], "not") else ([], "not"))
+        | EId (p, ([], "`rem")) =>
+            (case SmlList.find (fn (q, _) => (p = q)) resolved of
+               (* Operands that are only literals: Workman's literal default, Int32. *)
+               NONE => integer p
+             | SOME found =>
+                 let val (_, n) = found in
+                   if Unify.sameName (n, Types.realName) then
+                     EId (p, (if hasStructure (env, "SubsetReal") then ["SubsetReal"] else ["Real"], "rem"))
+                   else (if Unify.sameName (n, Types.int64Name) then EId (p, (["Int64"], "rem"))
+                   else integer p)
+                 end)
+        | _ => e
+    in
+      mapProgram (rewrite, prog)
+    end
+
+  (* Workman's `print`, once its argument type is known: `SubsetIo.printLine` of the value's
+     display, as Workman shows it. Text and characters appear as they are, numbers as Workman
+     writes them, `void` as `void`, and tuples, lists, records, Option and Result structurally:
+     `(1, a)`, `[1, 2]`, `{ x = 1 }`, `Some(2)`. A tuple argument is several arguments,
+     `print(a, b)`. A type with no display here keeps the marker, which the target check reports. *)
+  val printing = fn (env, st, prog) =>
+    let
+      val Unify.State (_, _, _, _, sites) = st
+      val resolved = SmlList.mapPartial (fn site => case site of
+          Unify.Operand (p, t) => (case Unify.prune (st, t) of
+             Types.TArrow (a, _) => SOME (p, a)
+           | _ => NONE)
+        | _ => NONE) (case sites of SOME xs => xs | NONE => [])
+      val text = fn (p, value) => EScon (p, SString value)
+      val rec join = fn (p, pieces) => case pieces of
+          [] => text (p, "")
+        | [only] => only
+        | first :: rest => EApp (EId (p, ([], "^")), ETuple [first, join (p, rest)])
+      val name = fn (depth, index) =>
+        "printValue" ^ CompilerText.natural depth ^ "_" ^ CompilerText.natural index
+      val named = fn (t, n) => Types.nameOf n = t
+      (* A function from the type's values to their display, or NONE. *)
+      val rec display = fn (p, depth, t) =>
+        let
+          val variable = fn index => (p, ([], name (depth, index)))
+          val apply = fn (f, index) => EApp (f, EId (variable index))
+          val one = fn body => SOME (EFn [(PId (variable 0), body)])
+        in
+          case decided (st, t) of
+            Types.TCon (n, []) =>
+              if Unify.sameName (n, Types.stringName) then one (EId (variable 0))
+              else (if Unify.sameName (n, Types.charName) then SOME (EId (p, (["SubsetString"], "fromChar")))
+              else (if Unify.sameName (n, Types.intName) then SOME (EId (p, (["SubsetInt32"], "toString")))
+              else (if Unify.sameName (n, Types.int64Name) then SOME (EId (p, (["Int64"], "toString")))
+              else (if Unify.sameName (n, Types.realName) then SOME (EId (p, (["SubsetReal"], "toString")))
+              else (if Unify.sameName (n, Types.boolName)
+                then one (EIf (EId (variable 0), text (p, "true"), text (p, "false")))
+              else NONE)))))
+          | Types.TRecord [] => SOME (EFn [(PWild, text (p, "void"))])
+          | Types.TRecord fields =>
+              let
+                val tuple = SmlList.exists (fn (l, _) => l = "1") fields
+                val rec parts = fn (fields, index) => case fields of
+                    [] => SOME []
+                  | (label, ft) :: rest =>
+                      (case (display (p, depth + 1, ft), parts (rest, index + 1)) of
+                         (SOME f, SOME more) => SOME ((label, index, f) :: more)
+                       | _ => NONE)
+              in
+                case parts (fields, 0) of
+                  NONE => NONE
+                | SOME ps =>
+                    let
+                      val shown = SmlList.map (fn (label, index, f) =>
+                        if tuple then apply (f, index)
+                        else join (p, [text (p, label ^ " = "), apply (f, index)])) ps
+                      val rec separated = fn xs => case xs of
+                          [] => [] | [x] => [x] | x :: rest => x :: text (p, ", ") :: separated rest
+                      val pattern = if tuple then PTuple (SmlList.map (fn (_, index, _) => PId (variable index)) ps)
+                        else PRecord (p, SmlList.map (fn (label, index, _) => (label, PId (variable index))) ps)
+                    in
+                      SOME (EFn [(pattern, join (p, SubsetList.concat [
+                        [text (p, if tuple then "(" else "{ ")], separated shown, [text (p, if tuple then ")" else " }")]]))])
+                    end
+              end
+          | Types.TCon (n, [element]) =>
+              if Unify.sameName (n, Types.listName) then
+                (case display (p, depth + 1, element) of
+                   NONE => NONE
+                 | SOME f => one (join (p, [text (p, "["),
+                     EApp (EId (p, (["SubsetString"], "concatWith")), ETuple [
+                       EApp (EId (p, (["SubsetList"], "map")), ETuple [EId (variable 0), f]),
+                       text (p, ", ")]),
+                     text (p, "]")])))
+              else (if named ("option", n) then
+                (case display (p, depth + 1, element) of
+                   NONE => NONE
+                 | SOME f => SOME (EFn [
+                     (PApp (p, (["SubsetOptionValue"], "SOME"), PId (variable 0)),
+                      join (p, [text (p, "Some("), apply (f, 0), text (p, ")")])),
+                     (PId (p, (["SubsetOptionValue"], "NONE")), text (p, "None"))]))
+              else NONE)
+          | Types.TCon (n, [okType, errType]) =>
+              if named ("result", n) then
+                (case (display (p, depth + 1, okType), display (p, depth + 1, errType)) of
+                   (SOME f, SOME g) => SOME (EFn [
+                     (PApp (p, (["SubsetResultValue"], "Ok"), PId (variable 0)),
+                      join (p, [text (p, "Ok("), apply (f, 0), text (p, ")")])),
+                     (PApp (p, (["SubsetResultValue"], "Err"), PId (variable 0)),
+                      join (p, [text (p, "Err("), apply (g, 0), text (p, ")")]))])
+                 | _ => NONE)
+              else NONE
+          | _ => NONE
+        end
+      val line = fn (p, shown) => EApp (EId (p, (["SubsetIo"], "printLine")), shown)
+      val rewrite = fn e =>
+        case e of
+          (* Without the SubsetML Basis, `print` is SML's, on text. *)
+          EId (p, ([], "`print")) =>
+            if SubsetBool.not (hasStructure (env, "SubsetIo")) then EId (p, ([], "print")) else
+            (case SmlList.find (fn (q, _) => (p = q)) resolved of
+               NONE => e
+             | SOME found =>
+                 let val (_, t) = found in
+                   case display (p, 0, t) of
+                     NONE => e
+                   | SOME f => EFn [(PId (p, ([], "printArgument")), line (p, EApp (f, EId (p, ([], "printArgument")))))]
+                 end)
+        | EApp (EId (p, ([], "`print")), value) =>
+            if SubsetBool.not (hasStructure (env, "SubsetIo")) then EApp (EId (p, ([], "print")), value) else
+            (case SmlList.find (fn (q, _) => (p = q)) resolved of
+               NONE => e
+             | SOME found =>
+                 let val (_, t) = found in
+                   case display (p, 0, t) of
+                     NONE => e
+                   | SOME f => line (p, EApp (f, value))
+                 end)
+        | _ => e
+    in
+      mapProgram (rewrite, prog)
+    end
+
+  val templateText = fn (env, st, prog) =>
+    let
+      val Unify.State (_, _, _, _, sites) = st
+      val resolved = SmlList.mapPartial (fn site => case site of
+          Unify.Operand (p, t) => (case Unify.prune (st, t) of
+             Types.TArrow (a, _) => (case decided (st, a) of
                Types.TCon (n, []) => SOME (p, n)
              | _ => NONE)
            | _ => NONE)
         | _ => NONE) (case sites of SOME xs => xs | NONE => [])
       val call = fn (p, path, e) => EApp (EId (p, path), e)
+      val spelled = fn (structureName, name, fallback) =>
+        if hasStructure (env, structureName) then ([structureName], name) else fallback
       val rewrite = fn e =>
         case e of
           EApp (EId (p, ([], "`show")), value) =>
@@ -598,10 +780,10 @@ structure Translate = struct
                    val is = fn m => Unify.sameName (n, m)
                  in
                    if is Types.stringName then value
-                   else (if is Types.charName then call (p, (["String"], "str"), value)
-                   else (if is Types.intName then call (p, (["Int"], "toString"), value)
+                   else (if is Types.charName then call (p, spelled ("SubsetString", "fromChar", (["String"], "str")), value)
+                   else (if is Types.intName then call (p, spelled ("SubsetInt32", "toString", (["Int"], "toString")), value)
                    else (if is Types.int64Name then call (p, (["Int64"], "toString"), value)
-                   else (if is Types.realName then call (p, (["Real"], "toString"), value)
+                   else (if is Types.realName then call (p, spelled ("SubsetReal", "toString", (["Real"], "toString")), value)
                    else (if is Types.boolName
                      then EIf (value, EScon (p, SString "true"), EScon (p, SString "false"))
                    else e)))))
@@ -780,6 +962,8 @@ structure Translate = struct
      recovery starts with its dependency closure, so unrelated input files remain independent. *)
   val recover = fn (modules, target) =>
     let
+      (* A round trip reproduces the SML it started from, so the reader keeps SML's spellings. *)
+      val smlSpelling = Env.Env ([], [], [])
       val nameOfModule = fn (_, _, prog, _) =>
         case structureOf prog of n :: _ => n | [] => ""
       val rec decDeps = fn d =>
@@ -814,7 +998,7 @@ structure Translate = struct
             let val Unify.State (vars, next, sels, recs, _) = st in
               Unify.bind (portableValues (env, prog, Unify.State (vars, next, sels, recs, SOME [])))
                 (fn (env, prog) => fn st => Unify.bind (wmNumbers st) (fn _ => fn st =>
-                  elaborate (env, rest, st, SubsetList.append (acc, [(path, src, recordUpdates (st, templateText (st, realLiterals (st, realEquality (st, prog)))), comments)]))))
+                  elaborate (env, rest, st, SubsetList.append (acc, [(path, src, recordUpdates (st, printing (smlSpelling, st, remainders (smlSpelling, st, templateText (smlSpelling, st, realLiterals (st, realEquality (smlSpelling, st, prog)))))), comments)]))))
             end
       val rec strict = fn
           (_, [], st) => Unify.Ok ((), st)
@@ -880,7 +1064,7 @@ structure Translate = struct
                   Unify.Err (message, pos) => Unify.Err (located (path, message), pos)
                 | Unify.Ok ((body, rewritten), next) =>
                     rewrite (basis, rest, (name, body) :: cache, next,
-                      (name, dependencies, (path, src, recordUpdates (next, templateText (next, realLiterals (next, realEquality (next, rewritten)))), cs)) :: acc)
+                      (name, dependencies, (path, src, recordUpdates (next, printing (env, next, remainders (env, next, templateText (env, next, realLiterals (next, realEquality (env, next, rewritten)))))), cs)) :: acc)
               end)
       val rec strict = fn (basis, remaining, cache, st) =>
         case remaining of

@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 modules = json.loads(Path('docs/basis-dependencies.json').read_text())['modules']
-files = ['src/subset_text_host.sml']
+files = ['src/subset_text_host.sml', 'src/subset_real_host.sml']
 for name, module in modules.items():
     files.append(module['source'])
     if name == 'SubsetResult':

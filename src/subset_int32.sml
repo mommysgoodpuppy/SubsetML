@@ -53,4 +53,30 @@ structure SubsetInt32 = struct
   val parseNatural = fn value =>
     SubsetResult.andThen (SubsetResult.mapErr (SubsetString.fromNative value, StringError), fn bytes =>
       complete (digits (bytes, false)))
+
+  (* Workman's `%`: the remainder of division truncated toward zero, with the dividend's sign.
+     Floored `mod` differs from it exactly when the remainder is nonzero and the signs differ. *)
+  val rem = fn (dividend : int, divisor : int) =>
+    let val m = dividend mod divisor in
+      if m <> 0 andalso ((dividend < 0) <> (divisor < 0)) then m - divisor else m
+    end
+
+  (* Decimal text as Workman writes it, `-12` rather than SML's `~12`. Digits are taken from
+     the nonpositive value, so the minimum integer needs no negation. *)
+  val toString = fn (value : int) =>
+    let
+      val rec digit = fn (index, entries) =>
+        case entries of [] => "" | first :: rest =>
+          if index <= 0 then first else digit (index - 1, rest)
+      val rec go = fn (remaining, acc) =>
+        let
+          val residue = remaining mod 10
+          val text = digit (if residue = 0 then 0 else 10 - residue,
+            ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"])
+          val next = if residue = 0 then remaining div 10 else remaining div 10 + 1
+        in if next = 0 then text :: acc else go (next, text :: acc) end
+    in
+      if value < 0 then SubsetString.concat ("-" :: go (value, []))
+      else SubsetString.concat (go (~value, []))
+    end
 end

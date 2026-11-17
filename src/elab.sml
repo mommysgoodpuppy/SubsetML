@@ -359,6 +359,39 @@ structure Elab = struct
               SOME xs => Ok (t, State (vs, nx, sels, recs, SOME (Operand (q, t) :: xs)))
             | NONE => Err ("a backtick string has no SML counterpart outside translation from Workman", q)
           end
+      (* Workman's `print`, read from Workman: any value, shown by type during translation
+         (Translate.printing). A marker left in place has a type with no portable display. *)
+      (* Workman's `!`, read from Workman: SubsetBool.not, or SML's `not` without the Basis
+         (Translate.portableSpellings). *)
+      | EId (q, ([], "`not")) => Ok (TArrow (boolTy, boolTy), st)
+      (* Without the SubsetML Basis there is no portable display: `print` is SML's, on text. *)
+      | EId (q, ([], "`print")) =>
+          (case Env.structureAt (env, ["SubsetIo"]) of
+             NONE => Ok (TArrow (stringTy, unitTy), st)
+           | SOME _ =>
+          let
+            val (a, st') = fresh (st, KPlain, level)
+            val t = TArrow (a, unitTy)
+            val State (vs, nx, sels, recs, sites) = st'
+          in
+            case sites of
+              SOME xs => Ok (t, State (vs, nx, sels, recs, SOME (Operand (q, t) :: xs)))
+            | NONE => Err ("print: this value's type is undecided in part, or has no portable display; "
+                           ^ "annotate it, or print text, numbers, booleans, characters, void, tuples, "
+                           ^ "lists, records, Option or Result", q)
+          end)
+      (* Workman's `%`, read from Workman: remainder truncated toward zero on an int, Int64 or
+         real, resolved by type during translation (Translate.remainders). *)
+      | EId (q, ([], "`rem")) =>
+          let
+            val (a, st') = fresh (st, KClass [intName, int64Name, realName], level)
+            val t = TArrow (tupleTy [a, a], a)
+            val State (vs, nx, sels, recs, sites) = st'
+          in
+            case sites of
+              SOME xs => Ok (t, State (vs, nx, sels, recs, SOME (Operand (q, t) :: xs)))
+            | NONE => Err ("Workman's `%` has no SML counterpart outside translation from Workman", q)
+          end
       (* A record update read from Workman, `.{ ..source, x = e }`: the identity on the
          source's record type, expanded by Translate.recordUpdates once that type is known. *)
       | EId (q, ([], "`update")) =>

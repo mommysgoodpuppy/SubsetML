@@ -27,11 +27,15 @@ let message = `Hi ${name}: ${count} items (${ratio}), ${ok}, ${initial}, ${big}.
 let nested = `<${`in ${count + 1}`}|${ { let x = count; x * 2 } }> \\${not} \\`tick\\` {braces}`;
 let _ = print(plain ++ "\\n" ++ message ++ "\\n" ++ nested ++ "\\n" ++ `${""}` ++ `` ++ "end");
 ''')
-    subprocess.run([compiler, 'sml-entry', out, '--basis', wm, use], check=True)
+    adapters = []
+    for name, structure in [('subset_host', 'SubsetHost'), ('subset_text_host', 'SubsetTextHost'),
+                            ('subset_real_host', 'SubsetRealHost')]:
+        adapters += ['--native-adapter', wm / (name + '.wm'), repo / 'lib' / (name + '.sml'), structure]
+    subprocess.run([compiler, 'sml-entry', out, '--basis', wm, *adapters, use], check=True)
     subprocess.run(['mlton', '-output', out / 'run', out / 'project.mlb'], check=True)
     result = subprocess.run([out / 'run'], capture_output=True, check=True)
     expected = (b'two\nlines\nHi Ada: 3 items (0.5), true, A, 9000000000. n is 7\n'
-                b'<in 4|6> ${not} `tick` {braces}\nend')
+                b'<in 4|6> ${not} `tick` {braces}\nend\n')
     assert result.stdout == expected, result.stdout
     # A conversion SML has no counterpart for is an error, at translation time.
     use.write_text('let pair = (1, 2);\\nlet text = `${pair}`;\\n')

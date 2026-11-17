@@ -91,6 +91,8 @@ is too slow without evidence. Domain validation and typed errors stay in source.
 | `SubsetTextHost.codeChar` | Inverse byte-character code conversion. A source table lookup works; retained for the same measured cost. Source wrappers check the byte range. |
 | `SubsetTextHost.encodeUtf8` | Bridge host text representation to a UTF-8 byte string. Identity for byte-native SML targets. JS uses host text conversion; implementing this from storage units and the existing source codecs is possible. This is a representation-adapter choice, not a claim that UTF-8 requires host library support. |
 | `SubsetTextHost.decodeUtf8` | Inverse host text bridge. Identity on byte-native SML targets; JS reconstructs its native text representation. Source validates UTF-8 first. Construction from decoded units is an alternative; no measured performance requirement is asserted. |
+| `SubsetRealHost.rem` | Real remainder truncated toward zero (fmod). A source algorithm subtracting doubled divisors is exact but costs up to about two thousand steps per call; reals are host-backed for now. |
+| `SubsetRealHost.toString` | Shortest round-trip real text, written as JavaScript writes numbers. Needs shortest-digit generation (Ryu, Grisu or bignum arithmetic), which 32-bit source integers make heavy; a source implementation could replace it later. |
 | `SubsetHost.canonicalPath` | Filesystem identity including symlinks requires host information. Lexical source normalization cannot replace it. |
 | `SubsetHost.readFile` | Obtain external file bytes. Impossible in the pure language alone; buffering and OS APIs belong to the target adapter. |
 | `SubsetHost.writeFile` | Write external file bytes. Requires a host side effect; conversion and path validation remain source operations. |

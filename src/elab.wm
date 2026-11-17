@@ -603,6 +603,48 @@ let rec exp = (ctx, e, st) => {
         }
       }
     },
+    /* Workman's `print`, read from Workman: any value, shown by type during translation
+       (Translate.printing). A marker left in place has a type with no portable display. */
+    /* Workman's `!`, read from Workman: SubsetBool.not, or SML's `not` without the Basis
+       (Translate.portableSpellings). */
+    EId(q, ([], "`not")) => { Ok(TArrow(boolTy, boolTy), st) },
+    // Without the SubsetML Basis there is no portable display: `print` is SML's, on text.
+    EId(q, ([], "`print")) => {
+      match(Env.structureAt(env, ["SubsetIo"])) {
+        None => { Ok(TArrow(stringTy, unitTy), st) },
+        Some(_) => {
+          let (a, st') = fresh(st, KPlain, level);
+          let t = TArrow(a, unitTy);
+          let State(vs, nx, sels, recs, sites) = st';
+          match(sites) {
+            Some(xs) => {
+              Ok(t, State(vs, nx, sels, recs, Some([Operand(q, t), ..xs])))
+            },
+            None => {
+              Err(
+                "print: this value's type is undecided in part, or has no portable display; " ++ "annotate it, or print text, numbers, booleans, characters, void, tuples, " ++ "lists, records, Option or Result",
+                q
+              )
+            }
+          }
+        }
+      }
+    },
+    /* Workman's `%`, read from Workman: remainder truncated toward zero on an int, Int64 or
+       real, resolved by type during translation (Translate.remainders). */
+    EId(q, ([], "`rem")) => {
+      let (a, st') = fresh(st, KClass([intName, int64Name, realName]), level);
+      let t = TArrow(tupleTy([a, a]), a);
+      let State(vs, nx, sels, recs, sites) = st';
+      match(sites) {
+        Some(xs) => {
+          Ok(t, State(vs, nx, sels, recs, Some([Operand(q, t), ..xs])))
+        },
+        None => {
+          Err("Workman's `%` has no SML counterpart outside translation from Workman", q)
+        }
+      }
+    },
     /* A record update read from Workman, `.{ ..source, x = e }`: the identity on the
        source's record type, expanded by Translate.recordUpdates once that type is known. */
     EId(q, ([], "`update")) => {

@@ -11,6 +11,14 @@
       "sourceDependencies": [],
       "primitives": []
     },
+    "SubsetReal": {
+      "source": "src/subset_real.sml",
+      "sourceDependencies": [],
+      "primitives": [
+        "SubsetRealHost.rem",
+        "SubsetRealHost.toString"
+      ]
+    },
     "SubsetResultValue": {
       "source": "src/subset_result_value.sml",
       "sourceDependencies": [],
@@ -125,7 +133,8 @@
       ],
       "primitives": [
         "SubsetTextHost.codes",
-        "SubsetTextHost.fromCodes"
+        "SubsetTextHost.fromCodes",
+        "SubsetTextHost.charCode"
       ]
     },
     "SubsetText": {
@@ -333,8 +342,7 @@
   },
   "pending": [
     "remaining collection and resource contracts",
-    "streaming and broader process profiles",
-    "arbitrary real-number formatting contracts"
+    "streaming and broader process profiles"
   ],
   "hostAdapters": {
     "SubsetTextHost": {
@@ -348,6 +356,15 @@
         "fromCodes",
         "encodeUtf8",
         "decodeUtf8"
+      ]
+    },
+    "SubsetRealHost": {
+      "sml": "lib/subset_real_host.sml",
+      "checkerStub": "src/subset_real_host.sml",
+      "workman": "lib/subset_real_host.wm",
+      "operations": [
+        "rem",
+        "toString"
       ]
     },
     "SubsetHost": {

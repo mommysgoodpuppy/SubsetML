@@ -42,7 +42,8 @@ let _ = run();
         use], check=True)
     subprocess.run(['mlton', '-output', default_out / 'run', default_out / 'project.mlb'], check=True)
     default_result = subprocess.run([default_out / 'run'], capture_output=True)
-    assert (default_result.returncode, default_result.stdout, default_result.stderr) == (1, b'once', b'unreachable\0\xff\n'), default_result
+    # With the Basis, `print` is Workman's, which ends the line.
+    assert (default_result.returncode, default_result.stdout, default_result.stderr) == (1, b'once\n', b'unreachable\0\xff\n'), default_result
     with open('/dev/full', 'wb') as stderr:
         result = subprocess.run([root / 'run'], stdout=subprocess.PIPE, stderr=stderr)
     assert (result.returncode, result.stdout) == (1, b'once'), result

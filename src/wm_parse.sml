@@ -554,7 +554,10 @@ structure WmParse = struct
                     | _ => Done (PApp (p, valueName (quals, name), PTuple args), ts))
                 else Done (if inMatch then PPinned (p, valueName (quals, name))
                           else PId (p, valueName (quals, name)), advance ts)
-            | (false, true, true) => Done (PId (p, ([], name)), advance ts)
+            | (false, true, true) =>
+                (* The reader reads `print` as Workman's pervasive (Translate.printing). *)
+                if name = "print" then Fail ("the translation reads `print` as Workman's print; rename this binding", p)
+                else Done (PId (p, ([], name)), advance ts)
             | (false, _, _) =>
                 Done (PPinned (p, valueName (quals, name)), advance ts)
           end
@@ -576,7 +579,9 @@ structure WmParse = struct
     let
       val name = fn ts =>
         case peek ts of
-          (WName [x], p) => Done ((p, x), advance ts)
+          (WName [x], p) =>
+            if x = "print" then Fail ("the translation reads `print` as Workman's print; rename this binding", p)
+            else Done ((p, x), advance ts)
         | _ => expected ("a parameter name", ts)
     in
       bind (delimited ("(", name, ",", ")", ts)) (fn names => fn ts =>
@@ -684,13 +689,15 @@ structure WmParse = struct
                                 "&&" => EAndalso (l, r)
                               | "||" => EOrelse (l, r)
                               | _ =>
+                                  (* Workman's `%` truncates toward zero; its SML spelling depends on
+                                     the operand type (Translate.remainders), as does that of real
+                                     `==` and `!=` (Translate.realEquality). *)
                                   case (opr, l) of
-                                    ("==", ETyped (x, TyCon ([], ([], "real")))) =>
-                                      EApp (EId (p, (["Real"], "==")), ETuple [x, r])
-                                  | ("!=", ETyped (x, TyCon ([], ([], "real")))) =>
-                                      EApp (EId (p, (["Real"], "!=")), ETuple [x, r])
-                                  (* Workman's `%` truncates toward zero, as `Int.rem` does. *)
-                                  | ("%", _) => EApp (EId (p, (["Int"], "rem")), ETuple [l, r])
+                                    (* SML-to-Workman printing annotates a real `==` operand;
+                                       the comparison itself is spelled after inference. *)
+                                    ("==", ETyped (x, TyCon ([], ([], "real")))) => infixApp ("=", p, x, r)
+                                  | ("!=", ETyped (x, TyCon ([], ([], "real")))) => infixApp ("<>", p, x, r)
+                                  | ("%", _) => EApp (EId (p, ([], "`rem")), ETuple [l, r])
                                   | _ => infixApp (smlOperator opr, p, l, r), ts)))
              | NONE => Done (l, ts))
         | _ => Done (l, ts)
@@ -700,7 +707,7 @@ structure WmParse = struct
 
   and parseUnary = fn ts =>
     case peek ts of
-      (WKey "!", p) => bind (parseUnary (advance ts)) (fn e => fn ts => Done (EApp (EId (p, ([], "not")), e), ts))
+      (WKey "!", p) => bind (parseUnary (advance ts)) (fn e => fn ts => Done (EApp (EId (p, ([], "`not")), e), ts))
     | (WKey "-", p) =>
         (case negativeLiteral (p, advance ts) of
            SOME c =>
@@ -825,10 +832,12 @@ structure WmParse = struct
     end
 
   and atomPath = fn (p, path, ts) =>
-    if isKey ("{", advance ts) then parseNamedRecord (p, path, advance (advance ts))
+    (* Workman's pervasive `print` takes any value; Translate.printing writes its display. *)
+    if path = ["print"] then Done (EId (p, ([], "`print")), advance ts)
+    else (if isKey ("{", advance ts) then parseNamedRecord (p, path, advance (advance ts))
     else (if isKey ("|", advance ts) andalso CompilerText.firstIs (lastOf path, SubsetChar.isUpper)
     then parseCarrierGroup (p, path, advance (advance ts))
-    else Done (pathExp (p, path), advance ts))
+    else Done (pathExp (p, path), advance ts)))
 
   and parsePrimary = fn ts =>
     case peek ts of

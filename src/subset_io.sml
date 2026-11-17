@@ -36,6 +36,10 @@ structure SubsetIo = struct
     SubsetResult.andThen (native data, fn text => host (SubsetHost.writeStdout text))
   val writeStderr = fn data =>
     SubsetResult.andThen (native data, fn text => host (SubsetHost.writeStderr text))
+  (* Workman's `print`: the text and a newline on standard output. Like Workman's, it reports
+     no failure. *)
+  val printLine = fn text =>
+    case SubsetHost.writeStdout (text ^ "\n") of SubsetResult.Ok _ => () | SubsetResult.Err _ => ()
   val errorText = fn
       HostError message => message
     | NonByte offset => "non-byte I/O value"

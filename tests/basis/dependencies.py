@@ -28,7 +28,7 @@ expected = {f'{name}.{operation}'
             for name, adapter in inventory['hostAdapters'].items()
             for operation in adapter['operations']}
 audit = Path('docs/runtime-dependencies.md').read_text()
-documented = set(re.findall(r'^\| `(Subset(?:Text)?Host\.\w+)` \|', audit, re.M))
+documented = set(re.findall(r'^\| `(Subset(?:Text|Real)?Host\.\w+)` \|', audit, re.M))
 if expected != documented:
     raise SystemExit(f'runtime audit differs: missing={sorted(expected - documented)}, stale={sorted(documented - expected)}')
 print('runtime dependency motivations: all host operations documented')
