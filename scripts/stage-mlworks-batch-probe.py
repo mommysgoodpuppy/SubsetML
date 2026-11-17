@@ -20,12 +20,13 @@ out = args.output.resolve()
 out.mkdir(parents=True, exist_ok=True)
 subprocess.run([repo / 'bin/subsetml', 'sml-target', 'mlworks', out,
                 repo / 'src/subset_option_value.sml', repo / 'src/subset_result_value.sml',
-                repo / 'src/subset_result.sml', repo / 'src/subset_list.sml'], check=True)
+                repo / 'src/subset_monad.sml', repo / 'src/subset_result.sml', repo / 'src/subset_list.sml'], check=True)
 dependencies = {
     'prelude.sml': ['__int32'],
     'subset_option_value.sml': ['prelude'],
     'subset_result_value.sml': ['prelude'],
-    'subset_result.sml': ['prelude', 'subset_option_value', 'subset_result_value'],
+    'subset_monad.sml': ['prelude'],
+    'subset_result.sml': ['prelude', 'subset_option_value', 'subset_result_value', 'subset_monad'],
     'subset_list.sml': ['prelude', 'subset_option_value', 'subset_result'],
 }
 for name, imports in dependencies.items():
@@ -43,6 +44,6 @@ structure BatchProbe = struct
 end
 ''')
 (out / 'batch-probe.mlp').write_text(project_text('batch-probe.mlp',
-    ['prelude.sml', 'subset_option_value.sml', 'subset_result_value.sml', 'subset_result.sml', 'subset_list.sml', 'batch_probe.sml'],
+    ['prelude.sml', 'subset_option_value.sml', 'subset_result_value.sml', 'subset_monad.sml', 'subset_result.sml', 'subset_list.sml', 'batch_probe.sml'],
     'batch_probe.sml', args.library_path))
 print(out)

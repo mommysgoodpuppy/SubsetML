@@ -196,6 +196,27 @@ let implicitBasis = (basis, path, tokens) => {
             [_, ..rest] => { uses(rest, acc) }
           }
         };
+        /* A bare `X` as a whole argument, binding or list item stands for `X.carrier`. Type
+           positions look alike, `(Int, String)`; a needless import there changes nothing. */
+        let rec bareUses = (tokens, acc) => {
+          match(tokens) {
+            [
+              (WmLexer.WKey(previous), _),
+              (WmLexer.WName([head]), Var(pos)),
+              (WmLexer.WKey(after), Var(afterPos)),
+              ..rest
+            ] => {
+              bareUses(
+                [(WmLexer.WName([head]), pos), (WmLexer.WKey(after), afterPos), ..rest],
+                if (if (SubsetList.exists(["(", ",", "=", ":>", "[", "=>"], (k) => { k == previous })) {
+                  SubsetList.exists([")", ",", ";", "]", "}"], (k) => { k == after })
+                } else { false }) { use(head, pos, rest, acc) } else { acc }
+              )
+            },
+            [_, ..rest] => { bareUses(rest, acc) },
+            [] => { acc }
+          }
+        };
         let header = (name, pos) => {
           [
             (WmLexer.WKey("from"), pos),
@@ -242,7 +263,11 @@ let implicitBasis = (basis, path, tokens) => {
           defaultOpen("option_value", ["Option", "Some", "None"]),
           defaultOpen("result", ["Result", "Ok", "Err"])
         ]);
-        SubsetList.concat([defaults, SubsetList.concat(SubsetList.map(uses(tokens, []), header)), tokens])
+        SubsetList.concat([
+          defaults,
+          SubsetList.concat(SubsetList.map(uses(tokens, bareUses(tokens, [])), header)),
+          tokens
+        ])
       }
     }
   }
@@ -949,12 +974,17 @@ let prepare = (basis, units, unit) => {
                       } else { rewrite(rest, [(WmLexer.WName([head, ..tail]), pos), ..acc]) }
                     },
                     Some(_, target) => {
-                      /* A bare alias may be a local name, except as a carrier group's
-                         namespace, `Result|a, b|`. */
+                      /* A carrier group's namespace, `Result|a, b|`, is the module. Any other
+                         bare alias keeps its spelling, marked with its target: as a value it
+                         stands for the module's carrier, while in a type or pattern it is the
+                         plain name (WmParse.peek). */
                       if (SubsetList.isEmpty(tail)) {
                         match(rest) {
                           [(WmLexer.WKey("|"), _), .._] => { rewrite(rest, [(WmLexer.WName([target]), pos), ..acc]) },
-                          _ => { rewrite(rest, [(WmLexer.WName([head]), pos), ..acc]) }
+                          [(WmLexer.WKey("<"), _), .._] => { rewrite(rest, [(WmLexer.WName([head]), pos), ..acc]) },
+                          _ => {
+                            rewrite(rest, [(WmLexer.WName(["`alias", head, target]), pos), ..acc])
+                          }
                         }
                       } else {
                         rewrite(rest, [(WmLexer.WName([target, ..tail]), pos), ..acc])

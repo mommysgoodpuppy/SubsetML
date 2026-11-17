@@ -16,11 +16,17 @@
       "sourceDependencies": [],
       "primitives": []
     },
+    "SubsetMonad": {
+      "source": "src/subset_monad.sml",
+      "sourceDependencies": [],
+      "primitives": []
+    },
     "SubsetResult": {
       "source": "src/subset_result.sml",
       "sourceDependencies": [
         "SubsetOptionValue",
-        "SubsetResultValue"
+        "SubsetResultValue",
+        "SubsetMonad"
       ],
       "primitives": []
     },

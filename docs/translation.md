@@ -210,6 +210,12 @@ Result.andThen(b, y => Result.map(c, z => (x, y, z))))`, through the named names
 `andThen` and `map`, so the SML evaluates and short-circuits in the same order. A one-item group
 is the item itself.
 
+`Monad` functions are ordinary record code: `Monad.map(x, Result, f)` reads the `map` field of the
+carrier record it is given (`SubsetMonad`, `basis/monad.wm`). A bare namespace in value position
+stands for its carrier, so `Result` there is `SubsetResult.carrier`, as in Workman. The reader
+marks a bare namespace alias and decides by position: as an expression it is the carrier, while
+in a type or pattern it is the plain name (`: String`).
+
 Workman's operator precedences differ from SML's (for example, `==` binds looser than `<`), so
 the printer adds parentheses wherever the Workman grammar needs them.
 

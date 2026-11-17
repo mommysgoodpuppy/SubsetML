@@ -65,7 +65,7 @@ let value = readA(A.value) + readB(B.value);
 
  # "basis/x.wm" names the generated Basis module subset_x.wm in the --basis directory.
  basis = root / 'basis'; basis.mkdir()
- subprocess.run([compiler, 'wm', basis, 'src/subset_option_value.sml', 'src/subset_result_value.sml', 'src/subset_result.sml'], check=True)
+ subprocess.run([compiler, 'wm', basis, 'src/subset_option_value.sml', 'src/subset_result_value.sml', 'src/subset_monad.sml', 'src/subset_result.sml'], check=True)
  entry.write_text('from "basis/result.wm" import * as R;\nlet value = R.getOr(R.map(R.Ok(1), (x) => { x + 1 }), 0);\n')
  subprocess.run([compiler, 'sml-entry', out, '--basis', basis, entry], check=True)
  driver.write_text('val _ = if Entry.value = 2 then () else OS.Process.exit OS.Process.failure\n')
@@ -74,7 +74,7 @@ let value = readA(A.value) + readB(B.value);
 
  # As in Workman, an unimported `List.name` is the Basis module subset_list.wm. A lowercase
  # head is a record read, and an explicit import of the name wins.
- subprocess.run([compiler, 'wm', basis, 'src/subset_option_value.sml', 'src/subset_result_value.sml', 'src/subset_result.sml', 'src/subset_list.sml'], check=True)
+ subprocess.run([compiler, 'wm', basis, 'src/subset_option_value.sml', 'src/subset_result_value.sml', 'src/subset_monad.sml', 'src/subset_result.sml', 'src/subset_list.sml'], check=True)
  entry.write_text('record Source = { text: String };\n'
                   'let source: Source = .{ text = "abc" };\n'
                   'let before = (n: Int32.Int) => { n + 1 };\n'
@@ -89,7 +89,7 @@ let value = readA(A.value) + readB(B.value);
 
  # Bare Option/Result types and constructors are the source Basis datatypes. In particular,
  # an option returned by a Basis collection can be matched without an explicit open.
- subprocess.run([compiler, 'wm', basis, 'src/subset_option_value.sml', 'src/subset_result_value.sml', 'src/subset_result.sml', 'src/subset_option.sml'], check=True)
+ subprocess.run([compiler, 'wm', basis, 'src/subset_option_value.sml', 'src/subset_result_value.sml', 'src/subset_monad.sml', 'src/subset_result.sml', 'src/subset_option.sml'], check=True)
  entry.write_text('''from "basis/option_value.wm" import * as O;
 from "basis/result.wm" import * as R;
 let option: Option<Int32.Int> = Some(4);

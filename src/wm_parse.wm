@@ -50,7 +50,10 @@ let bind = (r) => (k) => {
   }
 };
 
+/* WmProject marks a bare namespace alias as `\`alias.Name.Target`. Only a value atom reads the
+   mark (parseAtom); everywhere else it is the plain name. */
 let peek = match {
+  [(WName(["`alias", head, _]), Var(p)), .._] => { (WName([head]), p) },
   [t, .._] => { t },
   [] => { (WEOF, 0) }
 };
@@ -1127,6 +1130,12 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
     })
   }
 
+  and atomPath = (p, path, ts) => {
+    if (isKey("{", advance(ts))) { parseNamedRecord(p, path, advance(advance(ts))) } else {
+      if (if (isKey("|", advance(ts))) { CompilerText.firstIs(lastOf(path), SubsetChar.isUpper) } else { false }) { parseCarrierGroup(p, path, advance(advance(ts))) } else { Done(pathExp(p, path), advance(ts)) }
+    }
+  }
+
   and parsePrimary = (ts) => {
     match(peek(ts)) {
       (WScon(c), Var(p)) => { Done(EScon(p, c), advance(ts)) },
@@ -1136,8 +1145,12 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
       (WKey("void"), _) => { Done(ETuple([]), advance(ts)) },
       (WKey("~"), Var(p)) => { Done(EId(p, ([], "~")), advance(ts)) },
       (WName(path), Var(p)) => {
-        if (isKey("{", advance(ts))) { parseNamedRecord(p, path, advance(advance(ts))) } else {
-          if (if (isKey("|", advance(ts))) { CompilerText.firstIs(lastOf(path), SubsetChar.isUpper) } else { false }) { parseCarrierGroup(p, path, advance(advance(ts))) } else { Done(pathExp(p, path), advance(ts)) }
+        // A bare namespace in value position is its carrier: `Monad.map(x, Result, f)`.
+        match(ts) {
+          [(WName(["`alias", _, target]), _), .._] => {
+            if (SubsetBool.not(if (isKey("{", advance(ts))) { true } else { isKey("(", advance(ts)) })) { Done(EId(p, ([target], "carrier")), advance(ts)) } else { atomPath(p, path, ts) }
+          },
+          _ => { atomPath(p, path, ts) }
         }
       },
       (WSelect(l), Var(p)) => {

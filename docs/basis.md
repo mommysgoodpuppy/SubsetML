@@ -70,12 +70,31 @@ dependency is private: `SubsetResult` does not export `option`, `NONE` or `SOME`
 | `SubsetResult.getOr (result, fallback)` | Return the successful value or the supplied fallback. |
 | `SubsetResult.isOk result`, `SubsetResult.isErr result` | Test the constructor. |
 | `SubsetResult.toOption result` | Ok becomes SOME; Err becomes NONE, explicitly discarding its error. |
+| `SubsetResult.succeed value` | `Ok value`. |
+| `SubsetResult.map2 (a, b, f)` | Combine two Oks with f; the first Err, left to right, wins. |
+| `SubsetResult.carrier` | Result's `SubsetMonad.carrier` record: via, viaErr, succeed, map, map2, andThen, mapErr. |
 | `SubsetOption.getOr (option, fallback)` | Return the present value or fallback. |
 | `SubsetOption.isSome option`, `SubsetOption.isNone option` | Test presence or absence. |
 | `SubsetOption.map (option, f)` | Transform SOME; leave NONE alone. |
 | `SubsetOption.andThen (option, f)` | Call an option-producing f only for SOME. |
 | `SubsetOption.filter (option, predicate)` | Keep a present value satisfying the predicate; otherwise NONE. |
 | `SubsetOption.toResult (option, error)` | SOME becomes Ok; NONE becomes Err with the caller's error. |
+
+### Carriers
+
+`SubsetMonad.carrier` is a record type with one field per carrier operation: `via`, `viaErr`,
+`succeed`, `map`, `map2`, `andThen` and `mapErr`. Each field has its own type parameters, 19 in
+all, so a let-bound carrier value is used at independent types. `SubsetMonad.applicative` has
+only `succeed`, `map` and `map2`. The functions take a carrier as an ordinary value:
+
+| Operation | Contract |
+|---|---|
+| `SubsetMonad.via domain transform` | The carrier's via stage. |
+| `SubsetMonad.viaErr domain inject transform` | The carrier's viaErr stage. |
+| `SubsetMonad.map (wrapped, domain, f)`, `mapErr`, `andThen` | The carrier's operation, with the wrapped value first so a pipeline supplies it. |
+| `SubsetMonad.traverse (items, domain, f)` | Apply f to each item in order, collecting the results; the first failure stops the traversal. |
+
+A carrier passed as a parameter has one instantiation per call, as in any ML.
 
 Option is declared in ordinary source by `SubsetOptionValue`:
 `datatype 'a option = NONE | SOME of 'a` (generated as `None`/`Some`).

@@ -2,7 +2,7 @@
 .DEFAULT_GOAL := bin/subsetml
 TEXT_HOST = src/subset_text_host.sml
 
-CUSTOM_BASIS = src/subset_option_value.sml src/subset_result_value.sml src/subset_bool.sml src/subset_result.sml src/subset_host.sml src/subset_option.sml src/subset_list.sml src/subset_list_pair.sml src/subset_order.sml src/subset_char.sml src/subset_bytes.sml src/subset_unicode.sml src/subset_utf8.sml src/subset_utf16.sml src/subset_string.sml src/subset_text.sml src/subset_int32.sml src/subset_string_cvt.sml src/subset_path.sml src/subset_natural.sml src/subset_source.sml src/subset_utf16_source.sml src/subset_sml_escape.sml src/subset_io.sml src/subset_process.sml
+CUSTOM_BASIS = src/subset_option_value.sml src/subset_result_value.sml src/subset_bool.sml src/subset_monad.sml src/subset_result.sml src/subset_host.sml src/subset_option.sml src/subset_list.sml src/subset_list_pair.sml src/subset_order.sml src/subset_char.sml src/subset_bytes.sml src/subset_unicode.sml src/subset_utf8.sml src/subset_utf16.sml src/subset_string.sml src/subset_text.sml src/subset_int32.sml src/subset_string_cvt.sml src/subset_path.sml src/subset_natural.sml src/subset_source.sml src/subset_utf16_source.sml src/subset_sml_escape.sml src/subset_io.sml src/subset_process.sml
 
 SRCS = $(TEXT_HOST) $(CUSTOM_BASIS) src/sml_list.sml src/sml_list_pair.sml src/sml_option.sml src/syntax.sml src/compiler_text.sml src/lexer.sml src/parser.sml src/print.sml src/int_map.sml src/types.sml \
        src/unify.sml src/env.sml src/elab.sml src/basis_source.sml src/basis.sml src/doc.sml \
@@ -35,7 +35,7 @@ TEST_SCRIPTS = run integer roundtrip translation pipes wm-modules \
   no-sml-declarations pattern-lowering selector-scope record-updates record-constructors carrier-lowering \
   basis char-basis custom-basis text-basis won-basis utf16-source \
   lexer-bytes doc-portable sml-printer wm-printer kernel-portable io-portable \
-  process-panic process-os panic-lowering cli-portable module-loading alias-module templates inline-records carrier-groups
+  process-panic process-os panic-lowering cli-portable module-loading alias-module templates inline-records carrier-groups monad
 JOBS ?= $(shell nproc 2>/dev/null || echo 4)
 
 test: bin/subsetml selfcheck

@@ -30,6 +30,7 @@ Shell.Project.load "require_all";
 ''')
 (output / 'load.sml').write_text('''use "subset_option_value.sml";
 use "subset_result_value.sml";
+use "subset_monad.sml";
 use "subset_result.sml";
 use "subset_host.native.sml";
 use "probe.sml";

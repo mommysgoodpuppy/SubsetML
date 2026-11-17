@@ -36,8 +36,11 @@ structure WmParse = struct
       Done (x, ts) => k x ts
     | Fail (message, pos) => Fail (message, pos)
 
+  (* WmProject marks a bare namespace alias as `\`alias.Name.Target`. Only a value atom reads the
+     mark (parseAtom); everywhere else it is the plain name. *)
   val peek = fn
-      t :: _ => t
+      (WName ["`alias", head, _], p) :: _ => (WName [head], p)
+    | t :: _ => t
     | [] => (WEOF, 0)
 
   val advance = fn
@@ -821,6 +824,12 @@ structure WmParse = struct
         | _ => Done (build (0, group, []), ts))
     end
 
+  and atomPath = fn (p, path, ts) =>
+    if isKey ("{", advance ts) then parseNamedRecord (p, path, advance (advance ts))
+    else (if isKey ("|", advance ts) andalso CompilerText.firstIs (lastOf path, SubsetChar.isUpper)
+    then parseCarrierGroup (p, path, advance (advance ts))
+    else Done (pathExp (p, path), advance ts))
+
   and parsePrimary = fn ts =>
     case peek ts of
       (WScon c, p) => Done (EScon (p, c), advance ts)
@@ -830,10 +839,13 @@ structure WmParse = struct
     | (WKey "void", _) => Done (ETuple [], advance ts)
     | (WKey "~", p) => Done (EId (p, ([], "~")), advance ts)
     | (WName path, p) =>
-        if isKey ("{", advance ts) then parseNamedRecord (p, path, advance (advance ts))
-        else (if isKey ("|", advance ts) andalso CompilerText.firstIs (lastOf path, SubsetChar.isUpper)
-        then parseCarrierGroup (p, path, advance (advance ts))
-        else Done (pathExp (p, path), advance ts))
+        (* A bare namespace in value position is its carrier: `Monad.map(x, Result, f)`. *)
+        (case ts of
+           (WName ["`alias", _, target], _) :: _ =>
+             if SubsetBool.not (isKey ("{", advance ts) orelse isKey ("(", advance ts))
+             then Done (EId (p, ([target], "carrier")), advance ts)
+             else atomPath (p, path, ts)
+         | _ => atomPath (p, path, ts))
     | (WSelect l, p) =>
         if CompilerText.firstIs (l, SubsetChar.isDigit)
         then Fail ("tuple selectors are not part of SubsetML; use a pattern such as (_, x)", p)

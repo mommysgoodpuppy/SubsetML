@@ -120,6 +120,16 @@ structure WmProject = struct
             | (WmLexer.WName [head], pos) :: (WmLexer.WKey "|", bar) :: rest =>
                 uses ((WmLexer.WKey "|", bar) :: rest, use (head, pos, rest, acc))
             | _ :: rest => uses (rest, acc)
+          (* A bare `X` as a whole argument, binding or list item stands for `X.carrier`. Type
+             positions look alike, `(Int, String)`; a needless import there changes nothing. *)
+          val rec bareUses = fn (tokens, acc) => case tokens of
+              (WmLexer.WKey previous, _) :: (WmLexer.WName [head], pos) :: (WmLexer.WKey after, afterPos) :: rest =>
+                bareUses ((WmLexer.WName [head], pos) :: (WmLexer.WKey after, afterPos) :: rest,
+                  if SubsetList.exists (["(", ",", "=", ":>", "[", "=>"], fn k => k = previous) andalso
+                     SubsetList.exists ([")", ",", ";", "]", "}"], fn k => k = after)
+                  then use (head, pos, rest, acc) else acc)
+            | _ :: rest => bareUses (rest, acc)
+            | [] => acc
           val header = fn (name, pos) =>
             [(WmLexer.WKey "from", pos),
              (WmLexer.WScon (Syntax.SString ("basis/" ^ CompilerText.slice (basisFile name, 7,
@@ -143,7 +153,7 @@ structure WmProject = struct
           val defaults = SubsetList.concat [
             defaultOpen ("option_value", ["Option", "Some", "None"]),
             defaultOpen ("result", ["Result", "Ok", "Err"])]
-        in SubsetList.concat [defaults, SubsetList.concat (SubsetList.map (uses (tokens, []), header)), tokens] end
+        in SubsetList.concat [defaults, SubsetList.concat (SubsetList.map (uses (tokens, bareUses (tokens, [])), header)), tokens] end
     end
 
   (* Discovery reads only the supported import header. Preparation still validates aliases,
@@ -512,12 +522,15 @@ structure WmProject = struct
                            failure (path, src, "namespace " ^ head ^ " is not explicitly imported under that name", pos)
                          else rewrite (rest, (WmLexer.WName (head :: tail), pos) :: acc)
                      | SOME (_, target) =>
-                         (* A bare alias may be a local name, except as a carrier group's
-                            namespace, `Result|a, b|`. *)
+                         (* A carrier group's namespace, `Result|a, b|`, is the module. Any other
+                            bare alias keeps its spelling, marked with its target: as a value it
+                            stands for the module's carrier, while in a type or pattern it is the
+                            plain name (WmParse.peek). *)
                          if SubsetList.isEmpty tail then
                            (case rest of
                               (WmLexer.WKey "|", _) :: _ => rewrite (rest, (WmLexer.WName [target], pos) :: acc)
-                            | _ => rewrite (rest, (WmLexer.WName [head], pos) :: acc))
+                            | (WmLexer.WKey "<", _) :: _ => rewrite (rest, (WmLexer.WName [head], pos) :: acc)
+                            | _ => rewrite (rest, (WmLexer.WName ["`alias", head, target], pos) :: acc))
                          else rewrite (rest, (WmLexer.WName (target :: tail), pos) :: acc))
                 | token :: rest => rewrite (rest, token :: acc)
             in SubsetResult.map (rewrite (tokens, []), fn body =>
