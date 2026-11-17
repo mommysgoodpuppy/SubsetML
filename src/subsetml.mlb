@@ -47,6 +47,8 @@ normalize.sml
 translate.sml
 module_imports.sml
 module_project.sml
+wm_module_scope.sml
+wm_scope.sml
 wm_project.sml
 native_int.sml
 sml_target.sml

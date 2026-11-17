@@ -142,6 +142,8 @@ let good = match(boxed.payload) { Item(n) => { n == 3 } };
   ('from "./core.wm" import { value;\n', b'unterminated'),
   ('from "./cycle.wm" import * as Cycle;\n', b'import cycle'),
   ('from "basis/result.wm" import * as R;\n', b'basis/ imports need --basis DIR'),
+  ('from "basis/1result.wm" import * as R;\n', b'imports require explicit relative'),
+  ('from "basis/_result.wm" import * as R;\n', b'imports require explicit relative'),
  ]:
   entry.write_text(body)
   (root / 'cycle.wm').write_text('from "./entry.wm" import * as Entry;\n')

@@ -10,9 +10,11 @@ from "./lexer.sml" import * as Lexer;
 from "./parser.sml" import * as Parser;
 from "./sml_list.sml" import * as SmlList;
 from "./subset_list.sml" import * as SubsetList;
+from "./subset_bool.sml" import * as SubsetBool;
 from "./translate.sml" import * as Translate;
 from "./sml_list_pair.sml" import * as SmlListPair;
 from "./wm_project.sml" import * as WmProject;
+from "./wm_scope.sml" import * as WmScope;
 from "./wm_parse.sml" import * as WmParse;
 from "./wm_lexer.sml" import * as WmLexer;
 from "./backend_names.sml" import * as BackendNames;
@@ -54,9 +56,11 @@ from "./translate.wm" import * as Translate;
 from "./sml_list_pair.wm" import * as SmlListPair;
 from "./wm_project.wm" import * as WmProject;
 from "./wm_parse.wm" import * as WmParse;
+from "./wm_scope.wm" import * as WmScope;
+from "./module_project.wm" import * as ModuleProject;
+from "./subset_bool.wm" import * as SubsetBool;
 from "./backend_names.wm" import * as BackendNames;
 from "./unify.wm" import * as Unify;
-from "./module_project.wm" import * as ModuleProject;
 from "./wm_lexer.wm" import * as WmLexer;
 from "./print.wm" import * as Print;
 from "./normalize.wm" import * as Normalize;
@@ -328,6 +332,141 @@ let fromWmLoaded = (outDir, basis, runtimePath, entryPath, adapterSpecs, sources
                     }
                   ),
                   (modules) => {
+                    let rec defaults = (modules, scopes) => {
+                      match(modules) {
+                        [] => { [] },
+                        [
+                          (
+                            Var(moduleName),
+                            Var(dependencies),
+                            (Var(path), Var(src), Var(program), Var(cs))
+                          ),
+                          ..rest
+                        ] => {
+                          let tables = match(SubsetList.find(units, (u) => { WmProject.name(u) == moduleName })) {
+                            None => { ([], [], []) },
+                            Some(unit) => { WmProject.defaultScope(basis, units, unit) }
+                          };
+                          let (values, types, namespaces) = tables;
+                          let (program, exported) = match(program) {
+                            [
+                              Syntax.TopDecs([Syntax.SStructure(p, [(Var(n), Var(aliases), Var(ds))])]),
+                              ..tail
+                            ] => {
+                              let (ds, scope) = WmScope.resolve(values, types, namespaces, scopes, ds);
+                              ([Syntax.TopDecs([Syntax.SStructure(p, [(n, aliases, ds)])]), ..tail], scope)
+                            },
+                            _ => { (program, WmScope.Scope([], [])) }
+                          };
+                          [
+                            (moduleName, dependencies, (path, src, program, cs)),
+                            ..defaults(rest, [(moduleName, exported), ..scopes])
+                          ]
+                        }
+                      }
+                    };
+                    let modules = defaults(modules, []);
+                    let libraries = match(basis) {
+                      None => { [] },
+                      Some(directory) => {
+                        SubsetList.map(
+                          SubsetList.filter(units, (u) => { WmProject.inside(directory ++ "/std", WmProject.pathOf(u)) }),
+                          WmProject.name
+                        )
+                      }
+                    };
+                    let modules = WmScope.pruneLibraries(libraries, modules);
+                    let modules = SubsetList.map(
+                      modules,
+                      (owner, deps, (path, src, prog, cs)) => {
+                        let source = SubsetList.find(ordered, (source) => { WmProject.name(WmProject.sourceUnit(source)) == owner });
+                        let unit = SubsetList.find(units, (u) => { WmProject.name(u) == owner });
+                        let types = match(unit) {
+                          None => { [] },
+                          Some(unit) => {
+                            let (_, types, _) = WmProject.defaultScope(basis, units, unit);
+                            SubsetList.concat(SubsetList.map(
+                              types,
+                              (_, (qs, _)) => {
+                                match(qs) {
+                                  [n] => { [n] },
+                                  _ => { [] }
+                                }
+                              }
+                            ))
+                          }
+                        };
+                        let referenced = WmScope.moduleReferences(prog);
+                        let explicit = (target) => {
+                          match(source) {
+                            None => { true },
+                            Some(source) => {
+                              SubsetList.exists(
+                                WmProject.edgesOf(source),
+                                (edge) => {
+                                  let WmProject.Edge(_, _, _, id) = edge;
+                                  if (SubsetList.exists(
+                                    units,
+                                    (u) => {
+                                      if (WmProject.name(u) == target) { ModuleProject.same(WmProject.identity(u), id) } else { false }
+                                    }
+                                  )) {
+                                    SubsetBool.not(WmProject.isDefaultEdge(WmProject.sourceUnit(source), edge))
+                                  } else { false }
+                                }
+                              )
+                            }
+                          }
+                        };
+                        let deps = SubsetList.filter(
+                          deps,
+                          (n) => {
+                            if (if (explicit(n)) { true } else { WmScope.member(referenced, n) }) { true } else { WmScope.member(types, n) }
+                          }
+                        );
+                        (owner, deps, (path, src, prog, cs))
+                      }
+                    );
+                    let roots = match(entryPath) {
+                      None => { SubsetList.map(modules, (owner, _, _) => { owner }) },
+                      Some(entry) => {
+                        SubsetList.map(
+                          SubsetList.filter(
+                            units,
+                            (u) => {
+                              if (match(WmProject.canonical(entry)) {
+                                Some(path) => { WmProject.pathOf(u) == path },
+                                None => { false }
+                              }) { true } else {
+                                match(runtime) {
+                                  Some(n) => { n == WmProject.name(u) },
+                                  None => { false }
+                                }
+                              }
+                            }
+                          ),
+                          WmProject.name
+                        )
+                      }
+                    };
+                    let rec reachable = (todo, seen) => {
+                      match(todo) {
+                        [] => { seen },
+                        [n, ..rest] => {
+                          if (WmScope.member(seen, n)) { reachable(rest, seen) } else {
+                            reachable(SubsetList.append(dependenciesOf(n)(modules), rest), [n, ..seen])
+                          }
+                        }
+                      }
+                    };
+                    let used = reachable(roots, []);
+                    let modules = SubsetList.filter(modules, (owner, _, _) => { WmScope.member(used, owner) });
+                    let ordered = SubsetList.filter(
+                      ordered,
+                      (source) => {
+                        WmScope.member(used, WmProject.name(WmProject.sourceUnit(source)))
+                      }
+                    );
                     let (renamed, names) = BackendNames.projectWithRuntime(runtime, keywordPrefix, modules);
                     let checked = match(BackendNames.failure(names)) {
                       None => { Translate.recoverProjectWithRuntime(runtime, renamed) },

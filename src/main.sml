@@ -9,9 +9,11 @@ from "./lexer.sml" import * as Lexer;
 from "./parser.sml" import * as Parser;
 from "./sml_list.sml" import * as SmlList;
 from "./subset_list.sml" import * as SubsetList;
+from "./subset_bool.sml" import * as SubsetBool;
 from "./translate.sml" import * as Translate;
 from "./sml_list_pair.sml" import * as SmlListPair;
 from "./wm_project.sml" import * as WmProject;
+from "./wm_scope.sml" import * as WmScope;
 from "./wm_parse.sml" import * as WmParse;
 from "./wm_lexer.sml" import * as WmLexer;
 from "./backend_names.sml" import * as BackendNames;
@@ -202,6 +204,57 @@ structure Main = struct
                         Syntax.TopDecs [Syntax.SStructure (0, [(WmProject.name unit, aliases, ds)])] ::
                         SmlList.map (fn e => Syntax.TopExp (0, e)) es, cs)))), fn modules =>
                 let
+                  val rec defaults = fn (modules, scopes) => case modules of
+                      [] => []
+                    | (moduleName, dependencies, (path, src, program, cs)) :: rest =>
+                        let
+                          val tables = case SubsetList.find (units, fn u => WmProject.name u = moduleName) of
+                              NONE => ([], [], []) | SOME unit => WmProject.defaultScope (basis, units, unit)
+                          val (values, types, namespaces) = tables
+                          val (program, exported) = case program of
+                              Syntax.TopDecs [Syntax.SStructure (p, [(n, aliases, ds)])] :: tail =>
+                                let val (ds, scope) = WmScope.resolve (values, types, namespaces, scopes, ds)
+                                in (Syntax.TopDecs [Syntax.SStructure (p, [(n, aliases, ds)])] :: tail, scope) end
+                            | _ => (program, WmScope.Scope ([], []))
+                        in (moduleName, dependencies, (path, src, program, cs)) ::
+                          defaults (rest, (moduleName, exported) :: scopes) end
+                  val modules = defaults (modules, [])
+                  val libraries = case basis of NONE => [] | SOME directory =>
+                    SubsetList.map (SubsetList.filter (units,
+                      fn u => WmProject.inside (directory ^ "/std", WmProject.pathOf u)), WmProject.name)
+                  val modules = WmScope.pruneLibraries (libraries, modules)
+                  val modules = SubsetList.map (modules, fn (owner, deps, (path, src, prog, cs)) =>
+                    let
+                      val source = SubsetList.find (ordered,
+                        fn source => WmProject.name (WmProject.sourceUnit source) = owner)
+                      val unit = SubsetList.find (units, fn u => WmProject.name u = owner)
+                      val types = case unit of NONE => [] | SOME unit =>
+                        let val (_, types, _) = WmProject.defaultScope (basis, units, unit)
+                        in SubsetList.concat (SubsetList.map (types,
+                          fn (_, (qs, _)) => case qs of [n] => [n] | _ => [])) end
+                      val referenced = WmScope.moduleReferences prog
+                      val explicit = fn target => case source of NONE => true | SOME source =>
+                        SubsetList.exists (WmProject.edgesOf source,
+                          fn edge => let val WmProject.Edge (_, _, _, id) = edge in
+                            SubsetList.exists (units, fn u => WmProject.name u = target andalso
+                              ModuleProject.same (WmProject.identity u, id)) andalso
+                            SubsetBool.not (WmProject.isDefaultEdge (WmProject.sourceUnit source, edge)) end)
+                      val deps = SubsetList.filter (deps, fn n => explicit n orelse
+                        WmScope.member (referenced, n) orelse WmScope.member (types, n))
+                    in (owner, deps, (path, src, prog, cs)) end)
+                  val roots = case entryPath of
+                      NONE => SubsetList.map (modules, fn (owner, _, _) => owner)
+                    | SOME entry => SubsetList.map (SubsetList.filter (units, fn u =>
+                        (case WmProject.canonical entry of SOME path => WmProject.pathOf u = path | NONE => false)
+                        orelse (case runtime of SOME n => n = WmProject.name u | NONE => false)), WmProject.name)
+                  val rec reachable = fn (todo, seen) => case todo of
+                      [] => seen
+                    | n :: rest => if WmScope.member (seen, n) then reachable (rest, seen)
+                      else reachable (SubsetList.append (dependenciesOf n modules, rest), n :: seen)
+                  val used = reachable (roots, [])
+                  val modules = SubsetList.filter (modules, fn (owner, _, _) => WmScope.member (used, owner))
+                  val ordered = SubsetList.filter (ordered,
+                    fn source => WmScope.member (used, WmProject.name (WmProject.sourceUnit source)))
                   val (renamed, names) = BackendNames.projectWithRuntime (runtime, keywordPrefix, modules)
                   val checked = case BackendNames.failure names of
                     NONE => Translate.recoverProjectWithRuntime (runtime, renamed)

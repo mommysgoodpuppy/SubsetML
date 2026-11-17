@@ -58,21 +58,37 @@ declarations below). Duplicate imported names are
 errors. `export from` with a named clause is diagnosed explicitly, as are non-local and later
 imports. Namespace values are not first-class.
 
-Workman opens each public Basis module `subset_x.wm` as the namespace `X` in every program, so
-`List.filter` is `SubsetList.filter` and `ListPair.zip` is `SubsetListPair.zip`. With `--basis
-DIR`, a module that uses an uppercase `X.name` without importing `X` gets `from "basis/x.wm"
-import * as X;`. The host adapters and the Basis modules themselves are excluded, and `Int32`
-stays the translator's numeric namespace. Without `--basis`, these names keep the bootstrap
-meanings below. Workman's `std/` extensions are not part of the Basis and remain unbound.
+The reader and Workman's compiler share `WmModuleScope` for library paths, namespace aliases,
+auto-open rules, pervasive values and pervasive types. With `--basis DIR`, source defaults
+resolve to canonical library modules after parsing. Only their projected names enter scope;
+defaults do not open whole modules or export through the importing module. Ordinary lets,
+recursive bindings, match binders, local datatypes and explicit imports shadow defaults using
+their lexical scope. `Option`/`Some`/`None` and `Result`/`Ok`/`Err` use their source-owned Basis
+datatypes, so returned library values and authored constructor patterns have the same identity.
+`Carrier` and `Applicative` are available for record inference without a record-literal heuristic.
 
-With `--basis`, bare `Option`, `Some` and `None` use the source datatype in
-`subset_option_value.wm`, while `Result`, `Ok` and `Err` use `subset_result.wm`. The translator
-supplies private opens when those names occur; it does not define another datatype or rewrite
-constructor spellings to a fixed module. Ordinary declarations and explicit imports can shadow
-these defaults. Values returned by Basis functions therefore match the same constructors used
-in authored patterns. Without `--basis`, host compatibility Option remains available; its
-constructor/type definitions now derive from the embedded shared source rather than a second
-checker table. Host compatibility and imported source datatypes retain distinct identities.
+`DIR/module-scope.paths`, when present, lists staged library paths, one per line, using WM's
+identities (`subml-basis/subset_list.wm`, `std/list.wm`). Basis files remain directly in `DIR`;
+std files live in `DIR/std/`. The shared auto-open rules select std extensions over same-named
+Basis modules. An older flat `--basis` directory without an inventory still supports public
+Basis namespaces; candidate spellings are checked against the shared forward alias rule.
+The reader retains its intrinsic `Int32` numeric namespace. Basis implementation files use
+explicit imports rather than receiving their own default scope.
+
+`wm sml` stages std modules whose dependency closure has no JS imports. JS-backed std
+extensions retain the source Basis namespace where one exists; their extra members still need
+native adapters. Discovery conservatively loads modules mentioned in the source; parsed binding
+resolution decides which names actually refer to defaults. Unused default dependencies are
+removed before emission, so shadowed namespaces do not initialize their default modules.
+Explicit imports retain their initialization effects. The native project omits unused
+lambda definitions in staged std modules, preserving all library initializers and their called
+functions. Needed functions, re-exported APIs and user functions remain checked. A generic
+display function still needs a portable display when retained; an unused display helper no
+longer prevents another export of its module from translating.
+
+Without `--basis`, the bootstrap meanings below remain available. Their constructor/type
+definitions derive from the embedded shared source; host compatibility and imported source
+datatypes retain distinct identities.
 
 `before` and `o` are infix in the SML Basis Library, so native output renames bindings with
 those names, as it does SML keywords.

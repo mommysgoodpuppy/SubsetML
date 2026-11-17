@@ -7,7 +7,7 @@ CUSTOM_BASIS = src/subset_option_value.sml src/subset_result_value.sml src/subse
 SRCS = $(TEXT_HOST) $(CUSTOM_BASIS) src/sml_list.sml src/sml_list_pair.sml src/sml_option.sml src/syntax.sml src/compiler_text.sml src/lexer.sml src/parser.sml src/print.sml src/int_map.sml src/types.sml \
        src/unify.sml src/env.sml src/elab.sml src/basis_source.sml src/basis.sml src/doc.sml \
        src/sml_print.sml src/wm_print.sml src/wm_lexer.sml \
-       src/backend_names.sml src/wm_parse.sml src/normalize.sml src/translate.sml src/module_imports.sml src/module_project.sml src/wm_project.sml src/native_int.sml src/sml_target.sml src/main.sml
+       src/backend_names.sml src/wm_parse.sml src/normalize.sml src/translate.sml src/module_imports.sml src/module_project.sml src/wm_module_scope.sml src/wm_scope.sml src/wm_project.sml src/native_int.sml src/sml_target.sml src/main.sml
 
 src/basis_source.sml: src/subset_option_value.sml scripts/generate-basis-source.py
 	python3 scripts/generate-basis-source.py
@@ -31,7 +31,7 @@ wm-selfcheck: wm
 # Every suite script, in its historical order. `make test` runs them in parallel, each with its
 # own temp directory and log; `make test JOBS=1` runs them one at a time.
 TEST_SCRIPTS = run integer roundtrip translation pipes wm-modules \
-  wm-entry native-adapters mlworks-host sml-targets sml-compiler backend-names \
+  wm-entry wm-scope native-adapters mlworks-host sml-targets sml-compiler backend-names \
   no-sml-declarations pattern-lowering selector-scope record-updates record-constructors carrier-lowering \
   basis char-basis custom-basis text-basis won-basis utf16-source \
   lexer-bytes doc-portable sml-printer wm-printer kernel-portable io-portable \

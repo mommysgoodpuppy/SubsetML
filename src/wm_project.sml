@@ -17,6 +17,7 @@ from "./subset_char.sml" import * as SubsetChar;
 from "./subset_option.sml" import * as SubsetOption;
 from "./subset_string.sml" import * as SubsetString;
 from "./lexer.sml" import * as Lexer;
+from "./wm_module_scope.sml" import * as WmModuleScope;
 *)
 
 (* Source-list reverse translation shares the source loader's canonical identities.
@@ -39,139 +40,111 @@ structure WmProject = struct
   val sourceUnit = fn Source (unit, _, _, _) => unit
   val edgesOf = fn Source (_, edges, _, _) => edges
 
+  (* Default aliases are hygienic: their exact spelling never appears in authored tokens.
+     Explicit imports and translator form dependencies always retain their effects. *)
+  val isDefaultEdge = fn (unit, Edge (_, _, alias, _)) =>
+    (CompilerText.size alias >= 13 andalso CompilerText.slice (alias, 0, 13) = "SubsetDefault") andalso
+    (case WmLexer.lex (textOf unit) of
+      WmLexer.Tokens (tokens, _) => SubsetBool.not (SubsetList.exists (tokens,
+        fn (token, _) => token = WmLexer.WName [alias]))
+    | _ => false)
+
   (* "basis/won.wm" names the Basis module subset_won.wm, as in Workman. *)
   val basisModule = fn specifier =>
-    let val count = CompilerText.size specifier in
-      if count > 9 andalso CompilerText.slice (specifier, 0, 6) = "basis/" andalso
-         CompilerText.isSuffix (specifier, ".wm") then
-        let val name = CompilerText.slice (specifier, 6, count - 9) in
-          if SubsetList.all (CompilerText.characters name,
-               fn c => SubsetChar.isLower c orelse SubsetChar.isDigit c orelse c = #"_")
-          then SOME ("subset_" ^ name ^ ".wm") else NONE
-        end
-      else NONE
-    end
+    case WmModuleScope.libraryImport specifier of
+      NONE => NONE
+    | SOME {path, description} =>
+        SubsetOption.map (WmModuleScope.basisModuleName path,
+          fn name => "subset_" ^ name ^ ".wm")
 
   val validSpecifier = fn specifier =>
-    SubsetOption.isSome (basisModule specifier) orelse
+    SubsetOption.isSome (WmModuleScope.libraryImport specifier) orelse
     (CompilerText.isSuffix (specifier, ".wm") andalso
      ModuleImports.validPath (CompilerText.slice (specifier, 0, CompilerText.size specifier - 3) ^ ".sml"))
 
   (* basis is the directory holding the generated Basis modules, if the build supplies one. *)
   val resolve = fn (basis, referrer, specifier) =>
-    case basisModule specifier of
+    case WmModuleScope.libraryImport specifier of
       NONE => ModuleProject.resolve (referrer, specifier)
-    | SOME file => (case basis of
+    | SOME {path, description} => (case basis of
         NONE => SubsetResult.Err (SubsetIo.HostError "basis/ imports need --basis DIR")
-      | SOME directory => ModuleProject.identify (directory ^ "/" ^ file))
+      | SOME directory => (case WmModuleScope.basisModuleName path of
+          SOME name => ModuleProject.identify (directory ^ "/subset_" ^ name ^ ".wm")
+        | NONE => ModuleProject.identify (directory ^ "/" ^ path)))
 
-  (* Workman opens each public Basis module subset_x.wm as the namespace X in every program:
-     `List` is SubsetList and `ListPair` is SubsetListPair. With a Basis directory, a module
-     that uses `X.name` without binding X in an import gets that Basis import, so discovery,
-     preparation and checking treat it as written. The host adapters are not namespaces, and
-     the Basis modules themselves import each other explicitly. `Int32` stays the translator's
-     own numeric namespace (`Int32.Int`, `Int32.div`), which the numeric refactor revisits. *)
-  val basisFile = fn name =>
-    let val rec go = fn (cs, previous, acc) => case cs of
-        [] => SubsetList.reverse acc
-      | c :: rest =>
-          let val separated = SubsetChar.isUpper c andalso
-                (SubsetChar.isLower previous orelse SubsetChar.isDigit previous)
-          in go (rest, c, if separated then SubsetChar.toLower c :: #"_" :: acc else SubsetChar.toLower c :: acc) end
-    in "subset_" ^ CompilerText.implode (go (CompilerText.characters name, #"_", [])) ^ ".wm" end
+  val librarySpecifier = fn path => case WmModuleScope.basisModuleName path of
+      SOME name => "basis/" ^ name ^ ".wm"
+    | NONE => path
 
-  val implicitBasis = fn (basis, path, tokens) =>
+  val libraryFile = fn (directory, path) => case basisModule (librarySpecifier path) of
+      SOME file => directory ^ "/" ^ file
+    | NONE => directory ^ "/" ^ path
+
+  val canonical = fn path => case ModuleProject.identify path of
+      SubsetResult.Ok (ModuleProject.Resolved (_, canonical)) => SOME canonical
+    | SubsetResult.Err _ => NONE
+  val inside = fn (directory, path) => case (canonical directory, canonical path) of
+      (SOME directory, SOME file) => CompilerText.size file > CompilerText.size directory + 1 andalso
+        CompilerText.slice (file, 0, CompilerText.size directory + 1) = directory ^ "/"
+    | _ => false
+  val librarySource = fn (directory, path) => inside (directory, path) andalso
+    SubsetBool.not (inside (directory ^ "/std", path))
+
+  (* The driver supplies an inventory of staged library modules. Older --basis callers can
+     still use their flat Basis directory; candidates are verified by the shared scope rules. *)
+  val libraryPaths = fn (directory, tokens) =>
     let
-      val canonical = fn path => case ModuleProject.identify path of
-          SubsetResult.Ok (ModuleProject.Resolved (_, canonical)) => SOME canonical
-        | SubsetResult.Err _ => NONE
-      val inside = fn directory => case (canonical directory, canonical path) of
-          (SOME directory, SOME file) =>
-            CompilerText.size file > CompilerText.size directory + 1 andalso
-            CompilerText.slice (file, 0, CompilerText.size directory + 1) = directory ^ "/"
-        | _ => false
-    in
-    case basis of
+      val candidates = SubsetList.concat (SubsetList.map (tokens, fn (token, _) => case token of
+        WmLexer.WName (head :: _) => (case WmModuleScope.basisNamespaceCandidate head of
+          SOME path => [path] | NONE => []) | _ => []))
+      val bindings = SubsetList.concat [WmModuleScope.builtinValues, WmModuleScope.builtinTypes,
+        WmModuleScope.pervasives, WmModuleScope.pervasiveTypes]
+      val paths = case SubsetIo.readFile (directory ^ "/module-scope.paths") of
+          SubsetResult.Ok bytes => CompilerText.fields (CompilerText.stringOf bytes, fn c => c = #"\n")
+        | SubsetResult.Err _ => SubsetList.append (candidates,
+            SubsetList.map (bindings, fn {modulePath, name, sourceName} => modulePath))
+      val paths = SubsetList.foldLeft (paths, [], fn (path, found) =>
+        if SubsetList.exists (found, fn p => p = path) then found else path :: found)
+    in SubsetList.filter (paths, fn path =>
+      case canonical (libraryFile (directory, path)) of SOME _ => true | NONE => false) end
+
+  val implicitBasis = fn (basis, path, tokens) => case basis of
       NONE => tokens
-    | SOME directory => if inside directory then tokens else
+    | SOME directory => if librarySource (directory, path) then tokens else
         let
-          (* Every single name inside an import header, whether alias or named item. *)
-          val rec imported = fn (tokens, inside, acc) => case tokens of
-              [] => acc
-            | (WmLexer.WKey "import", _) :: rest => imported (rest, true, acc)
-            | (WmLexer.WKey ";", _) :: rest => imported (rest, false, acc)
-            | (WmLexer.WName [name], _) :: rest =>
-                imported (rest, inside, if inside then name :: acc else acc)
-            | _ :: rest => imported (rest, inside, acc)
-          val explicit = imported (tokens, false, [])
-          val available = fn name =>
-            CompilerText.firstIs (name, SubsetChar.isUpper) andalso
-            SubsetBool.not (SubsetList.exists (["Host", "TextHost", "Int32"], fn n => n = name)) andalso
-            SubsetBool.not (SubsetList.exists (explicit, fn n => n = name)) andalso
-            (case ModuleProject.identify (directory ^ "/" ^ basisFile name) of
-               SubsetResult.Ok _ => true | SubsetResult.Err _ => false)
-          val use = fn (head, pos, rest, acc) =>
-            if SubsetList.exists (acc, fn (n, _) => n = head) orelse SubsetBool.not (available head)
-            then acc else (head, pos) :: acc
-          (* `X.name`, or a carrier group `X|a, b|`, which uses X's andThen and map. *)
-          val rec uses = fn (tokens, acc) => case tokens of
-              [] => SubsetList.reverse acc
-            | (WmLexer.WName (head :: _ :: _), pos) :: rest => uses (rest, use (head, pos, rest, acc))
-            | (WmLexer.WName [head], pos) :: (WmLexer.WKey "|", bar) :: rest =>
-                uses ((WmLexer.WKey "|", bar) :: rest, use (head, pos, rest, acc))
-            | _ :: rest => uses (rest, acc)
-          (* A bare `X` as a whole argument, binding or list item stands for `X.carrier`. Type
-             positions look alike, `(Int, String)`; a needless import there changes nothing. *)
-          val rec bareUses = fn (tokens, acc) => case tokens of
-              (WmLexer.WKey previous, _) :: (WmLexer.WName [head], pos) :: (WmLexer.WKey after, afterPos) :: rest =>
-                bareUses ((WmLexer.WName [head], pos) :: (WmLexer.WKey after, afterPos) :: rest,
-                  if SubsetList.exists (["(", ",", "=", ":>", "[", "=>"], fn k => k = previous) andalso
-                     SubsetList.exists ([")", ",", ";", "]", "}"], fn k => k = after)
-                  then use (head, pos, rest, acc) else acc)
-            | _ :: rest => bareUses (rest, acc)
-            | [] => acc
-          val header = fn (name, pos) =>
-            [(WmLexer.WKey "from", pos),
-             (WmLexer.WScon (Syntax.SString ("basis/" ^ CompilerText.slice (basisFile name, 7,
-                CompilerText.size (basisFile name) - 7))), pos),
-             (WmLexer.WKey "import", pos), (WmLexer.WKey "*", pos), (WmLexer.WKey "as", pos),
-             (WmLexer.WName [name], pos), (WmLexer.WKey ";", pos)]
-          (* Constructors and type names share the source Basis's identity too. Use private
-             opens, rather than rewriting spellings, so authored declarations and patterns
-             can shadow these names with the usual lexical rules. Explicit imports follow
-             the defaults and therefore still win. Basis sources supply their own imports. *)
-          val defaultOpen = fn (file, names) =>
-            if SubsetList.exists (tokens, fn (token, _) => case token of
-                 WmLexer.WName [name] => SubsetList.exists (names, fn n => n = name)
-               | _ => false) andalso
-               (case ModuleProject.identify (directory ^ "/subset_" ^ file ^ ".wm") of
-                  SubsetResult.Ok _ => true | SubsetResult.Err _ => false)
-            then [(WmLexer.WKey "from", 0),
-                  (WmLexer.WScon (Syntax.SString ("basis/" ^ file ^ ".wm")), 0),
-                  (WmLexer.WKey "import", 0), (WmLexer.WKey "*", 0), (WmLexer.WKey ";", 0)]
-            else []
-          val defaults = SubsetList.concat [
-            defaultOpen ("option_value", ["Option", "Some", "None"]),
-            defaultOpen ("result", ["Result", "Ok", "Err"])]
-          val used = uses (tokens, bareUses (tokens, []))
-          (* The reader spells some Workman forms with Basis functions: `!` is SubsetBool.not,
-             `%` and `==` on reals use SubsetInt32 and SubsetReal64, and backtick text and `print`
-             (SubsetIo.printLine) show values with a display that names those, SubsetString,
-             SubsetList and the Option and Result constructors. Import each module, under its
-             structure name, when its form occurs and the module isn't imported already. *)
-          val alreadyImported = fn file =>
-            SubsetList.exists (tokens, fn (token, _) =>
-              token = WmLexer.WScon (Syntax.SString ("basis/" ^ file ^ ".wm"))) orelse
-            SubsetList.exists (used, fn (name, _) => basisFile name = "subset_" ^ file ^ ".wm")
-          val formImport = fn (file, structureName, forms) =>
+          val paths = libraryPaths (directory, tokens)
+          val std = inside (directory ^ "/std", path)
+          val singleton = fn name => SubsetList.exists (tokens, fn (token, _) =>
+            token = WmLexer.WName [name])
+          val mentioned = fn name => SubsetList.exists (tokens, fn (token, _) => case token of
+            WmLexer.WName (head :: _) => head = name | _ => false)
+          val builtin = SubsetList.append (WmModuleScope.builtinValues, WmModuleScope.builtinTypes)
+          val projected = if std then builtin else SubsetList.concat [builtin,
+            WmModuleScope.pervasives, WmModuleScope.pervasiveTypes]
+          val needed = SubsetList.map (SubsetList.filter (projected,
+              fn {modulePath, name, sourceName} => singleton name orelse
+                SubsetList.exists (WmModuleScope.pervasiveTypes, fn binding => binding =
+                  {modulePath = modulePath, name = name, sourceName = sourceName})),
+            fn {modulePath, name, sourceName} => modulePath)
+          val namespaces = if std then [] else SubsetList.filter (paths, fn modulePath =>
+            WmModuleScope.isAutoOpened (modulePath, paths) andalso
+            WmModuleScope.moduleAlias modulePath <> "Int32" andalso
+            mentioned (WmModuleScope.moduleAlias modulePath))
+          val needed = SubsetList.foldLeft (SubsetList.append (needed, namespaces), [], fn (p, acc) =>
+            if SubsetList.exists (acc, fn n => n = p) orelse
+               SubsetBool.not (SubsetList.exists (paths, fn n => n = p)) then acc else p :: acc)
+          val rec fresh = fn name => if mentioned name then fresh (name ^ "_") else name
+          val header = fn (specifier, alias) =>
+            [(WmLexer.WKey "from", 0), (WmLexer.WScon (Syntax.SString specifier), 0),
+             (WmLexer.WKey "import", 0), (WmLexer.WKey "*", 0), (WmLexer.WKey "as", 0),
+             (WmLexer.WName [alias], 0), (WmLexer.WKey ";", 0)]
+          val defaults = SubsetList.concat (SubsetList.map (needed, fn p =>
+            header (librarySpecifier p, fresh ("SubsetDefault" ^ WmParse.structureName p))))
+          (* These are translation dependencies, rather than source default bindings. *)
+          val formImport = fn (file, alias, forms) =>
             if SubsetList.exists (tokens, fn (token, _) => SubsetList.exists (forms, fn form => form = token)) andalso
-               SubsetBool.not (alreadyImported file) andalso
-               (case ModuleProject.identify (directory ^ "/subset_" ^ file ^ ".wm") of
-                  SubsetResult.Ok _ => true | SubsetResult.Err _ => false)
-            then [(WmLexer.WKey "from", 0), (WmLexer.WScon (Syntax.SString ("basis/" ^ file ^ ".wm")), 0),
-                  (WmLexer.WKey "import", 0), (WmLexer.WKey "*", 0), (WmLexer.WKey "as", 0),
-                  (WmLexer.WName [structureName], 0), (WmLexer.WKey ";", 0)]
-            else []
+               (case canonical (directory ^ "/subset_" ^ file ^ ".wm") of SOME _ => true | NONE => false)
+            then header ("basis/" ^ file ^ ".wm", fresh alias) else []
           val print = WmLexer.WName ["print"]
           val text = WmLexer.WKey "`("
           val forms = SubsetList.concat [
@@ -183,8 +156,37 @@ structure WmProject = struct
             formImport ("list", "SubsetList", [text, print]),
             formImport ("option_value", "SubsetOptionValue", [text, print]),
             formImport ("result_value", "SubsetResultValue", [text, print])]
-        in SubsetList.concat [defaults, forms, SubsetList.concat (SubsetList.map (used, header)), tokens] end
-    end
+        in SubsetList.concat [defaults, forms, tokens] end
+
+  (* Bindings point at the canonical module allocated by the project planner. They are applied
+     after parsing, where lexical declarations and patterns can shadow them correctly. *)
+  val defaultScope = fn (basis, units, unit) => case basis of
+      NONE => ([], [], [])
+    | SOME directory => if librarySource (directory, pathOf unit) then ([], [], []) else
+        let
+          val tokens = case WmLexer.lex (textOf unit) of WmLexer.Tokens (ts, _) => ts | _ => []
+          val paths = libraryPaths (directory, tokens)
+          val std = inside (directory ^ "/std", pathOf unit)
+          val target = fn path => case ModuleProject.identify (libraryFile (directory, path)) of
+              SubsetResult.Err _ => NONE
+            | SubsetResult.Ok (ModuleProject.Resolved (id, _)) =>
+                SubsetOption.map (SubsetList.find (units, fn u => ModuleProject.same (id, identity u)), name)
+          val bindings = fn (items, typeNames) => SubsetList.concat (SubsetList.map (items,
+            fn {modulePath, name, sourceName} => case target modulePath of
+              NONE => []
+            | SOME moduleName =>
+                let val translate = if typeNames then WmParse.tyConName else WmParse.valueName
+                    val (_, source) = translate ([], name)
+                in [(source, translate ([moduleName], sourceName))] end))
+          val values = bindings (if std then WmModuleScope.builtinValues else
+            SubsetList.append (WmModuleScope.builtinValues, WmModuleScope.pervasives), false)
+          val types = bindings (if std then WmModuleScope.builtinTypes else
+            SubsetList.append (WmModuleScope.builtinTypes, WmModuleScope.pervasiveTypes), true)
+          val namespaces = if std then [] else SubsetList.concat (SubsetList.map (paths, fn p =>
+            if WmModuleScope.isAutoOpened (p, paths) andalso WmModuleScope.moduleAlias p <> "Int32"
+            then (case target p of SOME target => [(WmModuleScope.moduleAlias p, target)] | NONE => [])
+            else []))
+        in (values, types, namespaces) end
 
   (* Discovery reads only the supported import header. Preparation still validates aliases,
      private scope and later imports using the same canonical identities. *)
@@ -416,6 +418,7 @@ structure WmProject = struct
   val prepare = fn (basis, units, unit) =>
     let
       val Unit (Input (resolved, path, src), _, _) = unit
+      val (_, _, defaultNamespaces) = defaultScope (basis, units, unit)
       val dependency = fn (specifier, pos) =>
         if SubsetBool.not (validSpecifier specifier) then
           failure (path, src, "imports require explicit relative .wm paths or basis/ modules in the local source profile", pos)
@@ -550,7 +553,9 @@ structure WmProject = struct
                      | NONE =>
                     case SubsetList.find (aliases, fn (alias, _) => alias = head) of
                        NONE =>
-                         if SubsetBool.not (SubsetList.isEmpty tail) andalso SubsetList.exists (units, fn u => name u = head) then
+                         if SubsetBool.not (SubsetList.isEmpty tail) andalso
+                            SubsetList.exists (units, fn u => name u = head) andalso
+                            SubsetBool.not (SubsetList.exists (defaultNamespaces, fn (alias, _) => alias = head)) then
                            failure (path, src, "namespace " ^ head ^ " is not explicitly imported under that name", pos)
                          else rewrite (rest, (WmLexer.WName (head :: tail), pos) :: acc)
                      | SOME (_, target) =>

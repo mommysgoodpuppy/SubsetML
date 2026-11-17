@@ -18,6 +18,7 @@ from "./subset_char.sml" import * as SubsetChar;
 from "./subset_option.sml" import * as SubsetOption;
 from "./subset_string.sml" import * as SubsetString;
 from "./lexer.sml" import * as Lexer;
+from "./wm_module_scope.sml" import * as WmModuleScope;
 */
 
 /* Source-list reverse translation shares the source loader's canonical identities.
@@ -29,16 +30,17 @@ from "./syntax.wm" import * as Syntax;
 from "./wm_lexer.wm" import * as WmLexer;
 from "./subset_result.wm" import * as SubsetResult;
 from "./compiler_text.wm" import * as CompilerText;
+from "./subset_bool.wm" import * as SubsetBool;
 from "./subset_list.wm" import * as SubsetList;
-from "./subset_char.wm" import * as SubsetChar;
+from "./wm_module_scope.wm" import * as WmModuleScope;
 from "./subset_option.wm" import * as SubsetOption;
 from "./module_imports.wm" import * as ModuleImports;
 from "./subset_io.wm" import * as SubsetIo;
-from "./subset_bool.wm" import * as SubsetBool;
 from "./wm_parse.wm" import * as WmParse;
 from "./basis.wm" import * as Basis;
 from "./unify.wm" import * as Unify;
 from "./env.wm" import * as Env;
+from "./subset_char.wm" import * as SubsetChar;
 from "./subset_string.wm" import * as SubsetString;
 from "./lexer.wm" import * as Lexer;
 
@@ -74,22 +76,33 @@ let edgesOf = match {
   Source(_, edges, _, _) => { edges }
 };
 
+/* Default aliases are hygienic: their exact spelling never appears in authored tokens.
+   Explicit imports and translator form dependencies always retain their effects. */
+let isDefaultEdge = match {
+  (Var(unit), Edge(_, _, alias, _)) => {
+    if (if (CompilerText.size(alias) >= 13) { CompilerText.slice(alias, 0, 13) == "SubsetDefault" } else { false }) {
+      match(WmLexer.lex(textOf(unit))) {
+        WmLexer.Tokens(tokens, _) => {
+          SubsetBool.not(SubsetList.exists(tokens, (token, _) => { token == WmLexer.WName([alias]) }))
+        },
+        _ => { false }
+      }
+    } else { false }
+  }
+};
+
 // "basis/won.wm" names the Basis module subset_won.wm, as in Workman.
 let basisModule = (specifier) => {
-  let count = CompilerText.size(specifier);
-  if (if (if (count > 9) { CompilerText.slice(specifier, 0, 6) == "basis/" } else { false }) { CompilerText.isSuffix(specifier, ".wm") } else { false }) {
-    let name = CompilerText.slice(specifier, 6, count - 9);
-    if (SubsetList.all(
-      CompilerText.characters(name),
-      (c) => {
-        if (if (SubsetChar.isLower(c)) { true } else { SubsetChar.isDigit(c) }) { true } else { c == '_' }
-      }
-    )) { Some("subset_" ++ name ++ ".wm") } else { None }
-  } else { None }
+  match(WmModuleScope.libraryImport(specifier)) {
+    None => { None },
+    Some(.{ path, description }) => {
+      SubsetOption.map(WmModuleScope.basisModuleName(path), (name) => { "subset_" ++ name ++ ".wm" })
+    }
+  }
 };
 
 let validSpecifier = (specifier) => {
-  if (SubsetOption.isSome(basisModule(specifier))) { true } else {
+  if (SubsetOption.isSome(WmModuleScope.libraryImport(specifier))) { true } else {
     if (CompilerText.isSuffix(specifier, ".wm")) {
       ModuleImports.validPath(CompilerText.slice(specifier, 0, CompilerText.size(specifier) - 3) ++ ".sml")
     } else { false }
@@ -98,207 +111,197 @@ let validSpecifier = (specifier) => {
 
 // basis is the directory holding the generated Basis modules, if the build supplies one.
 let resolve = (basis, referrer, specifier) => {
-  match(basisModule(specifier)) {
+  match(WmModuleScope.libraryImport(specifier)) {
     None => { ModuleProject.resolve(referrer, specifier) },
-    Some(file) => {
+    Some(.{ path, description }) => {
       match(basis) {
         None => {
           SubsetResult.Err(SubsetIo.HostError("basis/ imports need --basis DIR"))
         },
-        Some(directory) => { ModuleProject.identify(directory ++ "/" ++ file) }
+        Some(directory) => {
+          match(WmModuleScope.basisModuleName(path)) {
+            Some(name) => {
+              ModuleProject.identify(directory ++ "/subset_" ++ name ++ ".wm")
+            },
+            None => { ModuleProject.identify(directory ++ "/" ++ path) }
+          }
+        }
       }
     }
   }
 };
 
-/* Workman opens each public Basis module subset_x.wm as the namespace X in every program:
-   `List` is SubsetList and `ListPair` is SubsetListPair. With a Basis directory, a module
-   that uses `X.name` without binding X in an import gets that Basis import, so discovery,
-   preparation and checking treat it as written. The host adapters are not namespaces, and
-   the Basis modules themselves import each other explicitly. `Int32` stays the translator's
-   own numeric namespace (`Int32.Int`, `Int32.div`), which the numeric refactor revisits. */
-let basisFile = (name) => {
-  let rec go = (cs, previous, acc) => {
-    match(cs) {
-      [] => { SubsetList.reverse(acc) },
-      [c, ..rest] => {
-        let separated = if (SubsetChar.isUpper(c)) {
-          if (SubsetChar.isLower(previous)) { true } else { SubsetChar.isDigit(previous) }
-        } else { false };
-        go(
-          rest,
-          c,
-          if (separated) { [SubsetChar.toLower(c), '_', ..acc] } else { [SubsetChar.toLower(c), ..acc] }
-        )
+let librarySpecifier = (path) => {
+  match(WmModuleScope.basisModuleName(path)) {
+    Some(name) => { "basis/" ++ name ++ ".wm" },
+    None => { path }
+  }
+};
+
+let libraryFile = (directory, path) => {
+  match(basisModule(librarySpecifier(path))) {
+    Some(file) => { directory ++ "/" ++ file },
+    None => { directory ++ "/" ++ path }
+  }
+};
+
+let canonical = (path) => {
+  match(ModuleProject.identify(path)) {
+    SubsetResult.Ok(ModuleProject.Resolved(_, canonical)) => { Some(canonical) },
+    SubsetResult.Err(_) => { None }
+  }
+};
+let inside = (directory, path) => {
+  match(canonical(directory), canonical(path)) {
+    (Some(directory), Some(file)) => {
+      if (CompilerText.size(file) > CompilerText.size(directory) + 1) {
+        CompilerText.slice(file, 0, CompilerText.size(directory) + 1) == directory ++ "/"
+      } else { false }
+    },
+    _ => { false }
+  }
+};
+let librarySource = (directory, path) => {
+  if (inside(directory, path)) { SubsetBool.not(inside(directory ++ "/std", path)) } else { false }
+};
+
+/* The driver supplies an inventory of staged library modules. Older --basis callers can
+   still use their flat Basis directory; candidates are verified by the shared scope rules. */
+let libraryPaths = (directory, tokens) => {
+  let candidates = SubsetList.concat(SubsetList.map(
+    tokens,
+    (token, _) => {
+      match(token) {
+        WmLexer.WName([head, .._]) => {
+          match(WmModuleScope.basisNamespaceCandidate(head)) {
+            Some(path) => { [path] },
+            None => { [] }
+          }
+        },
+        _ => { [] }
       }
     }
+  ));
+  let bindings = SubsetList.concat([
+    WmModuleScope.builtinValues,
+    WmModuleScope.builtinTypes,
+    WmModuleScope.pervasives,
+    WmModuleScope.pervasiveTypes
+  ]);
+  let paths = match(SubsetIo.readFile(directory ++ "/module-scope.paths")) {
+    SubsetResult.Ok(bytes) => {
+      CompilerText.fields(CompilerText.stringOf(bytes), (c) => { c == '\n' })
+    },
+    SubsetResult.Err(_) => {
+      SubsetList.append(
+        candidates,
+        SubsetList.map(bindings, (.{ modulePath, name, sourceName }) => { modulePath })
+      )
+    }
   };
-  "subset_" ++ CompilerText.implode(go(CompilerText.characters(name), '_', [])) ++ ".wm"
+  let paths = SubsetList.foldLeft(
+    paths,
+    [],
+    (path, found) => {
+      if (SubsetList.exists(found, (p) => { p == path })) { found } else { [path, ..found] }
+    }
+  );
+  SubsetList.filter(
+    paths,
+    (path) => {
+      match(canonical(libraryFile(directory, path))) {
+        Some(_) => { true },
+        None => { false }
+      }
+    }
+  )
 };
 
 let implicitBasis = (basis, path, tokens) => {
-  let canonical = (path) => {
-    match(ModuleProject.identify(path)) {
-      SubsetResult.Ok(ModuleProject.Resolved(_, canonical)) => { Some(canonical) },
-      SubsetResult.Err(_) => { None }
-    }
-  };
-  let inside = (directory) => {
-    match(canonical(directory), canonical(path)) {
-      (Some(directory), Some(file)) => {
-        if (CompilerText.size(file) > CompilerText.size(directory) + 1) {
-          CompilerText.slice(file, 0, CompilerText.size(directory) + 1) == directory ++ "/"
-        } else { false }
-      },
-      _ => { false }
-    }
-  };
   match(basis) {
     None => { tokens },
     Some(directory) => {
-      if (inside(directory)) { tokens } else {
-        // Every single name inside an import header, whether alias or named item.
-        let rec imported = (tokens, inside, acc) => {
-          match(tokens) {
-            [] => { acc },
-            [(WmLexer.WKey("import"), _), ..rest] => { imported(rest, true, acc) },
-            [(WmLexer.WKey(";"), _), ..rest] => { imported(rest, false, acc) },
-            [(WmLexer.WName([name]), _), ..rest] => {
-              imported(rest, inside, if (inside) { [name, ..acc] } else { acc })
-            },
-            [_, ..rest] => { imported(rest, inside, acc) }
-          }
+      if (librarySource(directory, path)) { tokens } else {
+        let paths = libraryPaths(directory, tokens);
+        let std = inside(directory ++ "/std", path);
+        let singleton = (name) => {
+          SubsetList.exists(tokens, (token, _) => { token == WmLexer.WName([name]) })
         };
-        let explicit = imported(tokens, false, []);
-        let available = (name) => {
-          if (if (if (CompilerText.firstIs(name, SubsetChar.isUpper)) {
-            SubsetBool.not(SubsetList.exists(["Host", "TextHost", "Int32"], (n) => { n == name }))
-          } else { false }) {
-            SubsetBool.not(SubsetList.exists(explicit, (n) => { n == name }))
-          } else { false }) {
-            match(ModuleProject.identify(directory ++ "/" ++ basisFile(name))) {
-              SubsetResult.Ok(_) => { true },
-              SubsetResult.Err(_) => { false }
-            }
-          } else { false }
-        };
-        let use = (head, pos, rest, acc) => {
-          if (if (SubsetList.exists(acc, (n, _) => { n == head })) { true } else { SubsetBool.not(available(head)) }) { acc } else { [(head, pos), ..acc] }
-        };
-        // `X.name`, or a carrier group `X|a, b|`, which uses X's andThen and map.
-        let rec uses = (tokens, acc) => {
-          match(tokens) {
-            [] => { SubsetList.reverse(acc) },
-            [(WmLexer.WName([head, _, .._]), Var(pos)), ..rest] => { uses(rest, use(head, pos, rest, acc)) },
-            [(WmLexer.WName([head]), Var(pos)), (WmLexer.WKey("|"), Var(bar)), ..rest] => {
-              uses([(WmLexer.WKey("|"), bar), ..rest], use(head, pos, rest, acc))
-            },
-            [_, ..rest] => { uses(rest, acc) }
-          }
-        };
-        /* A bare `X` as a whole argument, binding or list item stands for `X.carrier`. Type
-           positions look alike, `(Int, String)`; a needless import there changes nothing. */
-        let rec bareUses = (tokens, acc) => {
-          match(tokens) {
-            [
-              (WmLexer.WKey(previous), _),
-              (WmLexer.WName([head]), Var(pos)),
-              (WmLexer.WKey(after), Var(afterPos)),
-              ..rest
-            ] => {
-              bareUses(
-                [(WmLexer.WName([head]), pos), (WmLexer.WKey(after), afterPos), ..rest],
-                if (if (SubsetList.exists(["(", ",", "=", ":>", "[", "=>"], (k) => { k == previous })) {
-                  SubsetList.exists([")", ",", ";", "]", "}"], (k) => { k == after })
-                } else { false }) { use(head, pos, rest, acc) } else { acc }
-              )
-            },
-            [_, ..rest] => { bareUses(rest, acc) },
-            [] => { acc }
-          }
-        };
-        let header = (name, pos) => {
-          [
-            (WmLexer.WKey("from"), pos),
-            (
-              WmLexer.WScon(Syntax.SString("basis/" ++ CompilerText.slice(basisFile(name), 7, CompilerText.size(basisFile(name)) - 7))),
-              pos
-            ),
-            (WmLexer.WKey("import"), pos),
-            (WmLexer.WKey("*"), pos),
-            (WmLexer.WKey("as"), pos),
-            (WmLexer.WName([name]), pos),
-            (WmLexer.WKey(";"), pos)
-          ]
-        };
-        /* Constructors and type names share the source Basis's identity too. Use private
-           opens, rather than rewriting spellings, so authored declarations and patterns
-           can shadow these names with the usual lexical rules. Explicit imports follow
-           the defaults and therefore still win. Basis sources supply their own imports. */
-        let defaultOpen = (file, names) => {
-          if (if (SubsetList.exists(
+        let mentioned = (name) => {
+          SubsetList.exists(
             tokens,
             (token, _) => {
               match(token) {
-                WmLexer.WName([name]) => { SubsetList.exists(names, (n) => { n == name }) },
+                WmLexer.WName([head, .._]) => { head == name },
                 _ => { false }
               }
             }
-          )) {
-            match(ModuleProject.identify(directory ++ "/subset_" ++ file ++ ".wm")) {
-              SubsetResult.Ok(_) => { true },
-              SubsetResult.Err(_) => { false }
-            }
-          } else { false }) {
-            [
-              (WmLexer.WKey("from"), 0),
-              (WmLexer.WScon(Syntax.SString("basis/" ++ file ++ ".wm")), 0),
-              (WmLexer.WKey("import"), 0),
-              (WmLexer.WKey("*"), 0),
-              (WmLexer.WKey(";"), 0)
-            ]
-          } else { [] }
+          )
         };
-        let defaults = SubsetList.concat([
-          defaultOpen("option_value", ["Option", "Some", "None"]),
-          defaultOpen("result", ["Result", "Ok", "Err"])
-        ]);
-        let used = uses(tokens, bareUses(tokens, []));
-        /* The reader spells some Workman forms with Basis functions: `!` is SubsetBool.not,
-           `%` and `==` on reals use SubsetInt32 and SubsetReal64, and backtick text and `print`
-           (SubsetIo.printLine) show values with a display that names those, SubsetString,
-           SubsetList and the Option and Result constructors. Import each module, under its
-           structure name, when its form occurs and the module isn't imported already. */
-        let alreadyImported = (file) => {
-          if (SubsetList.exists(
-            tokens,
-            (token, _) => {
-              token == WmLexer.WScon(Syntax.SString("basis/" ++ file ++ ".wm"))
+        let builtin = SubsetList.append(WmModuleScope.builtinValues, WmModuleScope.builtinTypes);
+        let projected = if (std) { builtin } else {
+          SubsetList.concat([builtin, WmModuleScope.pervasives, WmModuleScope.pervasiveTypes])
+        };
+        let needed = SubsetList.map(
+          SubsetList.filter(
+            projected,
+            (.{ modulePath, name, sourceName }) => {
+              if (singleton(name)) { true } else {
+                SubsetList.exists(
+                  WmModuleScope.pervasiveTypes,
+                  (binding) => {
+                    binding == .{ modulePath = modulePath, name = name, sourceName = sourceName }
+                  }
+                )
+              }
             }
-          )) { true } else {
-            SubsetList.exists(used, (name, _) => { basisFile(name) == "subset_" ++ file ++ ".wm" })
+          ),
+          (.{ modulePath, name, sourceName }) => { modulePath }
+        );
+        let namespaces = if (std) { [] } else {
+          SubsetList.filter(
+            paths,
+            (modulePath) => {
+              if (if (WmModuleScope.isAutoOpened(modulePath, paths)) { WmModuleScope.moduleAlias(modulePath) != "Int32" } else { false }) { mentioned(WmModuleScope.moduleAlias(modulePath)) } else { false }
+            }
+          )
+        };
+        let needed = SubsetList.foldLeft(
+          SubsetList.append(needed, namespaces),
+          [],
+          (p, acc) => {
+            if (if (SubsetList.exists(acc, (n) => { n == p })) { true } else { SubsetBool.not(SubsetList.exists(paths, (n) => { n == p })) }) { acc } else { [p, ..acc] }
           }
+        );
+        let rec fresh = (name) => { if (mentioned(name)) { fresh(name ++ "_") } else { name } };
+        let header = (specifier, alias) => {
+          [
+            (WmLexer.WKey("from"), 0),
+            (WmLexer.WScon(Syntax.SString(specifier)), 0),
+            (WmLexer.WKey("import"), 0),
+            (WmLexer.WKey("*"), 0),
+            (WmLexer.WKey("as"), 0),
+            (WmLexer.WName([alias]), 0),
+            (WmLexer.WKey(";"), 0)
+          ]
         };
-        let formImport = (file, structureName, forms) => {
-          if (if (if (SubsetList.exists(
+        let defaults = SubsetList.concat(SubsetList.map(
+          needed,
+          (p) => {
+            header(librarySpecifier(p), fresh("SubsetDefault" ++ WmParse.structureName(p)))
+          }
+        ));
+        // These are translation dependencies, rather than source default bindings.
+        let formImport = (file, alias, forms) => {
+          if (if (SubsetList.exists(
             tokens,
             (token, _) => { SubsetList.exists(forms, (form) => { form == token }) }
-          )) { SubsetBool.not(alreadyImported(file)) } else { false }) {
-            match(ModuleProject.identify(directory ++ "/subset_" ++ file ++ ".wm")) {
-              SubsetResult.Ok(_) => { true },
-              SubsetResult.Err(_) => { false }
+          )) {
+            match(canonical(directory ++ "/subset_" ++ file ++ ".wm")) {
+              Some(_) => { true },
+              None => { false }
             }
-          } else { false }) {
-            [
-              (WmLexer.WKey("from"), 0),
-              (WmLexer.WScon(Syntax.SString("basis/" ++ file ++ ".wm")), 0),
-              (WmLexer.WKey("import"), 0),
-              (WmLexer.WKey("*"), 0),
-              (WmLexer.WKey("as"), 0),
-              (WmLexer.WName([structureName]), 0),
-              (WmLexer.WKey(";"), 0)
-            ]
-          } else { [] }
+          } else { false }) { header("basis/" ++ file ++ ".wm", fresh(alias)) } else { [] }
         };
         let print = WmLexer.WName(["print"]);
         let text = WmLexer.WKey("`(");
@@ -316,7 +319,74 @@ let implicitBasis = (basis, path, tokens) => {
           formImport("option_value", "SubsetOptionValue", [text, print]),
           formImport("result_value", "SubsetResultValue", [text, print])
         ]);
-        SubsetList.concat([defaults, forms, SubsetList.concat(SubsetList.map(used, header)), tokens])
+        SubsetList.concat([defaults, forms, tokens])
+      }
+    }
+  }
+};
+
+/* Bindings point at the canonical module allocated by the project planner. They are applied
+   after parsing, where lexical declarations and patterns can shadow them correctly. */
+let defaultScope = (basis, units, unit) => {
+  match(basis) {
+    None => { ([], [], []) },
+    Some(directory) => {
+      if (librarySource(directory, pathOf(unit))) { ([], [], []) } else {
+        let tokens = match(WmLexer.lex(textOf(unit))) {
+          WmLexer.Tokens(ts, _) => { ts },
+          _ => { [] }
+        };
+        let paths = libraryPaths(directory, tokens);
+        let std = inside(directory ++ "/std", pathOf(unit));
+        let target = (path) => {
+          match(ModuleProject.identify(libraryFile(directory, path))) {
+            SubsetResult.Err(_) => { None },
+            SubsetResult.Ok(ModuleProject.Resolved(id, _)) => {
+              SubsetOption.map(SubsetList.find(units, (u) => { ModuleProject.same(id, identity(u)) }), name)
+            }
+          }
+        };
+        let bindings = (items, typeNames) => {
+          SubsetList.concat(SubsetList.map(
+            items,
+            (.{ modulePath, name, sourceName }) => {
+              match(target(modulePath)) {
+                None => { [] },
+                Some(moduleName) => {
+                  let translate = if (typeNames) { WmParse.tyConName } else { WmParse.valueName };
+                  let (_, source) = translate([], name);
+                  [(source, translate([moduleName], sourceName))]
+                }
+              }
+            }
+          ))
+        };
+        let values = bindings(
+          if (std) { WmModuleScope.builtinValues } else {
+            SubsetList.append(WmModuleScope.builtinValues, WmModuleScope.pervasives)
+          },
+          false
+        );
+        let types = bindings(
+          if (std) { WmModuleScope.builtinTypes } else {
+            SubsetList.append(WmModuleScope.builtinTypes, WmModuleScope.pervasiveTypes)
+          },
+          true
+        );
+        let namespaces = if (std) { [] } else {
+          SubsetList.concat(SubsetList.map(
+            paths,
+            (p) => {
+              if (if (WmModuleScope.isAutoOpened(p, paths)) { WmModuleScope.moduleAlias(p) != "Int32" } else { false }) {
+                match(target(p)) {
+                  Some(target) => { [(WmModuleScope.moduleAlias(p), target)] },
+                  None => { [] }
+                }
+              } else { [] }
+            }
+          ))
+        };
+        (values, types, namespaces)
       }
     }
   }
@@ -729,6 +799,7 @@ let hoistInlineRecords = (tokens) => {
 
 let prepare = (basis, units, unit) => {
   let Unit(Input(resolved, path, src), _, _) = unit;
+  let (_, _, defaultNamespaces) = defaultScope(basis, units, unit);
   let dependency = (specifier, pos) => {
     if (SubsetBool.not(validSpecifier(specifier))) {
       failure(
@@ -1016,7 +1087,9 @@ let prepare = (basis, units, unit) => {
                 None => {
                   match(SubsetList.find(aliases, (alias, _) => { alias == head })) {
                     None => {
-                      if (if (SubsetBool.not(SubsetList.isEmpty(tail))) { SubsetList.exists(units, (u) => { name(u) == head }) } else { false }) {
+                      if (if (if (SubsetBool.not(SubsetList.isEmpty(tail))) { SubsetList.exists(units, (u) => { name(u) == head }) } else { false }) {
+                        SubsetBool.not(SubsetList.exists(defaultNamespaces, (alias, _) => { alias == head }))
+                      } else { false }) {
                         failure(
                           path,
                           src,
