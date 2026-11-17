@@ -3,10 +3,14 @@ from "./subset_result.sml" import * as SubsetResult;
 from "./subset_string.sml" import * as SubsetString;
 from "./subset_list.sml" import * as SubsetList;
 from "./subset_char.sml" import * as SubsetChar;
+from "./subset_option_value.sml" import * as SubsetOptionValue;
+from "./subset_real_host.sml" import * as SubsetRealHost;
 *)
 
 (* Checked decimal parsing over the portable signed 32-bit integer domain. *)
 structure SubsetInt32 = struct
+  open SubsetOptionValue
+
   datatype error = InvalidInteger | Overflow | StringError of SubsetString.error
 
   (* Accumulate negatively so the minimum integer never needs to be negated. *)
@@ -78,5 +82,43 @@ structure SubsetInt32 = struct
     in
       if value < 0 then SubsetString.concat ("-" :: go (value, []))
       else SubsetString.concat (go (~value, []))
+    end
+
+  val minimum = ~2147483648
+  val maximum = 2147483647
+
+  (* Checked arithmetic: NONE where `+`, `-` or `*` would overflow. Each test runs before the
+     operation and never overflows itself. *)
+  val checkedAdd = fn (a : int, b : int) =>
+    if (b > 0 andalso a > maximum - b) orelse (b < 0 andalso a < minimum - b) then NONE else SOME (a + b)
+  val checkedSub = fn (a : int, b : int) =>
+    if (b < 0 andalso a > maximum + b) orelse (b > 0 andalso a < minimum + b) then NONE else SOME (a - b)
+  (* Magnitudes x and y are safe once neither operand is the minimum. A negative product may
+     reach magnitude maximum + 1: with q = maximum div y, x = q + 1 fits exactly when
+     maximum mod y = y - 1. *)
+  val checkedMul = fn (a : int, b : int) =>
+    if a = 0 orelse b = 0 then SOME 0
+    else (if a = minimum then (if b = 1 then SOME a else NONE)
+    else (if b = minimum then (if a = 1 then SOME b else NONE)
+    else
+      let
+        val x = if a < 0 then ~a else a
+        val y = if b < 0 then ~b else b
+        val q = maximum div y
+      in
+        if (a < 0) = (b < 0) then (if x <= q then SOME (x * y) else NONE)
+        else (if x <= q orelse (x = q + 1 andalso maximum mod y = y - 1) then SOME (~x * y) else NONE)
+      end))
+
+  (* The real of an int, which is exact. *)
+  val toReal64 = fn (value : int) => SubsetRealHost.fromInt value
+
+  (* The int a real is, when it is integral and in range: NONE for fractions, NaN, infinities
+     and reals outside the int range. *)
+  val fromReal64 = fn (value : real) =>
+    let val fraction = SubsetRealHost.rem (value, 1.0) in
+      if value >= ~2147483648.0 andalso value <= 2147483647.0 andalso
+         fraction >= 0.0 andalso fraction <= 0.0
+      then SOME (SubsetRealHost.toInt value) else NONE
     end
 end

@@ -660,6 +660,13 @@ Overflow is checked before arithmetic in the signed 32-bit range, including
 `~2147483648`; long runs of leading zeros use constant call-stack space. Parsing
 uses no SML Basis scanner or host number parser.
 
+`SubsetInt32` also carries the operations Workman's `Int32` namespace has always had, so
+Workman and SML share one definition of each: `minimum` and `maximum`; `checkedAdd`,
+`checkedSub` and `checkedMul (a, b)`, which return `NONE` where the operator would overflow;
+`toReal64 value`, which is exact; and `fromReal64 value`, `SOME` the int an integral real in
+range is and `NONE` for fractions, NaN, infinities and reals out of range. The conversions use
+the real host's `fromInt` and `toInt` (docs/runtime-dependencies.md).
+
 `SubsetStringCvt.padLeft/padRight (value, width, c)` implement the `STRING_CVT`
 padding counterparts with byte widths and byte characters. `padTextLeft/padTextRight
 (value, width, scalar)` provide Unicode host-text variants counting scalars.
@@ -709,7 +716,7 @@ custom module declares its source dependencies and explicit primitive calls. The
 | `SubsetUtf16` | SubsetChar, SubsetList, SubsetResult, SubsetUnicode | none |
 | `SubsetString` | SubsetOptionValue, SubsetChar, SubsetList, SubsetResult, SubsetBytes | SubsetTextHost.codes, fromCodes |
 | `SubsetText` | SubsetOptionValue, SubsetList, SubsetBytes, SubsetResult, SubsetString, SubsetUnicode, SubsetUtf8, SubsetOrder | SubsetTextHost.encodeUtf8, decodeUtf8 |
-| `SubsetInt32` | SubsetResult, SubsetString, SubsetList, SubsetChar | none |
+| `SubsetInt32` | SubsetResult, SubsetString, SubsetList, SubsetChar, SubsetOptionValue | SubsetRealHost.fromInt, rem, toInt |
 | `SubsetStringCvt` | SubsetResult, SubsetList, SubsetString, SubsetText | none |
 | `SubsetPath` | SubsetResult, SubsetList, SubsetString, SubsetText | none |
 | `SubsetNatural` | SubsetBool, SubsetList, SubsetResult, SubsetString | none |

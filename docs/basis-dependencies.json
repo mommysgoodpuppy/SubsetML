@@ -160,9 +160,14 @@
         "SubsetResult",
         "SubsetString",
         "SubsetList",
-        "SubsetChar"
+        "SubsetChar",
+        "SubsetOptionValue"
       ],
-      "primitives": []
+      "primitives": [
+        "SubsetRealHost.fromInt",
+        "SubsetRealHost.rem",
+        "SubsetRealHost.toInt"
+      ]
     },
     "SubsetStringCvt": {
       "source": "src/subset_string_cvt.sml",
@@ -364,7 +369,9 @@
       "workman": "lib/subset_real_host.wm",
       "operations": [
         "rem",
-        "toString"
+        "toString",
+        "fromInt",
+        "toInt"
       ]
     },
     "SubsetHost": {

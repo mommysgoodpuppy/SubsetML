@@ -24,6 +24,10 @@ for dir in "$PWD/src" "$tmp/sml"; do
         printf '%s\n' "$PWD/lib/subset_text_host.sml"
         continue
       fi
+      if [ "$(basename "$module")" = subset_real_host.sml ]; then
+        printf '%s\n' "$PWD/lib/subset_real_host.sml"
+        continue
+      fi
       printf '%s/%s\n' "$dir" "$(basename "$module")"; done
     printf '%s\n' "$PWD/tests/basis/text_basis.sml" "$tmp/text_vectors.sml" "$PWD/tests/basis/small_portable.sml" "$PWD/tests/basis/text_helpers_compare.sml"
   } > "$tmp/test.mlb"
