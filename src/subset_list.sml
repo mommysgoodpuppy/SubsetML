@@ -6,7 +6,9 @@ from "./subset_result.sml" import * as SubsetResult;
 (* Custom Basis lists. No host library calls, references or exceptions.
    Adapted from the existing portable SmlList algorithms; callbacks take data first. *)
 structure SubsetList = struct
-  open SubsetOptionValue
+  local
+    open SubsetOptionValue
+  in
 
   datatype error = EmptyList | InvalidCount | InvalidIndex | OutOfBounds
 
@@ -93,4 +95,5 @@ structure SubsetList = struct
             | SubsetResult.Ok y => go (rest, y :: acc)
     in go (xs, []) end
 
+  end
 end

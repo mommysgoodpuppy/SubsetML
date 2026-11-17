@@ -12,7 +12,9 @@ from "./subset_utf8.sml" import * as SubsetUtf8;
 (* Lossless UTF-16 units, including lone surrogates. Strict codecs remain separate.
    Tree/Source constructors are implementation representations; use the checked builders. *)
 structure SubsetUtf16Source = struct
-  open SubsetOptionValue
+  local
+    open SubsetOptionValue
+  in
 
   datatype error = InvalidUnit of int | InvalidIndex | UnicodeError of SubsetUnicode.error
   datatype tree = Empty | Unit of int | Branch of int * tree * tree
@@ -134,4 +136,5 @@ structure SubsetUtf16Source = struct
   val toUtf8 = fn source =>
     SubsetResult.andThen (toScalars source, fn scalars =>
       SubsetResult.mapErr (SubsetUtf8.encode scalars, UnicodeError))
+  end
 end

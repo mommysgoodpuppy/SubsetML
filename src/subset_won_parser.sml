@@ -11,7 +11,9 @@ from "./subset_won_syntax.sml" import * as SubsetWonSyntax;
 (* Strict WON grammar and cursor mechanics. *)
 
 structure SubsetWonParser = struct
-  open SubsetOptionValue
+  local
+    open SubsetOptionValue
+  in
 
   type cursor = {input : char list, offset : int}
   val makeCursor = fn (input, offset) => {input = input, offset = offset} : cursor
@@ -438,4 +440,5 @@ structure SubsetWonParser = struct
         fn _ => SubsetWonValue.makeError (0, "expected a byte string")
       )))
     end
+  end
 end

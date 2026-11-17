@@ -7,7 +7,9 @@ from "./subset_string.sml" import * as SubsetString;
 
 (* Portable SML literal contents for byte characters; quotation marks are supplied by callers. *)
 structure SubsetSmlEscape = struct
-  open SubsetOptionValue
+  local
+    open SubsetOptionValue
+  in
 
   datatype error = NonByte of int
   val spellings = [
@@ -95,4 +97,5 @@ structure SubsetSmlEscape = struct
     case SubsetString.fromNative value of
       SubsetResult.Err (SubsetString.NonByte offset) => SubsetResult.Err (NonByte offset)
     | SubsetResult.Ok bytes => escapeBytes bytes
+  end
 end

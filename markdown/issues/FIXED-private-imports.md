@@ -1,6 +1,8 @@
 # SubsetML has no private imports
 
-Status: mechanism resolved 2026-11-16; the Basis cleanup below is still open. Recorded 2026-11-05.
+Status: fixed 2026-11-17. Recorded 2026-11-05. The mechanism landed 2026-11-16; on 2026-11-17 the
+seven modules below other than `subset_option` (which keeps `SOME`/`NONE` public, as the SML Basis
+`Option` does) and `subset_result` (already local) switched to `local open SubsetOptionValue`.
 
 `local` is now part of SubsetML (0.8.0 step 6), and Workman's private imports and `private`
 declarations translate to and from it (step 7). What remains is to change the nine Basis modules

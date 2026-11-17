@@ -13,7 +13,9 @@ from "./subset_text.sml" import * as SubsetText;
 (* Public portable WON encoding and decoding API. *)
 
 structure SubsetWon = struct
-  open SubsetOptionValue
+  local
+    open SubsetOptionValue
+  in
 
   type value = SubsetWonValue.value
   type error = SubsetWonValue.error
@@ -276,4 +278,5 @@ structure SubsetWon = struct
           "byte " ^ SubsetResult.getOr (SubsetNatural.toString (#offset error), "?") ^ ": " ^ #message error
       | SubsetWonValue.Missing path => path ^ ": missing"
       | SubsetWonValue.Mismatch (path, kind) => path ^ ": expected " ^ kind)
+  end
 end

@@ -8,7 +8,9 @@ from "./subset_order.sml" import * as SubsetOrder;
 
 (* Byte sequences and immutable sequential readers; no native-string access. *)
 structure SubsetBytes = struct
-  open SubsetOptionValue
+  local
+    open SubsetOptionValue
+  in
 
   datatype error = InvalidIndex | OutOfBounds | NonByte of int
   datatype reader = Reader of char list * int
@@ -105,4 +107,5 @@ structure SubsetBytes = struct
   val slice = fn (bytes, start, count) =>
     SubsetResult.andThen (splitAt (bytes, start), fn (prefix, rest) =>
       SubsetResult.map (splitAt (rest, count), fn (selected, suffix) => selected))
+  end
 end

@@ -10,7 +10,9 @@ from "./subset_utf8.sml" import * as SubsetUtf8;
 (* Shared byte-string and canonical-token helpers; not the public WON API. *)
 
 structure SubsetWonSyntax = struct
-  open SubsetOptionValue
+  local
+    open SubsetOptionValue
+  in
 
   val native = fn xs => SubsetResult.getOr (SubsetString.toNative xs, "")
 
@@ -116,4 +118,5 @@ structure SubsetWonSyntax = struct
           k = key
         end
     )
+  end
 end
