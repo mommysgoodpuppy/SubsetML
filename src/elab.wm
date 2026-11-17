@@ -709,7 +709,42 @@ let rec exp = (ctx, e, st) => {
           ((l, x), st) => { bind(exp(ctx, x, st))((t) => (st) => { Ok((l, t), st) }) },
           fields,
           st
-        ))((fs) => (st) => { Ok(TRecord(sortFields(fs)), st) })
+        ))((fs) => (st) => {
+          let t = TRecord(sortFields(fs));
+          let State(_, _, _, rs, sites) = st;
+          let labels = SmlList.map((l, _) => { l })(fields);
+          let same = (declared) => {
+            if (SubsetList.length(declared) == SubsetList.length(labels)) {
+              SmlList.all((l) => { SmlList.exists((m) => { m == l })(declared) })(labels)
+            } else { false }
+          };
+          /* Reading Workman, a record literal is the one declared record type with
+             exactly its fields, as Workman infers `.{ x = 1, y = 2 }`; its fields take
+             that type's field types, so `1` is a real where the field is Real64. */
+          let matches = match(sites) {
+            None => { [] },
+            Some(_) => { SmlList.filter((declared, _, _) => { same(declared) })(rs) }
+          };
+          match(matches) {
+            [(_, Var(arity), Var(body))] => {
+              let rec fresh' = (n, acc, st) => {
+                if (n == 0) { (SmlList.rev(acc), st) } else {
+                  let (a, st) = fresh(st, KPlain, level);
+                  fresh'(n - 1, [a, ..acc], st)
+                }
+              };
+              let (args, st) = fresh'(arity, [], st);
+              bind(unifyAt(
+                st,
+                q,
+                "record of type with fields {" ++ SubsetString.concatWith(labels, ", ") ++ "}",
+                t,
+                substGen(args, body)
+              ))((_) => (st) => { Ok(t, st) })
+            },
+            _ => { Ok(t, st) }
+          }
+        })
       })
     },
     ESelect(q, l) => {

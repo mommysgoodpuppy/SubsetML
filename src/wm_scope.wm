@@ -748,7 +748,26 @@ let resolve = (owner, values, types, namespaces, imports, declarations) => {
               _ => { [] }
             }
           };
-          decs(env, SubsetList.append(expand(items), rest))
+          /* A projection names its source by the imported structure's path, already
+             resolved. Bind it, but don't resolve that path again: a selected value of
+             the same spelling, such as a record constructor `Rng` imported from
+             rng.wm, would read `Rng.next` as a field of that value. */
+          let rec resolved = (env, ds) => {
+            match(ds) {
+              [] => { decs(env, rest) },
+              [DOpen(_, [["`namespace", alias, ..path], .._]), ..more] => {
+                let delta = Scope([], [], [(alias, path)]);
+                let (more, after) = resolved(plus(env, delta), more);
+                (more, plus(delta, after))
+              },
+              [d, ..more] => {
+                let (_, delta) = dec(env, d);
+                let (more, after) = resolved(plus(env, delta), more);
+                ([d, ..more], plus(delta, after))
+              }
+            }
+          };
+          resolved(env, expand(items))
         }
       },
       [d, ..rest] => {

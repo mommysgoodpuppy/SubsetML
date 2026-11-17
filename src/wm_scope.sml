@@ -327,7 +327,21 @@ structure WmScope = struct
                     let val (ds, _) = projection (imports, target, original, alias, p)
                     in SubsetList.append (ds, expand more) end
                 | _ => []
-            in decs (env, SubsetList.append (expand items, rest)) end
+                (* A projection names its source by the imported structure's path, already
+                   resolved. Bind it, but don't resolve that path again: a selected value of
+                   the same spelling, such as a record constructor `Rng` imported from
+                   rng.wm, would read `Rng.next` as a field of that value. *)
+                val rec resolved = fn (env, ds) => case ds of
+                    [] => decs (env, rest)
+                  | DOpen (_, ("`namespace" :: alias :: path) :: _) :: more =>
+                      let val delta = Scope ([], [], [(alias, path)])
+                          val (more, after) = resolved (plus (env, delta), more)
+                      in (more, plus (delta, after)) end
+                  | d :: more =>
+                      let val (_, delta) = dec (env, d)
+                          val (more, after) = resolved (plus (env, delta), more)
+                      in (d :: more, plus (delta, after)) end
+            in resolved (env, expand items) end
         | d :: rest => let val (d, delta) = dec (env, d)
                            val (rest, more) = decs (plus (env, delta), rest)
                        in (d :: rest, plus (delta, more)) end

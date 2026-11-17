@@ -434,7 +434,32 @@ structure Elab = struct
       | ERecord (q, fields) =>
           bind (checkRecordLabels (env, q, SmlList.map (fn (l, _) => l) fields, st)) (fn _ => fn st =>
             bind (mapRes (fn ((l, x), st) => bind (exp (ctx, x, st)) (fn t => fn st => Ok ((l, t), st)), fields, st))
-              (fn fs => fn st => Ok (TRecord (sortFields fs), st)))
+              (fn fs => fn st =>
+                let
+                  val t = TRecord (sortFields fs)
+                  val State (_, _, _, rs, sites) = st
+                  val labels = SmlList.map (fn (l, _) => l) fields
+                  val same = fn declared =>
+                    SubsetList.length declared = SubsetList.length labels andalso
+                    SmlList.all (fn l => SmlList.exists (fn m => m = l) declared) labels
+                  (* Reading Workman, a record literal is the one declared record type with
+                     exactly its fields, as Workman infers `.{ x = 1, y = 2 }`; its fields take
+                     that type's field types, so `1` is a real where the field is Real64. *)
+                  val matches = case sites of
+                      NONE => []
+                    | SOME _ => SmlList.filter (fn (declared, _, _) => same declared) rs
+                in
+                  case matches of
+                    [(_, arity, body)] =>
+                      let
+                        val rec fresh' = fn (n, acc, st) =>
+                          if n = 0 then (SmlList.rev acc, st)
+                          else let val (a, st) = fresh (st, KPlain, level) in fresh' (n - 1, a :: acc, st) end
+                        val (args, st) = fresh' (arity, [], st)
+                      in bind (unifyAt (st, q, "record of type with fields {" ^ SubsetString.concatWith (labels, ", ") ^ "}", t, substGen (args, body)))
+                           (fn _ => fn st => Ok (t, st)) end
+                  | _ => Ok (t, st)
+                end))
       | ESelect (q, l) =>
           let
             val (r, st1) = fresh (st, KPlain, level)
