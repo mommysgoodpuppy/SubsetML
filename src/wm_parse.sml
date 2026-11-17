@@ -1243,19 +1243,21 @@ structure WmParse = struct
           (WKey "record", start) :: rest =>
             if depth > 0 then Fail ("record layout declarations must be top-level in the initial translation profile", start)
             else let
-              val rec header = fn remaining =>
+              (* The declaration's own tokens, up to its `;`. Hoisted inline records carry the
+                 position of their use, so positions don't delimit them. *)
+              val rec header = fn (remaining, acc) =>
                 case remaining of
                   (WKey ";", stop) :: tail =>
                     (case parseModuleTokens ([], owner, src, Tokens (
-                      SubsetList.append (SubsetList.filter (tokens, fn (_, p) => p <= stop), [(WEOF, stop + 1)]), [])) of
+                      SubsetList.append ((WKey "record", start) :: SmlList.rev ((WKey ";", stop) :: acc), [(WEOF, stop + 1)]), [])) of
                        Module ([DType (_, [(variables, name, TyRecord fields)])], [], _) =>
                          scan (tail, Layout (owner, name, variables, fields) :: layouts, depth)
                      | Module (_, _, _) => Fail ("invalid record declaration", start)
                      | ParseError (message, offset) => Fail (message, offset))
                 | (WEOF, offset) :: _ => Fail ("unterminated record declaration", offset)
-                | _ :: tail => header tail
+                | token :: tail => header (tail, token :: acc)
                 | [] => Fail ("unterminated record declaration", start)
-            in header rest end
+            in header (rest, []) end
         | (WKey "{", _) :: rest => scan (rest, layouts, depth + 1)
         | (WKey ".{", _) :: rest => scan (rest, layouts, depth + 1)
         | (WKey "}", _) :: rest => scan (rest, layouts, depth - 1)

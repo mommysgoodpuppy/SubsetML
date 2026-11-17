@@ -138,6 +138,12 @@ ordinary WM labels and go through the shared backend renaming system.
 | `local dec1 in dec2 end` in a structure | `dec1` with each declaration `private`, then `dec2` |
 | `local open X in … end` in a structure | `from "./x.wm" import *;` (a plain, private import) |
 
+Reading Workman, an inline record type, `Point{ a: Int32 }` in an annotation, is a record
+declaration just before its statement, as in Workman: the reader hoists `type point = {a : int}`
+there and uses `point` in place of the inline form (`Box<t>{ value: t }` becomes `'t box`). A
+name already declared, or seen in an earlier inline type, is reused. An inline type inside a
+block is hoisted as a private declaration of the module, since SubsetML records are top-level.
+
 ### Private declarations
 
 Workman's `private let`, `private type` and `private record` hide a declaration from importers;

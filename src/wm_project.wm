@@ -466,6 +466,185 @@ let plan = (sources) => {
   }
 };
 
+/* Inline record types, `Point{ a: Int32 }` in a type, are shorthand for a `record Point`
+   declared just before the statement (docs/syntax-guide.md). Each one is hoisted before its
+   top-level statement and replaced by `Point` (with its parameters, `Box<T>`). A repeated or
+   already declared name is reused. One inside a block is hoisted as `private`, since Workman
+   keeps it out of the module's surface. */
+let hoistInlineRecords = (tokens) => {
+  let rec declaredNames = (ts) => {
+    match(ts) {
+      [(WmLexer.WKey("record"), _), (WmLexer.WName([name]), _), ..rest] => { [name, ..declaredNames(rest)] },
+      [_, ..rest] => { declaredNames(rest) },
+      [] => { [] }
+    }
+  };
+  // Type parameters after `<`, up to and including `>`.
+  let rec angle = (ts, acc) => {
+    match(ts) {
+      [(WmLexer.WKey(">"), Var(p)), ..rest] => {
+        Some(SubsetList.reverse([(WmLexer.WKey(">"), p), ..acc]), rest)
+      },
+      [(WmLexer.WName([v]), Var(p)), ..rest] => { angle(rest, [(WmLexer.WName([v]), p), ..acc]) },
+      [(WmLexer.WKey(","), Var(p)), ..rest] => { angle(rest, [(WmLexer.WKey(","), p), ..acc]) },
+      _ => { None }
+    }
+  };
+  // The tokens before the `}` closing a field list, and the tokens after it.
+  let rec fieldList = (ts, depth, acc) => {
+    match(ts) {
+      [(WmLexer.WKey("}"), Var(p)), ..rest] => {
+        if (depth == 0) { Some(SubsetList.reverse(acc), rest) } else { fieldList(rest, depth - 1, [(WmLexer.WKey("}"), p), ..acc]) }
+      },
+      [(WmLexer.WKey("{"), Var(p)), ..rest] => { fieldList(rest, depth + 1, [(WmLexer.WKey("{"), p), ..acc]) },
+      [(WmLexer.WKey(".{"), Var(p)), ..rest] => { fieldList(rest, depth + 1, [(WmLexer.WKey(".{"), p), ..acc]) },
+      [(WmLexer.WEOF, _), .._] => { None },
+      [] => { None },
+      [t, ..rest] => { fieldList(rest, depth, [t, ..acc]) }
+    }
+  };
+  // An empty inline record `Empty{}` is only recognized after `:` or `->`.
+  let typePosition = (prev) => {
+    match(prev) {
+      Some(WmLexer.WKey(":")) => { true },
+      Some(WmLexer.WKey("->")) => { true },
+      _ => { false }
+    }
+  };
+  let inlineRecord = (prev, ts) => {
+    match(ts) {
+      [(WmLexer.WName([name]), Var(p)), ..rest] => {
+        if (SubsetBool.not(CompilerText.firstIs(name, SubsetChar.isUpper))) { None } else {
+          let parameters = match(rest) {
+            [(WmLexer.WKey("<"), Var(q)), ..more] => {
+              match(angle(more, [])) {
+                Some(ps, after) => { Some([(WmLexer.WKey("<"), q), ..ps], after) },
+                None => { None }
+              }
+            },
+            _ => { Some([], rest) }
+          };
+          match(parameters) {
+            None => { None },
+            Some(params, after) => {
+              match(after) {
+                [
+                  (WmLexer.WKey("{"), _),
+                  (WmLexer.WName([label]), Var(lp)),
+                  (WmLexer.WKey(":"), Var(cp)),
+                  ..more
+                ] => {
+                  match(fieldList([(WmLexer.WName([label]), lp), (WmLexer.WKey(":"), cp), ..more], 0, [])) {
+                    Some(fields, remaining) => { Some(name, p, params, fields, remaining) },
+                    None => { None }
+                  }
+                },
+                [(WmLexer.WKey("{"), _), (WmLexer.WKey("}"), _), ..remaining] => {
+                  if (typePosition(prev)) { Some(name, p, params, [], remaining) } else { None }
+                },
+                _ => { None }
+              }
+            }
+          }
+        }
+      },
+      _ => { None }
+    }
+  };
+  /* Rewrites one statement: its tokens reversed, the hoisted declarations in order, and the
+     names declared so far. */
+  let rec rewrite = (ts, prev, braces, out, hoisted, seen) => {
+    match(ts) {
+      [] => { (out, hoisted, seen) },
+      [(Var(token), Var(p)), ..rest] => {
+        match(inlineRecord(prev, ts)) {
+          Some(name, q, params, fields, remaining) => {
+            let (fieldsOut, hoisted, seen) = rewrite(fields, None, braces, [], hoisted, seen);
+            let known = SubsetList.exists(seen, (n) => { n == name });
+            let declaration = SubsetList.concat([
+              if (braces > 0) { [(WmLexer.WName(["private"]), q)] } else { [] },
+              [(WmLexer.WKey("record"), q), (WmLexer.WName([name]), q)],
+              params,
+              [(WmLexer.WKey("="), q), (WmLexer.WKey("{"), q)],
+              SubsetList.reverse(fieldsOut),
+              [(WmLexer.WKey("}"), q), (WmLexer.WKey(";"), q)]
+            ]);
+            let hoisted = if (known) { hoisted } else { SubsetList.append(hoisted, [declaration]) };
+            let seen = if (known) { seen } else { [name, ..seen] };
+            let reference = [(WmLexer.WName([name]), q), ..params];
+            rewrite(
+              remaining,
+              Some(WmLexer.WName([name])),
+              braces,
+              SubsetList.append(SubsetList.reverse(reference), out),
+              hoisted,
+              seen
+            )
+          },
+          None => {
+            let braces = match(token) {
+              WmLexer.WKey("{") => { braces + 1 },
+              WmLexer.WKey(".{") => { braces + 1 },
+              WmLexer.WKey("}") => { braces - 1 },
+              _ => { braces }
+            };
+            rewrite(rest, Some(token), braces, [(token, p), ..out], hoisted, seen)
+          }
+        }
+      }
+    }
+  };
+  // Top-level statements end at a `;` outside brackets.
+  let opens = (token) => {
+    match(token) {
+      WmLexer.WKey("{") => { true },
+      WmLexer.WKey(".{") => { true },
+      WmLexer.WKey("(") => { true },
+      WmLexer.WKey("[") => { true },
+      _ => { false }
+    }
+  };
+  let closes = (token) => {
+    match(token) {
+      WmLexer.WKey("}") => { true },
+      WmLexer.WKey(")") => { true },
+      WmLexer.WKey("]") => { true },
+      _ => { false }
+    }
+  };
+  let rec statements = (ts, depth, current, acc) => {
+    match(ts) {
+      [] => {
+        SubsetList.reverse(if (SubsetList.isEmpty(current)) { acc } else { [SubsetList.reverse(current), ..acc] })
+      },
+      [(Var(token), Var(p)), ..rest] => {
+        if (if (depth == 0) { token == WmLexer.WKey(";") } else { false }) {
+          statements(rest, 0, [], [SubsetList.reverse([(token, p), ..current]), ..acc])
+        } else {
+          statements(
+            rest,
+            if (opens(token)) { depth + 1 } else { if (closes(token)) { depth - 1 } else { depth } },
+            [(token, p), ..current],
+            acc
+          )
+        }
+      }
+    }
+  };
+  let (output, _) = SubsetList.foldLeft(
+    statements(tokens, 0, [], []),
+    ([], declaredNames(tokens)),
+    (statement, (output, seen)) => {
+      let (out, hoisted, seen) = rewrite(statement, None, 0, [], [], seen);
+      (
+        SubsetList.append(output, SubsetList.append(SubsetList.concat(hoisted), SubsetList.reverse(out))),
+        seen
+      )
+    }
+  );
+  output
+};
+
 let prepare = (basis, units, unit) => {
   let Unit(Input(resolved, path, src), _, _) = unit;
   let dependency = (specifier, pos) => {
@@ -800,7 +979,7 @@ let prepare = (basis, units, unit) => {
             edges,
             exported,
             WmLexer.Tokens(
-              body,
+              hoistInlineRecords(body),
               SubsetList.filter(
                 comments,
                 (_, body, _) => {

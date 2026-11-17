@@ -255,6 +255,118 @@ structure WmProject = struct
             allocate (inputs, SubsetList.map (structures, fn (name, _) => (name, "")), []))
     end
 
+  (* Inline record types, `Point{ a: Int32 }` in a type, are shorthand for a `record Point`
+     declared just before the statement (docs/syntax-guide.md). Each one is hoisted before its
+     top-level statement and replaced by `Point` (with its parameters, `Box<T>`). A repeated or
+     already declared name is reused. One inside a block is hoisted as `private`, since Workman
+     keeps it out of the module's surface. *)
+  val hoistInlineRecords = fn tokens =>
+    let
+      val rec declaredNames = fn ts =>
+        case ts of
+          (WmLexer.WKey "record", _) :: (WmLexer.WName [name], _) :: rest => name :: declaredNames rest
+        | _ :: rest => declaredNames rest
+        | [] => []
+      (* Type parameters after `<`, up to and including `>`. *)
+      val rec angle = fn (ts, acc) =>
+        case ts of
+          (WmLexer.WKey ">", p) :: rest => SOME (SubsetList.reverse ((WmLexer.WKey ">", p) :: acc), rest)
+        | (WmLexer.WName [v], p) :: rest => angle (rest, (WmLexer.WName [v], p) :: acc)
+        | (WmLexer.WKey ",", p) :: rest => angle (rest, (WmLexer.WKey ",", p) :: acc)
+        | _ => NONE
+      (* The tokens before the `}` closing a field list, and the tokens after it. *)
+      val rec fieldList = fn (ts, depth, acc) =>
+        case ts of
+          (WmLexer.WKey "}", p) :: rest =>
+            if depth = 0 then SOME (SubsetList.reverse acc, rest)
+            else fieldList (rest, depth - 1, (WmLexer.WKey "}", p) :: acc)
+        | (WmLexer.WKey "{", p) :: rest => fieldList (rest, depth + 1, (WmLexer.WKey "{", p) :: acc)
+        | (WmLexer.WKey ".{", p) :: rest => fieldList (rest, depth + 1, (WmLexer.WKey ".{", p) :: acc)
+        | (WmLexer.WEOF, _) :: _ => NONE
+        | [] => NONE
+        | t :: rest => fieldList (rest, depth, t :: acc)
+      (* An empty inline record `Empty{}` is only recognized after `:` or `->`. *)
+      val typePosition = fn prev =>
+        case prev of SOME (WmLexer.WKey ":") => true | SOME (WmLexer.WKey "->") => true | _ => false
+      val inlineRecord = fn (prev, ts) =>
+        case ts of
+          (WmLexer.WName [name], p) :: rest =>
+            if SubsetBool.not (CompilerText.firstIs (name, SubsetChar.isUpper)) then NONE
+            else
+              let
+                val parameters = case rest of
+                    (WmLexer.WKey "<", q) :: more =>
+                      (case angle (more, []) of
+                         SOME (ps, after) => SOME ((WmLexer.WKey "<", q) :: ps, after)
+                       | NONE => NONE)
+                  | _ => SOME ([], rest)
+              in
+                case parameters of
+                  NONE => NONE
+                | SOME (params, after) =>
+                    case after of
+                      (WmLexer.WKey "{", _) :: (WmLexer.WName [label], lp) :: (WmLexer.WKey ":", cp) :: more =>
+                        (case fieldList ((WmLexer.WName [label], lp) :: (WmLexer.WKey ":", cp) :: more, 0, []) of
+                           SOME (fields, remaining) => SOME (name, p, params, fields, remaining)
+                         | NONE => NONE)
+                    | (WmLexer.WKey "{", _) :: (WmLexer.WKey "}", _) :: remaining =>
+                        if typePosition prev then SOME (name, p, params, [], remaining) else NONE
+                    | _ => NONE
+              end
+        | _ => NONE
+      (* Rewrites one statement: its tokens reversed, the hoisted declarations in order, and the
+         names declared so far. *)
+      val rec rewrite = fn (ts, prev, braces, out, hoisted, seen) =>
+        case ts of
+          [] => (out, hoisted, seen)
+        | (token, p) :: rest =>
+            case inlineRecord (prev, ts) of
+              SOME (name, q, params, fields, remaining) =>
+                let
+                  val (fieldsOut, hoisted, seen) = rewrite (fields, NONE, braces, [], hoisted, seen)
+                  val known = SubsetList.exists (seen, fn n => n = name)
+                  val declaration = SubsetList.concat [
+                    (if braces > 0 then [(WmLexer.WName ["private"], q)] else []),
+                    [(WmLexer.WKey "record", q), (WmLexer.WName [name], q)], params,
+                    [(WmLexer.WKey "=", q), (WmLexer.WKey "{", q)], SubsetList.reverse fieldsOut,
+                    [(WmLexer.WKey "}", q), (WmLexer.WKey ";", q)]]
+                  val hoisted = if known then hoisted else SubsetList.append (hoisted, [declaration])
+                  val seen = if known then seen else name :: seen
+                  val reference = (WmLexer.WName [name], q) :: params
+                in
+                  rewrite (remaining, SOME (WmLexer.WName [name]), braces,
+                           SubsetList.append (SubsetList.reverse reference, out), hoisted, seen)
+                end
+            | NONE =>
+                let
+                  val braces = case token of
+                      WmLexer.WKey "{" => braces + 1
+                    | WmLexer.WKey ".{" => braces + 1
+                    | WmLexer.WKey "}" => braces - 1
+                    | _ => braces
+                in rewrite (rest, SOME token, braces, (token, p) :: out, hoisted, seen) end
+      (* Top-level statements end at a `;` outside brackets. *)
+      val opens = fn token => case token of
+          WmLexer.WKey "{" => true | WmLexer.WKey ".{" => true | WmLexer.WKey "(" => true
+        | WmLexer.WKey "[" => true | _ => false
+      val closes = fn token => case token of
+          WmLexer.WKey "}" => true | WmLexer.WKey ")" => true | WmLexer.WKey "]" => true | _ => false
+      val rec statements = fn (ts, depth, current, acc) =>
+        case ts of
+          [] => SubsetList.reverse (if SubsetList.isEmpty current then acc else SubsetList.reverse current :: acc)
+        | (token, p) :: rest =>
+            if depth = 0 andalso token = WmLexer.WKey ";" then
+              statements (rest, 0, [], SubsetList.reverse ((token, p) :: current) :: acc)
+            else
+              statements (rest,
+                (if opens token then depth + 1 else (if closes token then depth - 1 else depth)),
+                (token, p) :: current, acc)
+      val (output, _) = SubsetList.foldLeft (statements (tokens, 0, [], []), ([], declaredNames tokens),
+        fn (statement, (output, seen)) =>
+          let val (out, hoisted, seen) = rewrite (statement, NONE, 0, [], [], seen)
+          in (SubsetList.append (output, SubsetList.append (SubsetList.concat hoisted, SubsetList.reverse out)), seen) end)
+    in output end
+
   val prepare = fn (basis, units, unit) =>
     let
       val Unit (Input (resolved, path, src), _, _) = unit
@@ -406,7 +518,7 @@ structure WmProject = struct
         WmLexer.LexError (message, pos) => failure (path, src, message, pos)
       | WmLexer.Tokens (tokens, comments) =>
           SubsetResult.map (imports (implicitBasis (basis, path, tokens), [], [], [], [], []), fn (edges, exported, body) =>
-            Source (unit, edges, exported, WmLexer.Tokens (body,
+            Source (unit, edges, exported, WmLexer.Tokens (hoistInlineRecords body,
               SubsetList.filter (comments, fn (_, body, _) =>
                 (case ModuleImports.marked body of NONE => true | SOME _ => false) andalso
                 SubsetBool.not (ModuleImports.isGeneratedHeader body)))))

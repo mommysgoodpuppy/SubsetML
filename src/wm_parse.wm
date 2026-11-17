@@ -1841,7 +1841,9 @@ let recordLayoutsTokens = (owner, src, lexed) => {
             start
           )
         } else {
-          let rec header = (remaining) => {
+          /* The declaration's own tokens, up to its `;`. Hoisted inline records carry the
+             position of their use, so positions don't delimit them. */
+          let rec header = (remaining, acc) => {
             match(remaining) {
               [(WKey(";"), Var(stop)), ..tail] => {
                 match(parseModuleTokens(
@@ -1849,7 +1851,10 @@ let recordLayoutsTokens = (owner, src, lexed) => {
                   owner,
                   src,
                   Tokens(
-                    SubsetList.append(SubsetList.filter(tokens, (_, p) => { p <= stop }), [(WEOF, stop + 1)]),
+                    SubsetList.append(
+                      [(WKey("record"), start), ..SmlList.rev([(WKey(";"), stop), ..acc])],
+                      [(WEOF, stop + 1)]
+                    ),
                     []
                   )
                 )) {
@@ -1861,11 +1866,11 @@ let recordLayoutsTokens = (owner, src, lexed) => {
                 }
               },
               [(WEOF, Var(offset)), .._] => { Fail("unterminated record declaration", offset) },
-              [_, ..tail] => { header(tail) },
+              [token, ..tail] => { header(tail, [token, ..acc]) },
               [] => { Fail("unterminated record declaration", start) }
             }
           };
-          header(rest)
+          header(rest, [])
         }
       },
       [(WKey("{"), _), ..rest] => { scan(rest, layouts, depth + 1) },
