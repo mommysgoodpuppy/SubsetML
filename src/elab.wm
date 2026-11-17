@@ -605,7 +605,7 @@ let rec exp = (ctx, e, st) => {
         // The target check: a marker translation left has a type with no display.
         None => {
           Err(
-            "the type of a value in a backtick string's ${ } is undecided in part, or has no " ++ "portable display; annotate it, or show text, numbers, booleans, characters, void, " ++ "tuples, lists, records, Option or Result",
+            "the type of a value in a backtick string's ${ } or `Text.of` is undecided in part, or has no " ++ "portable display; annotate it, or show text, numbers, booleans, characters, void, " ++ "tuples, lists, records, Option, Result or datatypes",
             q
           )
         }
@@ -630,7 +630,7 @@ let rec exp = (ctx, e, st) => {
             },
             None => {
               Err(
-                "print: this value's type is undecided in part, or has no portable display; " ++ "annotate it, or print text, numbers, booleans, characters, void, tuples, " ++ "lists, records, Option or Result",
+                "print: this value's type is undecided in part, or has no portable display; " ++ "annotate it, or print text, numbers, booleans, characters, void, tuples, " ++ "lists, records, Option, Result or datatypes",
                 q
               )
             }
@@ -976,7 +976,7 @@ and localLeak = (private, visible, priorState, st) => {
         TRecord(fields) => {
           match(tupleComponents(fields)) {
             None => {
-              if (SmlList.exists((labels) => { sameLabels(labels, labelsOf(fields)) })(existingRecords)) { None } else { Some(n, labelsOf(fields)) }
+              if (SmlList.exists((labels, _, _) => { sameLabels(labels, labelsOf(fields)) })(existingRecords)) { None } else { Some(n, labelsOf(fields)) }
             },
             Some(_) => { None }
           }
@@ -1189,7 +1189,60 @@ and settleSelections = (level, st) => {
       if (progress) { loop(State(vs', nx', pending, rs', eq')) } else { Ok(pending, State(vs', nx', pending, rs', eq')) }
     })
   };
-  bind(loop(State(vars, next, sels, recs, eqs)))((pending) => (st) => {
+  /* Reading Workman, a field names its record type when one declared record type has it,
+     as Workman resolves `user.score`; SML would need the receiver annotated. One pass
+     resolves the first such selection, then the loop settles what follows from it. */
+  let byLabel = (st) => {
+    let State(_, _, pending, rs, sites) = st;
+    match(sites) {
+      None => { None },
+      Some(_) => {
+        // Only where SML would give up: a receiver this declaration must decide.
+        SmlList.find((_, _, r, lab, _) => {
+          match(prune(st, r)) {
+            TVar(v) => {
+              if (match(lookup(st, v)) {
+                Free(_, l) => { l > level },
+                Bound(_) => { false }
+              }) {
+                SubsetList.length(SmlList.filter((labels, _, _) => { SmlList.exists((m) => { m == lab })(labels) })(rs)) == 1
+              } else { false }
+            },
+            _ => { false }
+          }
+        })(pending)
+      }
+    }
+  };
+  let rec settle = (st) => {
+    bind(loop(st))((pending) => (st) => {
+      match(byLabel(st)) {
+        None => { Ok(pending, st) },
+        Some(sel) => {
+          let (q, l, r, lab, _) = sel;
+          let State(_, _, _, rs, _) = st;
+          let Some(declared) = SmlList.find((labels, _, _) => { SmlList.exists((m) => { m == lab })(labels) })(rs);
+          let (labels, arity, body) = declared;
+          let rec fresh' = (n, acc, st) => {
+            if (n == 0) { (SmlList.rev(acc), st) } else {
+              let (t, st) = fresh(st, KPlain, l);
+              fresh'(n - 1, [t, ..acc], st)
+            }
+          };
+          let (args, st) = fresh'(arity, [], st);
+          // Translation writes the selection as a complete record pattern.
+          let st = match(st) {
+            State(vs, nx, sels, rs, Some(xs)) => {
+              State(vs, nx, sels, rs, Some([FieldRecord(q, labels), ..xs]))
+            },
+            _ => { st }
+          };
+          bind(unifyAt(st, q, "record of field " ++ lab, r, substGen(args, body)))((_) => (st) => { settle(st) })
+        }
+      }
+    })
+  };
+  bind(settle(State(vars, next, sels, recs, eqs)))((pending) => (st) => {
     match(SmlList.find((_, _, r, _, _) => {
       match(prune(st, r)) {
         TVar(v) => {
@@ -1269,18 +1322,30 @@ and closeBinding = (level, explicit, generalizable, pos, x, t, st) => {
       }
     }
   };
-  // Only a default no Workman literal decides is recorded: Workman would choose Real64.
-  let noteDefault = (st) => {
-    match(SmlList.filter((v) => { SubsetBool.not(literalVar(st, v)) })(defaults), st) {
-      ([], _) => { st },
-      (_, State(vs, nx, sels, recs, Some(xs))) => { State(vs, nx, sels, recs, Some([Defaulted(pos), ..xs])) },
-      (_, _) => { st }
-    }
-  };
-  bind(settle(defaults, noteDefault(st)))((_) => (st) => {
+  bind(settle(defaults, st))((_) => (st) => {
     let rigid = SmlList.filter((v) => { member(v, explicit) })(rigidNames(resolve(st, t)));
     match(generalizable, rigid) {
-      (true, _) => { Ok((x, generalize(st, level, explicit, t)), st) },
+      (true, _) => {
+        let taken = SmlList.filter((v) => {
+          match(lookup(st, v)) {
+            Free(_, l) => { l > level },
+            Bound(_) => { false }
+          }
+        })(freeVars(st, resolve(st, t)));
+        let st' = match(st) {
+          State(vs, nx, sels, recs, Some(xs)) => {
+            State(
+              vs,
+              nx,
+              sels,
+              recs,
+              Some(SubsetList.append(SmlList.map(Generalized)(taken), xs))
+            )
+          },
+          _ => { st }
+        };
+        Ok((x, generalize(st, level, explicit, t)), st')
+      },
       (false, [v, .._]) => {
         Err(
           "type variable " ++ v ++ " cannot be generalized: the value is expansive (Definition, section 4.8)",
@@ -1316,7 +1381,7 @@ and typeDec = ((env, _, _), pos, binds, st) => {
           bind(paramScope(pos, params, st))((tyvar) => (st) => {
             bind(elabTy(env, tyvar, pos, t, st))((body) => (st) => {
               bind(match(t) {
-                TyRecord(_) => { recordDeclared(pos, body, st) },
+                TyRecord(_) => { recordDeclared(pos, SubsetList.length(params), body, st) },
                 _ => { Ok(void, st) }
               })((_) => (st) => {
                 Ok(
@@ -1351,17 +1416,19 @@ and paramScope = (pos, params, st) => {
   }
 }
 
-and recordDeclared = (pos, body, st) => {
+and recordDeclared = (pos, arity, body, st) => {
   match(body) {
     TRecord(fields) => {
       let labels = SmlList.map((l, _) => { l })(fields);
       let State(vars, next, sels, recs, eqs) = st;
-      if (member(labels, recs)) {
+      if (SmlList.exists((declared, _, _) => { declared == labels })(recs)) {
         Err(
           "another record type already has the labels {" ++ SubsetString.concatWith(labels, ", ") ++ "} (spec R2)",
           pos
         )
-      } else { Ok(void, State(vars, next, sels, [labels, ..recs], eqs)) }
+      } else {
+        Ok(void, State(vars, next, sels, [(labels, arity, body), ..recs], eqs))
+      }
     },
     _ => { Ok(void, st) }
   }

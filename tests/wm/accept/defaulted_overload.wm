@@ -1,0 +1,4 @@
+// An operator nothing else decides takes its class's default at the declaration, in Workman as in
+// SML: `+` is int, `/` is real.
+let add = (x, y) => { x + y };
+let half = (x) => { x / 2.0 };

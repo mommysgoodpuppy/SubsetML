@@ -54,6 +54,7 @@ let bind = (r) => (k) => {
    mark (parseAtom); everywhere else it is the plain name. */
 let peek = match {
   [(WName(["`alias", head, _]), Var(p)), .._] => { (WName([head]), p) },
+  [(WName(["`bind", name]), Var(p)), .._] => { (WName([name]), p) },
   [t, .._] => { t },
   [] => { (WEOF, 0) }
 };
@@ -647,6 +648,10 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
     }
   })(layouts));
 
+  let bareParameterAhead = (ts) => {
+    if (isKey("=>", advance(ts))) { SubsetBool.not(isKey(":>", advance(advance(ts)))) } else { false }
+  };
+
   // An `if` is an operand, so `if (c) { a } else { b } >= 0` compares the whole conditional.
   let rec parseExp = (ts) => {
     match(peek(ts)) {
@@ -665,6 +670,14 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
       (WKey("match"), _) => { parseFallback(ts) },
       (WKey("("), _) => {
         if (lambdaAhead(ts)) { parseLambda(ts) } else { parseFallback(ts) }
+      },
+      /* `x => body` and `_ => body`: one parameter without parentheses. A body can't start with
+         `:>`, so `f => :> g` is `f` applied to the pipeline lambda `=> :> g`. */
+      (WName([_]), _) => {
+        if (bareParameterAhead(ts)) { parseBareParameter(ts) } else { parseFallback(ts) }
+      },
+      (WKey("_"), _) => {
+        if (bareParameterAhead(ts)) { parseBareParameter(ts) } else { parseFallback(ts) }
       },
       _ => { parseFallback(ts) }
     }
@@ -707,8 +720,18 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
     let child = (b) => (ts) => {
       parseAnnotated(inMatch, if (b) { true } else { SubsetBool.not(inMatch) }, ts)
     };
-    match(peek(ts)) {
+    match(match(ts) {
+      [(WName(["`bind", name]), Var(p)), .._] => { (WKey("`bind"), p) },
+      _ => { peek(ts) }
+    }) {
       (WKey("_"), _) => { Done(PWild, advance(ts)) },
+      // Workman's `_name` binds, in a match too; read as `name'` (WmLexer).
+      (WKey("`bind"), Var(p)) => {
+        match(peek(ts)) {
+          (WName([name]), _) => { Done(PId(p, ([], name)), advance(ts)) },
+          _ => { expected("a pattern", ts) }
+        }
+      },
       (WKey("="), Var(p)) => {
         if (inMatch) {
           bind(expect("(", advance(ts)))((_) => (ts) => {
@@ -851,7 +874,20 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
     })
   }
 
-  // `(params) => body`, where the body is a block or another lambda.
+  // A lambda's body: a block, or any expression, as in `a => b => a + b`.
+  and parseLambdaBody = (ts) => {
+    if (lambdaAhead(ts)) { parseLambda(ts) } else { if (isKey("{", ts)) { parseBlock(ts) } else { parseExp(ts) } }
+  }
+
+  and parseBareParameter = (ts) => {
+    bind(parsePat(false, true, ts))((p) => (ts) => {
+      bind(expect("=>", ts))((_) => (ts) => {
+        bind(parseLambdaBody(ts))((body) => (ts) => { Done(EFn([(p, body)]), ts) })
+      })
+    })
+  }
+
+  // `(params) => body`, where the body is a block or any expression.
   and parseLambda = (ts) => {
     let param = (ts) => {
       bind(parsePat(false, true, ts))((p) => (ts) => {
@@ -870,7 +906,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
       bind(result(ts))((annotation) => (ts) => {
         bind(captureClause(ts))((_) => (ts) => {
           bind(expect("=>", ts))((_) => (ts) => {
-            bind(if (lambdaAhead(ts)) { parseLambda(ts) } else { parseBlock(ts) })((body) => (ts) => {
+            bind(parseLambdaBody(ts))((body) => (ts) => {
               let p = match(ps) {
                 [single] => { single },
                 _ => { PTuple(ps) }
@@ -1074,7 +1110,15 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
               Done(arg, rest) => { calls(EApp(callee, arg), None, rest) },
               Fail(message, offset) => { Fail(message, offset) }
             }
-          } else { finish(callee, insertion, ts) }
+          } else {
+            // `f => :> g`: a pipeline lambda as a space argument; it extends as far as it can.
+            if (isKey("=>", ts)) {
+              match(parseBareLambda(advance(ts))) {
+                Done(arg, rest) => { finish(EApp(callee, arg), None, rest) },
+                Fail(message, offset) => { Fail(message, offset) }
+              }
+            } else { finish(callee, insertion, ts) }
+          }
         }
       }
     };
@@ -1146,8 +1190,23 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
   and atomPath = (p, path, ts) => {
     // Workman's pervasive `print` takes any value; Translate.printing writes its display.
     if (path == ["print"]) { Done(EId(p, ([], "`print")), advance(ts)) } else {
-      if (isKey("{", advance(ts))) { parseNamedRecord(p, path, advance(advance(ts))) } else {
-        if (if (isKey("|", advance(ts))) { CompilerText.firstIs(lastOf(path), SubsetChar.isUpper) } else { false }) { parseCarrierGroup(p, path, advance(advance(ts))) } else { Done(pathExp(p, path), advance(ts)) }
+      if (if (path == ["Text", "of"]) { true } else { path == ["SubsetText", "of"] }) {
+        // `Text.of(v)` is a template's conversion, `${v}`; unapplied, it is `v => Text.of(v)`.
+        if (isKey("(", advance(ts))) { Done(EId(p, ([], "`show")), advance(ts)) } else {
+          Done(
+            EFn([
+              (
+                PId(p, ([], "textOfValue")),
+                EApp(EId(p, ([], "`show")), EId(p, ([], "textOfValue")))
+              )
+            ]),
+            advance(ts)
+          )
+        }
+      } else {
+        if (isKey("{", advance(ts))) { parseNamedRecord(p, path, advance(advance(ts))) } else {
+          if (if (isKey("|", advance(ts))) { CompilerText.firstIs(lastOf(path), SubsetChar.isUpper) } else { false }) { parseCarrierGroup(p, path, advance(advance(ts))) } else { Done(pathExp(p, path), advance(ts)) }
+        }
       }
     }
   }

@@ -339,9 +339,9 @@ structure Translate = struct
             | SStructure (_, binds) => concatMap (fn (_, _, ds) => concatMap (moduleDeclaration, ds), binds), ds)
     in concatMap (top, prog) end
 
-  (* SML closes an unresolved numeric class to int; Workman closes it to Number. A program that
-     relies on either default would change meaning in translation, so it must annotate. An int
-     constant is never such a site: it is int in SML and printed as an I32 ascription. *)
+  (* SML and Workman both close an unresolved numeric class to its default (int, or real for `/`)
+     at the declaration, so a default carries over. An operand whose class is still open after
+     elaboration has no type to translate at; it must be annotated. *)
   val defaultedSite = fn st =>
     let
       val rec unresolved = fn t => case Unify.prune (st, t) of
@@ -355,14 +355,13 @@ structure Translate = struct
       val Unify.State (_, _, _, _, sites) = st
     in
       case sites of NONE => NONE | SOME xs =>
-        (case SmlList.mapPartial (fn Unify.Defaulted pos => SOME pos
-                                   | Unify.Operand (pos, t) => if unresolved t then SOME pos else NONE
-                                   | Unify.Literal _ => NONE) xs of
+        (case SmlList.mapPartial (fn Unify.Operand (pos, t) => if unresolved t then SOME pos else NONE
+                                   | _ => NONE) xs of
            [] => NONE
          | pos :: _ => SOME pos)
     end
 
-  val defaultedMessage = "a numeric operation whose type only a default decides (SML int, Workman Real64); annotate it as int or real"
+  val defaultedMessage = "the type of this numeric operation is undecided; annotate it"
 
   val wmNumbers = fn st => case defaultedSite st of
     NONE => Unify.Ok ((), st)
@@ -633,11 +632,80 @@ structure Translate = struct
       mapProgram (rewrite, prog)
     end
 
+  (* A `user.score` whose record type only the one declared record with `score` decides
+     (Elab.settleSelections): SML resolves `#score` from its receiver's type, so the selection
+     is written as a complete record pattern, `(fn {level = _, score = v} => v) user`. *)
+  val fieldRecords = fn (st, prog) =>
+    let
+      val Unify.State (_, _, _, _, sites) = st
+      val resolved = SmlList.mapPartial (fn Unify.FieldRecord (p, labels) => SOME (p, labels) | _ => NONE)
+        (case sites of SOME xs => xs | NONE => [])
+      val rewrite = fn e =>
+        case e of
+          EApp (ESelect (q, lab), receiver) =>
+            (case SmlList.find (fn (p, _) => p = q) resolved of
+               NONE => e
+             | SOME found =>
+                 let
+                   val (_, labels) = found
+                   val value = (q, ([], "fieldValue"))
+                   val pattern = PRecord (q, SmlList.map (fn l => (l, if l = lab then PId value else PWild)) labels)
+                 in EApp (EFn [(pattern, EId value)], receiver) end)
+        | _ => e
+    in
+      mapProgram (rewrite, prog)
+    end
+
+  (* The structures a program declares: a translated module is one. *)
+  val ownStructures = fn prog =>
+    concatMap (fn TopDecs sds => concatMap (fn SStructure (_, bs) => SmlList.map (fn (n, _, _) => n) bs | _ => [], sds)
+                | TopExp _ => [], prog)
+
   (* Workman's display of a value as text, as `print` and backtick strings show it: a function
      from the type's values to their text, or NONE for a type with no portable display. *)
-  val displayOf = fn st =>
+  val displayOf = fn (env, own, st) =>
     let
+      val generalized = case st of
+          Unify.State (_, _, _, _, SOME sites) => SmlList.mapPartial (fn Unify.Generalized v => SOME v | _ => NONE) sites
+        | _ => []
       val text = fn (p, value) => EScon (p, SString value)
+      (* A datatype's constructors, and the path that names them here: a type of this module's
+         own structure is named unqualified, since its constructors are in scope. *)
+      val datatypeOf = fn nominal =>
+        let
+          val rec find = fn (Env.Env (structures, types, _), path) =>
+            case SmlList.find (fn (_, Env.TyStr (_, body, constructors)) => case body of
+                Types.TCon (name, _) => Unify.sameName (name, nominal) andalso SubsetBool.not (SmlList.null constructors)
+              | _ => false) types of
+              SOME entry => let val (_, Env.TyStr (_, _, constructors)) = entry in SOME (path, constructors) end
+            | NONE =>
+                let val rec inner = fn structures => case structures of
+                    [] => NONE
+                  | (n, (body, _)) :: rest =>
+                      (case find (body, SubsetList.append (path, [n])) of
+                         SOME found => SOME found
+                       | NONE => inner rest)
+                in inner structures end
+          val unqualified = fn path => case path of
+              first :: rest => if SmlList.exists (fn n => n = first) own then rest else path
+            | [] => []
+        in
+          case find (env, []) of
+            SOME found => let val (path, constructors) = found in SOME (unqualified path, constructors) end
+          | NONE => NONE
+        end
+      val rec sameType = fn (a, b) => case (Unify.prune (st, a), Unify.prune (st, b)) of
+          (Types.TCon (m, xs), Types.TCon (n, ys)) => Unify.sameName (m, n) andalso sameTypes (xs, ys)
+        | (Types.TRecord xs, Types.TRecord ys) =>
+            sameTypes (SmlList.map (fn (_, t) => t) xs, SmlList.map (fn (_, t) => t) ys)
+            andalso SmlList.map (fn (l, _) => l) xs = SmlList.map (fn (l, _) => l) ys
+        | (Types.TArrow (a1, b1), Types.TArrow (a2, b2)) => sameType (a1, a2) andalso sameType (b1, b2)
+        | (Types.TVar v, Types.TVar w) => v = w
+        | _ => false
+      and sameTypes = fn (xs, ys) => case (xs, ys) of
+          ([], []) => true
+        | (x :: xs, y :: ys) => sameType (x, y) andalso sameTypes (xs, ys)
+        | _ => false
       val rec join = fn (p, pieces) => case pieces of
           [] => text (p, "")
         | [only] => only
@@ -646,11 +714,57 @@ structure Translate = struct
         "printValue" ^ CompilerText.natural depth ^ "_" ^ CompilerText.natural index
       val named = fn (t, n) => Types.nameOf n = t
       (* A function from the type's values to their display, or NONE. *)
-      val rec display = fn (p, depth, t) =>
+      val rec display = fn (p, depth, t, active) =>
         let
           val variable = fn index => (p, ([], name (depth, index)))
           val apply = fn (f, index) => EApp (f, EId (variable index))
           val one = fn body => SOME (EFn [(PId (variable 0), body)])
+          (* A datatype shows as `Ctor`, `Ctor(x)` or `Ctor(a, b)`, through a recursive helper, so a
+             recursive type refers back to it. Helpers are named by depth, which grows inward, so
+             an inner helper never shadows an outer one. *)
+          val userType = fn (n, args) =>
+            case SmlList.find (fn (u, _) => sameType (u, Types.TCon (n, args))) active of
+              SOME entry => let val (_, helper) = entry in SOME (EId (p, ([], helper))) end
+            | NONE =>
+                (case datatypeOf n of
+                   NONE => NONE
+                 | SOME found =>
+                     let
+                       val (path, constructors) = found
+                       val helper = "printType" ^ CompilerText.natural depth
+                       val active' = (Types.TCon (n, args), helper) :: active
+                       val rec arms = fn constructors => case constructors of
+                           [] => SOME []
+                         | (c, (_, body)) :: rest =>
+                             let
+                               val arm = case Types.substGen (args, body) of
+                                   Types.TArrow (argument, _) =>
+                                     (case display (p, depth + 1, argument, active') of
+                                        NONE => NONE
+                                      | SOME f =>
+                                          let
+                                            val tuple = case Unify.prune (st, argument) of
+                                                Types.TRecord fields => SmlList.exists (fn (l, _) => l = "1") fields
+                                              | _ => false
+                                            val shown = apply (f, 0)
+                                          in
+                                            SOME (PApp (p, (path, c), PId (variable 0)),
+                                                  if tuple then join (p, [text (p, c), shown])
+                                                  else join (p, [text (p, c ^ "("), shown, text (p, ")")]))
+                                          end)
+                                 | _ => SOME (PId (p, (path, c)), text (p, c))
+                             in
+                               case (arm, arms rest) of
+                                 (SOME a, SOME more) => SOME (a :: more)
+                               | _ => NONE
+                             end
+                     in
+                       case arms constructors of
+                         NONE => NONE
+                       | SOME cases =>
+                           SOME (ELet ([DVal (p, [], [], [(PId (p, ([], helper)), EFn cases)])],
+                                       [EId (p, ([], helper))]))
+                     end)
         in
           case decided (st, t) of
             Types.TCon (n, []) =>
@@ -661,7 +775,7 @@ structure Translate = struct
               else (if Unify.sameName (n, Types.realName) then SOME (EId (p, (["SubsetReal64"], "toString")))
               else (if Unify.sameName (n, Types.boolName)
                 then one (EIf (EId (variable 0), text (p, "true"), text (p, "false")))
-              else NONE)))))
+              else userType (n, []))))))
           | Types.TRecord [] => SOME (EFn [(PWild, text (p, "void"))])
           | Types.TRecord fields =>
               let
@@ -669,7 +783,7 @@ structure Translate = struct
                 val rec parts = fn (fields, index) => case fields of
                     [] => SOME []
                   | (label, ft) :: rest =>
-                      (case (display (p, depth + 1, ft), parts (rest, index + 1)) of
+                      (case (display (p, depth + 1, ft, active), parts (rest, index + 1)) of
                          (SOME f, SOME more) => SOME ((label, index, f) :: more)
                        | _ => NONE)
               in
@@ -691,7 +805,7 @@ structure Translate = struct
               end
           | Types.TCon (n, [element]) =>
               if Unify.sameName (n, Types.listName) then
-                (case display (p, depth + 1, element) of
+                (case display (p, depth + 1, element, active) of
                    NONE => NONE
                  | SOME f => one (join (p, [text (p, "["),
                      EApp (EId (p, (["SubsetString"], "concatWith")), ETuple [
@@ -699,26 +813,31 @@ structure Translate = struct
                        text (p, ", ")]),
                      text (p, "]")])))
               else (if named ("option", n) then
-                (case display (p, depth + 1, element) of
+                (case display (p, depth + 1, element, active) of
                    NONE => NONE
                  | SOME f => SOME (EFn [
                      (PApp (p, (["SubsetOptionValue"], "SOME"), PId (variable 0)),
                       join (p, [text (p, "Some("), apply (f, 0), text (p, ")")])),
                      (PId (p, (["SubsetOptionValue"], "NONE")), text (p, "None"))]))
-              else NONE)
+              else userType (n, [element]))
           | Types.TCon (n, [okType, errType]) =>
               if named ("result", n) then
-                (case (display (p, depth + 1, okType), display (p, depth + 1, errType)) of
+                (case (display (p, depth + 1, okType, active), display (p, depth + 1, errType, active)) of
                    (SOME f, SOME g) => SOME (EFn [
                      (PApp (p, (["SubsetResultValue"], "Ok"), PId (variable 0)),
                       join (p, [text (p, "Ok("), apply (f, 0), text (p, ")")])),
                      (PApp (p, (["SubsetResultValue"], "Err"), PId (variable 0)),
                       join (p, [text (p, "Err("), apply (g, 0), text (p, ")")]))])
                  | _ => NONE)
-              else NONE
+              else userType (n, [okType, errType])
+          | Types.TCon (n, args) => userType (n, args)
+          (* A variable no binding generalized and nothing decided, as in `print(None)`: a closed
+             value has no part of that type, so this display is never applied. *)
+          | Types.TVar v => if SmlList.exists (fn w => w = v) generalized then NONE
+              else SOME (EFn [(PWild, text (p, ""))])
           | _ => NONE
         end
-    in display end
+    in fn (p, depth, t) => display (p, depth, t, []) end
 
   (* Workman's `print`, once its argument type is known: `SubsetIo.printLine` of the value's
      display, as Workman shows it. Text and characters appear as they are, numbers as Workman
@@ -733,7 +852,7 @@ structure Translate = struct
              Types.TArrow (a, _) => SOME (p, a)
            | _ => NONE)
         | _ => NONE) (case sites of SOME xs => xs | NONE => [])
-      val display = displayOf st
+      val display = displayOf (env, ownStructures prog, st)
       val line = fn (p, shown) => EApp (EId (p, (["SubsetIo"], "printLine")), shown)
       val rewrite = fn e =>
         case e of
@@ -771,7 +890,7 @@ structure Translate = struct
              Types.TArrow (a, _) => SOME (p, a)
            | _ => NONE)
         | _ => NONE) (case sites of SOME xs => xs | NONE => [])
-      val display = displayOf st
+      val display = displayOf (env, ownStructures prog, st)
       val call = fn (p, path, e) => EApp (EId (p, path), e)
       val spelled = fn (structureName, name, fallback) =>
         if hasStructure (env, structureName) then ([structureName], name) else fallback
@@ -1012,7 +1131,7 @@ structure Translate = struct
             let val Unify.State (vars, next, sels, recs, _) = st in
               Unify.bind (portableValues (env, prog, Unify.State (vars, next, sels, recs, SOME [])))
                 (fn (env, prog) => fn st => Unify.bind (wmNumbers st) (fn _ => fn st =>
-                  elaborate (env, rest, st, SubsetList.append (acc, [(path, src, recordUpdates (st, printing (smlSpelling, st, remainders (smlSpelling, st, templateText (smlSpelling, st, realLiterals (st, realEquality (smlSpelling, st, prog)))))), comments)]))))
+                  elaborate (env, rest, st, SubsetList.append (acc, [(path, src, recordUpdates (st, printing (smlSpelling, st, remainders (smlSpelling, st, templateText (smlSpelling, st, realLiterals (st, realEquality (smlSpelling, st, fieldRecords (st, prog))))))), comments)]))))
             end
       val rec strict = fn
           (_, [], st) => Unify.Ok ((), st)
@@ -1078,7 +1197,7 @@ structure Translate = struct
                   Unify.Err (message, pos) => Unify.Err (located (path, message), pos)
                 | Unify.Ok ((body, rewritten), next) =>
                     rewrite (basis, rest, (name, body) :: cache, next,
-                      (name, dependencies, (path, src, recordUpdates (next, printing (env, next, remainders (env, next, templateText (env, next, realLiterals (next, realEquality (env, next, rewritten)))))), cs)) :: acc)
+                      (name, dependencies, (path, src, recordUpdates (next, printing (Env.plus (env, body), next, remainders (env, next, templateText (Env.plus (env, body), next, realLiterals (next, realEquality (env, next, fieldRecords (next, rewritten))))))), cs)) :: acc)
               end)
       val rec strict = fn (basis, remaining, cache, st) =>
         case remaining of

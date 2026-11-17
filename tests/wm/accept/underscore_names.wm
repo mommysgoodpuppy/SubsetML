@@ -1,0 +1,5 @@
+// SML reserves a leading `_`, so `_name` reads as `name'`. In a match it binds, as in Workman.
+let increment = (_x) => { _x + 1 };
+let _seed = increment(3);
+let first = match(pair) => { (_head, _) => { _head } };
+let chosen = first((_seed, 2));

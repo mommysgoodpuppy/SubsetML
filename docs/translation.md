@@ -212,9 +212,11 @@ The reader spells other Workman forms with Basis functions too, so its output pa
 operand type (both truncate toward zero); `==` and `!=` on reals are `SubsetReal64.equal`, IEEE
 equality. `print(a, b)` is `SubsetIo.printLine` of the arguments' display, which the translator
 writes from their types the way Workman shows them: text and characters as they are, numbers as
-above, `void`, `(1, a)`, `[1, 2]`, `{ s = q, x = 1 }`, `Some(2)`, `Ok(x)`. A tuple argument is
-several arguments. Other types, and types left partly undecided, are errors; annotate the value
-or print text. The reader treats `print` as Workman's pervasive, so a module binding its own
+above, `void`, `(1, a)`, `[1, 2]`, `{ s = q, x = 1 }`, `Some(2)`, `Ok(x)`, and datatypes as
+`End`, `Link(End)`, `Box(1, 2)`, through a recursive helper per datatype. A tuple argument is
+several arguments. A type variable nothing decides in a closed value, as in `print(None)`, holds
+no value, so its display is never applied; a generic function's own type variable has no display,
+so `(x) => { print(x) }` is an error: annotate it. Functions have no display either. The reader treats `print` as Workman's pervasive, so a module binding its own
 `print` is an error. Each module these spellings name is imported automatically, under its
 structure name, when the form occurs. Real remainder and text are host primitives
 (`SubsetRealHost`, adapters in `lib/`); real equality is portable source. `print` writes through
@@ -356,6 +358,21 @@ so nullary constructor patterns keep their identity without becoming comparisons
 Workman tells constructors from variables by case, so the translation assumes SubsetML follows
 the same convention: constructors start uppercase (apart from `true`, `false`, `nil`), and type
 constructors and variables start lowercase.
+
+Reading Workman, a name with a leading underscore, `_head`, is `head'`, since SML reserves a
+leading `_`. It binds even in a match pattern, as in Workman, where a bare name is pinned. A
+module that also writes `head'` itself is rejected rather than merging the two names.
+
+A field selection `user.score` whose receiver nothing else decides takes the one declared record
+type that has a `score` field, as Workman resolves it, and is written as a complete record
+pattern, `(fn {level = _, score = v} => v) user`, which SML resolves without the receiver's type
+name. With no such record, or several, the receiver must be annotated, as in SML.
+
+Lambdas take a bare parameter and an unbraced body as Workman does, `a => b => a + b`; `f => :> g`
+is `f` applied to the pipeline lambda `=> :> g`. `Text.of(v)` is a backtick string's `${v}`, and
+unapplied it is `v => Text.of(v)`; a generic one, whose type nothing decides, has no display.
+An operator nothing decides takes its class default in Workman as in SML (`int` for `+`, `real`
+for `/`), so a default carries over unannotated.
 
 ## Expression compatibility forms
 

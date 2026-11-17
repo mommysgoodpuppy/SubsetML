@@ -40,6 +40,7 @@ structure WmParse = struct
      mark (parseAtom); everywhere else it is the plain name. *)
   val peek = fn
       (WName ["`alias", head, _], p) :: _ => (WName [head], p)
+    | (WName ["`bind", name], p) :: _ => (WName [name], p)
     | t :: _ => t
     | [] => (WEOF, 0)
 
@@ -454,6 +455,9 @@ structure WmParse = struct
               SubsetString.concatWith (qs, ".") = moduleName andalso decapitalize n = name
             end) referenced) layouts)
 
+  val bareParameterAhead = fn ts =>
+    isKey ("=>", advance ts) andalso SubsetBool.not (isKey (":>", advance (advance ts)))
+
   (* An `if` is an operand, so `if (c) { a } else { b } >= 0` compares the whole conditional. *)
   val rec parseExp = fn ts =>
     case peek ts of
@@ -465,6 +469,10 @@ structure WmParse = struct
     | (WKey "if", _) => parseFallback ts
     | (WKey "match", _) => parseFallback ts
     | (WKey "(", _) => if lambdaAhead ts then parseLambda ts else parseFallback ts
+    (* `x => body` and `_ => body`: one parameter without parentheses. A body can't start with
+       `:>`, so `f => :> g` is `f` applied to the pipeline lambda `=> :> g`. *)
+    | (WName [_], _) => if bareParameterAhead ts then parseBareParameter ts else parseFallback ts
+    | (WKey "_", _) => if bareParameterAhead ts then parseBareParameter ts else parseFallback ts
     | _ => parseFallback ts
 
   and parseMatch = fn ts =>
@@ -494,8 +502,12 @@ structure WmParse = struct
   (* Patterns share the expression parser's recursion for `=(expression)`. *)
   and parsePat = fn (inMatch, binds, ts) =>
     let val child = fn b => fn ts => parseAnnotated (inMatch, b orelse SubsetBool.not inMatch, ts) in
-      case peek ts of
+      case (case ts of (WName ["`bind", name], p) :: _ => (WKey "`bind", p) | _ => peek ts) of
         (WKey "_", _) => Done (PWild, advance ts)
+      (* Workman's `_name` binds, in a match too; read as `name'` (WmLexer). *)
+      | (WKey "`bind", p) => (case peek ts of
+           (WName [name], _) => Done (PId (p, ([], name)), advance ts)
+         | _ => expected ("a pattern", ts))
       | (WKey "=", p) =>
           if inMatch then
             bind (expect ("(", advance ts)) (fn _ => fn ts =>
@@ -602,7 +614,17 @@ structure WmParse = struct
             end))))
     end
 
-  (* `(params) => body`, where the body is a block or another lambda. *)
+  (* A lambda's body: a block, or any expression, as in `a => b => a + b`. *)
+  and parseLambdaBody = fn ts =>
+    if lambdaAhead ts then parseLambda ts
+    else (if isKey ("{", ts) then parseBlock ts else parseExp ts)
+
+  and parseBareParameter = fn ts =>
+    bind (parsePat (false, true, ts)) (fn p => fn ts =>
+      bind (expect ("=>", ts)) (fn _ => fn ts =>
+        bind (parseLambdaBody ts) (fn body => fn ts => Done (EFn [(p, body)], ts))))
+
+  (* `(params) => body`, where the body is a block or any expression. *)
   and parseLambda = fn ts =>
     let
       val param = fn ts =>
@@ -618,7 +640,7 @@ structure WmParse = struct
         bind (result ts) (fn annotation => fn ts =>
         bind (captureClause ts) (fn _ => fn ts =>
         bind (expect ("=>", ts)) (fn _ => fn ts =>
-          bind (if lambdaAhead ts then parseLambda ts else parseBlock ts) (fn body => fn ts =>
+          bind (parseLambdaBody ts) (fn body => fn ts =>
             let
               val p =
                 case ps of
@@ -780,7 +802,12 @@ structure WmParse = struct
           (case (if lambdaAhead ts then parseLambda ts else parsePrimary ts) of
              Done (arg, rest) => calls (EApp (callee, arg), NONE, rest)
            | Fail (message, offset) => Fail (message, offset))
-        else finish (callee, insertion, ts)))
+        (* `f => :> g`: a pipeline lambda as a space argument; it extends as far as it can. *)
+        else (if isKey ("=>", ts) then
+          (case parseBareLambda (advance ts) of
+             Done (arg, rest) => finish (EApp (callee, arg), NONE, rest)
+           | Fail (message, offset) => Fail (message, offset))
+        else finish (callee, insertion, ts))))
     in
       bind (parsePrimary ts) (fn value => fn rest => calls (value, NONE, rest))
     end
@@ -834,10 +861,15 @@ structure WmParse = struct
   and atomPath = fn (p, path, ts) =>
     (* Workman's pervasive `print` takes any value; Translate.printing writes its display. *)
     if path = ["print"] then Done (EId (p, ([], "`print")), advance ts)
+    (* `Text.of(v)` is a template's conversion, `${v}`; unapplied, it is `v => Text.of(v)`. *)
+    else (if path = ["Text", "of"] orelse path = ["SubsetText", "of"] then
+      (if isKey ("(", advance ts) then Done (EId (p, ([], "`show")), advance ts)
+       else Done (EFn [(PId (p, ([], "textOfValue")), EApp (EId (p, ([], "`show")), EId (p, ([], "textOfValue"))))],
+                  advance ts))
     else (if isKey ("{", advance ts) then parseNamedRecord (p, path, advance (advance ts))
     else (if isKey ("|", advance ts) andalso CompilerText.firstIs (lastOf path, SubsetChar.isUpper)
     then parseCarrierGroup (p, path, advance (advance ts))
-    else Done (pathExp (p, path), advance ts)))
+    else Done (pathExp (p, path), advance ts))))
 
   and parsePrimary = fn ts =>
     case peek ts of

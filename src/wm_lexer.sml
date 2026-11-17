@@ -2,6 +2,7 @@
 from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./syntax.sml" import * as Syntax;
 from "./sml_list.sml" import * as SmlList;
+from "./subset_bool.sml" import * as SubsetBool;
 from "./subset_char.sml" import * as SubsetChar;
 from "./subset_source.sml" import * as SubsetSource;
 from "./subset_result.sml" import * as SubsetResult;
@@ -292,9 +293,19 @@ structure WmLexer = struct
                 if j > i + 1 then loop (j, (WSelect (CompilerText.substring (source, i + 1, j - i - 1)), i) :: acc, cs, depths)
                 else LexError ("expected a label after `#`", i)
               end
+          (* SML reserves a leading `_`, so Workman's `_name` reads as `name'`; `unprimed` rejects a
+             module that also writes `name'` itself. A lone `_name` is marked (`bind`), because in a
+             match pattern it binds where a bare name is pinned; the parser's `peek` drops the mark. *)
           | (#"_", _, _) =>
               if i + 1 < n andalso isIdentChar (at (i + 1))
-              then LexError ("identifiers starting with `_` are not SubsetML", i)
+              then (if SubsetBool.not (SubsetChar.isAlpha (at (i + 1)))
+                then LexError ("identifiers starting with `_` and then a non-letter are not SubsetML", i)
+                else (case lexPath (i + 1) of
+                   Ok (WName [only], j) => loop (j, (WName ["`bind", only ^ "'"], i) :: acc, cs, depths)
+                 | Ok (WName (first :: rest), j) => loop (j, (WName ((first ^ "'") :: rest), i) :: acc, cs, depths)
+                 | Ok (WKey word, j) => loop (j, (WName ["`bind", word ^ "'"], i) :: acc, cs, depths)
+                 | Ok (_, j) => LexError ("unexpected name after `_`", i)
+                 | Err (message, offset) => LexError (message, offset)))
               else loop (i + 1, (WKey "_", i) :: acc, cs, depths)
           | (c, _, _) =>
               case (isSpace c, SubsetChar.isDigit c, SubsetChar.isAlpha c) of
@@ -309,8 +320,27 @@ structure WmLexer = struct
               | _ => (case lexSymbol i of
                      Ok (tok, j) => loop (j, (tok, i) :: acc, cs, nest (tok, depths))
                    | Err (message, offset) => LexError (message, offset))
+      val unprimed = fn result => case result of
+          Tokens (tokens, cs) =>
+            let
+              val renamed = fn (token, i) => case token of
+                  WName ["`bind", only] => SOME only
+                | WName (first :: _) => if at i = #"_" then SOME first else NONE
+                | _ => NONE
+              val names = SmlList.mapPartial renamed tokens
+              val clash = SmlList.find (fn (token, i) => case token of
+                  WName (first :: _) => at i <> #"_" andalso SmlList.exists (fn m => m = first) names
+                | _ => false) tokens
+            in
+              case clash of
+                SOME (WName (first :: _), i) =>
+                  LexError ("`" ^ first ^ "` is also how this module's `_` name of the same spelling translates; "
+                            ^ "rename one of them", i)
+              | _ => result
+            end
+        | _ => result
     in
-      loop (0, [], [], [])
+      unprimed (loop (0, [], [], []))
     end
 
 end

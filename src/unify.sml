@@ -31,22 +31,26 @@ structure Unify = struct
      position, level, record type, label, field type. *)
   type selection = Syntax.pos * int * ty * string * ty
 
-  (* A recorded site: an identifier or equality operand with its type, or a binding whose
-     numeric class was closed by SML's integer default. Workman defaults to Number instead,
-     so translation to Workman must not rely on the second kind. *)
+  (* A recorded site: an operand with its type, a Workman literal, or a type variable a
+     binding's scheme generalized. *)
   datatype site =
       Operand of Syntax.pos * ty
-    | Defaulted of Syntax.pos
     (* A Workman integer literal and its type: an int-or-real class until context decides,
        as in Workman, whose integer literals take a real type from their context. *)
     | Literal of Syntax.pos * ty
+    (* A type variable some binding's scheme took. One never generalized and never decided, in
+       a closed value, stands for no value at all (Translate.displayOf). *)
+    | Generalized of int
+    (* A `# lab` whose record type was known only from the one declared record type with that
+       label, as Workman resolves `user.score`: the selection's position and the labels. *)
+    | FieldRecord of Syntax.pos * string list
 
   (* Variables, the next fresh number (also used for type name stamps), pending selections,
      the label sets of the record type declarations so far (spec R2), and, when translating
      from Workman, equality sites plus resolved numeric/library identifier sites
      used by native integer emission (see `lenient`). *)
   datatype state =
-      State of var IntMap.map * int * selection list * string list list * site list option
+      State of var IntMap.map * int * selection list * (string list * int * ty) list * site list option
 
   val initial = State (IntMap.empty, firstStamp, [], [], NONE)
 

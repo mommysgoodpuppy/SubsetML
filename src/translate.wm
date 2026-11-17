@@ -556,9 +556,9 @@ let declarationGaps = (structures, prog) => {
   concatMap(top, prog)
 };
 
-/* SML closes an unresolved numeric class to int; Workman closes it to Number. A program that
-   relies on either default would change meaning in translation, so it must annotate. An int
-   constant is never such a site: it is int in SML and printed as an I32 ascription. */
+/* SML and Workman both close an unresolved numeric class to its default (int, or real for `/`)
+   at the declaration, so a default carries over. An operand whose class is still open after
+   elaboration has no type to translate at; it must be annotated. */
 let defaultedSite = (st) => {
   let rec unresolved = (t) => {
     match(Unify.prune(st, t)) {
@@ -579,9 +579,8 @@ let defaultedSite = (st) => {
     None => { None },
     Some(xs) => {
       match(SmlList.mapPartial(match {
-        Unify.Defaulted(pos) => { Some(pos) },
         Unify.Operand(pos, t) => { if (unresolved(t)) { Some(pos) } else { None } },
-        Unify.Literal(_) => { None }
+        _ => { None }
       })(xs)) {
         [] => { None },
         [pos, .._] => { Some(pos) }
@@ -590,7 +589,7 @@ let defaultedSite = (st) => {
   }
 };
 
-let defaultedMessage = "a numeric operation whose type only a default decides (SML int, Workman Real64); annotate it as int or real";
+let defaultedMessage = "the type of this numeric operation is undecided; annotate it";
 
 let wmNumbers = (st) => {
   match(defaultedSite(st)) {
@@ -1005,10 +1004,146 @@ let remainders = (env, st, prog) => {
   mapProgram(rewrite, prog)
 };
 
+/* A `user.score` whose record type only the one declared record with `score` decides
+   (Elab.settleSelections): SML resolves `#score` from its receiver's type, so the selection
+   is written as a complete record pattern, `(fn {level = _, score = v} => v) user`. */
+let fieldRecords = (st, prog) => {
+  let Unify.State(_, _, _, _, sites) = st;
+  let resolved = SmlList.mapPartial(match {
+    Unify.FieldRecord(p, labels) => { Some(p, labels) },
+    _ => { None }
+  })(match(sites) {
+    Some(xs) => { xs },
+    None => { [] }
+  });
+  let rewrite = (e) => {
+    match(e) {
+      EApp(ESelect(q, lab), receiver) => {
+        match(SmlList.find((p, _) => { p == q })(resolved)) {
+          None => { e },
+          Some(found) => {
+            let (_, labels) = found;
+            let value = (q, ([], "fieldValue"));
+            let pattern = PRecord(
+              q,
+              SmlList.map((l) => { (l, if (l == lab) { PId(value) } else { PWild }) })(labels)
+            );
+            EApp(EFn([(pattern, EId(value))]), receiver)
+          }
+        }
+      },
+      _ => { e }
+    }
+  };
+  mapProgram(rewrite, prog)
+};
+
+// The structures a program declares: a translated module is one.
+let ownStructures = (prog) => {
+  concatMap(
+    match {
+      TopDecs(sds) => {
+        concatMap(
+          match {
+            SStructure(_, bs) => { SmlList.map((n, _, _) => { n })(bs) },
+            _ => { [] }
+          },
+          sds
+        )
+      },
+      TopExp(_) => { [] }
+    },
+    prog
+  )
+};
+
 /* Workman's display of a value as text, as `print` and backtick strings show it: a function
    from the type's values to their text, or NONE for a type with no portable display. */
-let displayOf = (st) => {
+let displayOf = (env, own, st) => {
+  let generalized = match(st) {
+    Unify.State(_, _, _, _, Some(sites)) => {
+      SmlList.mapPartial(match {
+        Unify.Generalized(v) => { Some(v) },
+        _ => { None }
+      })(sites)
+    },
+    _ => { [] }
+  };
   let text = (p, value) => { EScon(p, SString(value)) };
+  /* A datatype's constructors, and the path that names them here: a type of this module's
+     own structure is named unqualified, since its constructors are in scope. */
+  let datatypeOf = (nominal) => {
+    let rec find = match {
+      (Env.Env(structures, types, _), Var(path)) => {
+        match(SmlList.find(match {
+          (_, Env.TyStr(_, body, constructors)) => {
+            match(body) {
+              Types.TCon(name, _) => {
+                if (Unify.sameName(name, nominal)) { SubsetBool.not(SmlList.null(constructors)) } else { false }
+              },
+              _ => { false }
+            }
+          }
+        })(types)) {
+          Some(entry) => {
+            let (_, Env.TyStr(_, _, constructors)) = entry;
+            Some(path, constructors)
+          },
+          None => {
+            let rec inner = (structures) => {
+              match(structures) {
+                [] => { None },
+                [(Var(n), (Var(body), _)), ..rest] => {
+                  match(find(body, SubsetList.append(path, [n]))) {
+                    Some(found) => { Some(found) },
+                    None => { inner(rest) }
+                  }
+                }
+              }
+            };
+            inner(structures)
+          }
+        }
+      }
+    };
+    let unqualified = (path) => {
+      match(path) {
+        [first, ..rest] => {
+          if (SmlList.exists((n) => { n == first })(own)) { rest } else { path }
+        },
+        [] => { [] }
+      }
+    };
+    match(find(env, [])) {
+      Some(found) => {
+        let (path, constructors) = found;
+        Some(unqualified(path), constructors)
+      },
+      None => { None }
+    }
+  };
+  let rec sameType = (a, b) => {
+    match(Unify.prune(st, a), Unify.prune(st, b)) {
+      (Types.TCon(m, xs), Types.TCon(n, ys)) => {
+        if (Unify.sameName(m, n)) { sameTypes(xs, ys) } else { false }
+      },
+      (Types.TRecord(xs), Types.TRecord(ys)) => {
+        if (sameTypes(SmlList.map((_, t) => { t })(xs), SmlList.map((_, t) => { t })(ys))) {
+          SmlList.map((l, _) => { l })(xs) == SmlList.map((l, _) => { l })(ys)
+        } else { false }
+      },
+      (Types.TArrow(a1, b1), Types.TArrow(a2, b2)) => { if (sameType(a1, a2)) { sameType(b1, b2) } else { false } },
+      (Types.TVar(v), Types.TVar(w)) => { v == w },
+      _ => { false }
+    }
+  }
+  and sameTypes = (xs, ys) => {
+    match(xs, ys) {
+      ([], []) => { true },
+      ([x, ..xs], [y, ..ys]) => { if (sameType(x, y)) { sameTypes(xs, ys) } else { false } },
+      _ => { false }
+    }
+  };
   let rec join = (p, pieces) => {
     match(pieces) {
       [] => { text(p, "") },
@@ -1021,10 +1156,70 @@ let displayOf = (st) => {
   };
   let named = (t, n) => { Types.nameOf(n) == t };
   // A function from the type's values to their display, or NONE.
-  let rec display = (p, depth, t) => {
+  let rec display = (p, depth, t, active) => {
     let variable = (index) => { (p, ([], name(depth, index))) };
     let apply = (f, index) => { EApp(f, EId(variable(index))) };
     let one = (body) => { Some(EFn([(PId(variable(0)), body)])) };
+    /* A datatype shows as `Ctor`, `Ctor(x)` or `Ctor(a, b)`, through a recursive helper, so a
+       recursive type refers back to it. Helpers are named by depth, which grows inward, so
+       an inner helper never shadows an outer one. */
+    let userType = (n, args) => {
+      match(SmlList.find((u, _) => { sameType(u, Types.TCon(n, args)) })(active)) {
+        Some(entry) => {
+          let (_, helper) = entry;
+          Some(EId(p, ([], helper)))
+        },
+        None => {
+          match(datatypeOf(n)) {
+            None => { None },
+            Some(found) => {
+              let (path, constructors) = found;
+              let helper = "printType" ++ CompilerText.natural(depth);
+              let active' = [(Types.TCon(n, args), helper), ..active];
+              let rec arms = (constructors) => {
+                match(constructors) {
+                  [] => { Some([]) },
+                  [(Var(c), (_, Var(body))), ..rest] => {
+                    let arm = match(Types.substGen(args, body)) {
+                      Types.TArrow(argument, _) => {
+                        match(display(p, depth + 1, argument, active')) {
+                          None => { None },
+                          Some(f) => {
+                            let tuple = match(Unify.prune(st, argument)) {
+                              Types.TRecord(fields) => { SmlList.exists((l, _) => { l == "1" })(fields) },
+                              _ => { false }
+                            };
+                            let shown = apply(f, 0);
+                            Some(
+                              PApp(p, (path, c), PId(variable(0))),
+                              if (tuple) { join(p, [text(p, c), shown]) } else { join(p, [text(p, c ++ "("), shown, text(p, ")")]) }
+                            )
+                          }
+                        }
+                      },
+                      _ => { Some(PId(p, (path, c)), text(p, c)) }
+                    };
+                    match(arm, arms(rest)) {
+                      (Some(a), Some(more)) => { Some([a, ..more]) },
+                      _ => { None }
+                    }
+                  }
+                }
+              };
+              match(arms(constructors)) {
+                None => { None },
+                Some(cases) => {
+                  Some(ELet(
+                    [DVal(p, [], [], [(PId(p, ([], helper)), EFn(cases))])],
+                    [EId(p, ([], helper))]
+                  ))
+                }
+              }
+            }
+          }
+        }
+      }
+    };
     match(decided(st, t)) {
       Types.TCon(n, []) => {
         if (Unify.sameName(n, Types.stringName)) { one(EId(variable(0))) } else {
@@ -1034,7 +1229,7 @@ let displayOf = (st) => {
                 if (Unify.sameName(n, Types.realName)) { Some(EId(p, (["SubsetReal64"], "toString"))) } else {
                   if (Unify.sameName(n, Types.boolName)) {
                     one(EIf(EId(variable(0)), text(p, "true"), text(p, "false")))
-                  } else { None }
+                  } else { userType(n, []) }
                 }
               }
             }
@@ -1048,7 +1243,7 @@ let displayOf = (st) => {
           match(fields) {
             [] => { Some([]) },
             [(Var(label), Var(ft)), ..rest] => {
-              match(display(p, depth + 1, ft), parts(rest, index + 1)) {
+              match(display(p, depth + 1, ft, active), parts(rest, index + 1)) {
                 (Some(f), Some(more)) => { Some([(label, index, f), ..more]) },
                 _ => { None }
               }
@@ -1091,7 +1286,7 @@ let displayOf = (st) => {
       },
       Types.TCon(n, [element]) => {
         if (Unify.sameName(n, Types.listName)) {
-          match(display(p, depth + 1, element)) {
+          match(display(p, depth + 1, element, active)) {
             None => { None },
             Some(f) => {
               one(join(
@@ -1112,7 +1307,7 @@ let displayOf = (st) => {
           }
         } else {
           if (named("option", n)) {
-            match(display(p, depth + 1, element)) {
+            match(display(p, depth + 1, element, active)) {
               None => { None },
               Some(f) => {
                 Some(EFn([
@@ -1124,12 +1319,12 @@ let displayOf = (st) => {
                 ]))
               }
             }
-          } else { None }
+          } else { userType(n, [element]) }
         }
       },
       Types.TCon(n, [okType, errType]) => {
         if (named("result", n)) {
-          match(display(p, depth + 1, okType), display(p, depth + 1, errType)) {
+          match(display(p, depth + 1, okType, active), display(p, depth + 1, errType, active)) {
             (Some(f), Some(g)) => {
               Some(EFn([
                 (
@@ -1144,12 +1339,18 @@ let displayOf = (st) => {
             },
             _ => { None }
           }
-        } else { None }
+        } else { userType(n, [okType, errType]) }
+      },
+      Types.TCon(n, args) => { userType(n, args) },
+      /* A variable no binding generalized and nothing decided, as in `print(None)`: a closed
+         value has no part of that type, so this display is never applied. */
+      Types.TVar(v) => {
+        if (SmlList.exists((w) => { w == v })(generalized)) { None } else { Some(EFn([(PWild, text(p, ""))])) }
       },
       _ => { None }
     }
   };
-  display
+  (p, depth, t) => { display(p, depth, t, []) }
 };
 
 /* Workman's `print`, once its argument type is known: `SubsetIo.printLine` of the value's
@@ -1173,7 +1374,7 @@ let printing = (env, st, prog) => {
     Some(xs) => { xs },
     None => { [] }
   });
-  let display = displayOf(st);
+  let display = displayOf(env, ownStructures(prog), st);
   let line = (p, shown) => { EApp(EId(p, (["SubsetIo"], "printLine")), shown) };
   let rewrite = (e) => {
     match(e) {
@@ -1232,7 +1433,7 @@ let templateText = (env, st, prog) => {
     Some(xs) => { xs },
     None => { [] }
   });
-  let display = displayOf(st);
+  let display = displayOf(env, ownStructures(prog), st);
   let call = (p, path, e) => { EApp(EId(p, path), e) };
   let spelled = (structureName, name, fallback) => {
     if (hasStructure(env, structureName)) { ([structureName], name) } else { fallback }
@@ -1722,7 +1923,11 @@ let recover = (modules, target) => {
                       remainders(
                         smlSpelling,
                         st,
-                        templateText(smlSpelling, st, realLiterals(st, realEquality(smlSpelling, st, prog)))
+                        templateText(
+                          smlSpelling,
+                          st,
+                          realLiterals(st, realEquality(smlSpelling, st, fieldRecords(st, prog)))
+                        )
                       )
                     )
                   ),
@@ -1842,12 +2047,16 @@ let recoverProjectWithRuntime = (runtime, modules) => {
                       recordUpdates(
                         next,
                         printing(
-                          env,
+                          Env.plus(env, body),
                           next,
                           remainders(
                             env,
                             next,
-                            templateText(env, next, realLiterals(next, realEquality(env, next, rewritten)))
+                            templateText(
+                              Env.plus(env, body),
+                              next,
+                              realLiterals(next, realEquality(env, next, fieldRecords(next, rewritten)))
+                            )
                           )
                         )
                       ),

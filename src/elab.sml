@@ -363,9 +363,9 @@ structure Elab = struct
             case sites of
               SOME xs => Ok (t, State (vs, nx, sels, recs, SOME (Operand (q, t) :: xs)))
             (* The target check: a marker translation left has a type with no display. *)
-            | NONE => Err ("the type of a value in a backtick string's ${ } is undecided in part, or has no "
+            | NONE => Err ("the type of a value in a backtick string's ${ } or `Text.of` is undecided in part, or has no "
                            ^ "portable display; annotate it, or show text, numbers, booleans, characters, void, "
-                           ^ "tuples, lists, records, Option or Result", q)
+                           ^ "tuples, lists, records, Option, Result or datatypes", q)
           end
       (* Workman's `print`, read from Workman: any value, shown by type during translation
          (Translate.printing). A marker left in place has a type with no portable display. *)
@@ -386,7 +386,7 @@ structure Elab = struct
               SOME xs => Ok (t, State (vs, nx, sels, recs, SOME (Operand (q, t) :: xs)))
             | NONE => Err ("print: this value's type is undecided in part, or has no portable display; "
                            ^ "annotate it, or print text, numbers, booleans, characters, void, tuples, "
-                           ^ "lists, records, Option or Result", q)
+                           ^ "lists, records, Option, Result or datatypes", q)
           end)
       (* Workman's `%`, read from Workman: remainder truncated toward zero on an int, Int64 or
          real, resolved by type during translation (Translate.remainders). *)
@@ -603,7 +603,7 @@ structure Elab = struct
       val records = SmlList.mapPartial (fn (n, TyStr (_, t, _)) =>
         case t of
           TRecord fields => (case tupleComponents fields of NONE =>
-            if SmlList.exists (fn labels => sameLabels (labels, labelsOf fields)) existingRecords
+            if SmlList.exists (fn (labels, _, _) => sameLabels (labels, labelsOf fields)) existingRecords
             then NONE else SOME (n, labelsOf fields)
           | SOME _ => NONE)
         | _ => NONE) hiddenTypes
@@ -734,8 +734,44 @@ structure Elab = struct
               if progress then loop (State (vs', nx', pending, rs', eq')) else Ok (pending, State (vs', nx', pending, rs', eq'))
             end)
         end
+      (* Reading Workman, a field names its record type when one declared record type has it,
+         as Workman resolves `user.score`; SML would need the receiver annotated. One pass
+         resolves the first such selection, then the loop settles what follows from it. *)
+      val byLabel = fn st =>
+        let val State (_, _, pending, rs, sites) = st in
+          case sites of
+            NONE => NONE
+          | SOME _ =>
+              (* Only where SML would give up: a receiver this declaration must decide. *)
+              SmlList.find (fn (_, _, r, lab, _) => case prune (st, r) of
+                  TVar v => (case lookup (st, v) of Free (_, l) => l > level | Bound _ => false) andalso
+                    SubsetList.length (SmlList.filter (fn (labels, _, _) =>
+                      SmlList.exists (fn m => m = lab) labels) rs) = 1
+                | _ => false) pending
+        end
+      val rec settle = fn st =>
+        bind (loop st) (fn pending => fn st =>
+          case byLabel st of
+            NONE => Ok (pending, st)
+          | SOME sel =>
+              let
+                val (q, l, r, lab, _) = sel
+                val State (_, _, _, rs, _) = st
+                val SOME declared = SmlList.find (fn (labels, _, _) => SmlList.exists (fn m => m = lab) labels) rs
+                val (labels, arity, body) = declared
+                val rec fresh' = fn (n, acc, st) =>
+                  if n = 0 then (SmlList.rev acc, st)
+                  else let val (t, st) = fresh (st, KPlain, l) in fresh' (n - 1, t :: acc, st) end
+                val (args, st) = fresh' (arity, [], st)
+                (* Translation writes the selection as a complete record pattern. *)
+                val st = case st of
+                    State (vs, nx, sels, rs, SOME xs) => State (vs, nx, sels, rs, SOME (FieldRecord (q, labels) :: xs))
+                  | _ => st
+              in
+                bind (unifyAt (st, q, "record of field " ^ lab, r, substGen (args, body))) (fn _ => fn st => settle st)
+              end)
     in
-      bind (loop (State (vars, next, sels, recs, eqs))) (fn pending => fn st =>
+      bind (settle (State (vars, next, sels, recs, eqs))) (fn pending => fn st =>
         case SmlList.find (fn (_, _, r, _, _) =>
                           case prune (st, r) of
                             TVar v => (case lookup (st, v) of Free (_, l) => l > level | Bound _ => false)
@@ -770,16 +806,19 @@ structure Elab = struct
               | _ => Err ("the type of this numeric constant or operation is undecided; annotate it as one of "
                       ^ SubsetString.concatWith (SmlList.map nameOf names, ", "), pos))))
           end
-      (* Only a default no Workman literal decides is recorded: Workman would choose Real64. *)
-      val noteDefault = fn st => case (SmlList.filter (fn v => SubsetBool.not (literalVar (st, v))) defaults, st) of
-          ([], _) => st
-        | (_, State (vs, nx, sels, recs, SOME xs)) => State (vs, nx, sels, recs, SOME (Defaulted pos :: xs))
-        | (_, _) => st
     in
-      bind (settle (defaults, noteDefault st)) (fn _ => fn st =>
+      bind (settle (defaults, st)) (fn _ => fn st =>
         let val rigid = SmlList.filter (fn v => member (v, explicit)) (rigidNames (resolve (st, t))) in
           case (generalizable, rigid) of
-            (true, _) => Ok ((x, generalize (st, level, explicit, t)), st)
+            (true, _) =>
+              let
+                val taken = SmlList.filter (fn v => case lookup (st, v) of Free (_, l) => l > level | Bound _ => false)
+                  (freeVars (st, resolve (st, t)))
+                val st' = case st of
+                    State (vs, nx, sels, recs, SOME xs) =>
+                      State (vs, nx, sels, recs, SOME (SubsetList.append (SmlList.map Generalized taken, xs)))
+                  | _ => st
+              in Ok ((x, generalize (st, level, explicit, t)), st') end
           | (false, v :: _) =>
               Err ("type variable " ^ v ^ " cannot be generalized: the value is expansive (Definition, section 4.8)", pos)
           | (false, []) => Ok ((x, ([], resolve (st, t))), adjust (st, level, t))
@@ -807,7 +846,7 @@ structure Elab = struct
                            bind (paramScope (pos, params, st)) (fn tyvar => fn st =>
                              bind (elabTy (env, tyvar, pos, t, st)) (fn body => fn st =>
                                bind (case t of
-                                       TyRecord _ => recordDeclared (pos, body, st)
+                                       TyRecord _ => recordDeclared (pos, SubsetList.length params, body, st)
                                      | _ => Ok ((), st)) (fn _ => fn st =>
                                  Ok (SubsetList.append (acc, [(name, TyStr (SubsetList.length params, body, []))]), st)))),
                          [], binds, st))
@@ -827,16 +866,16 @@ structure Elab = struct
           Ok (fn v => index (v, params, 0), st)
         end
 
-  and recordDeclared = fn (pos, body, st) =>
+  and recordDeclared = fn (pos, arity, body, st) =>
     case body of
       TRecord fields =>
         let
           val labels = SmlList.map (fn (l, _) => l) fields
           val State (vars, next, sels, recs, eqs) = st
         in
-          if member (labels, recs) then
+          if SmlList.exists (fn (declared, _, _) => declared = labels) recs then
             Err ("another record type already has the labels {" ^ SubsetString.concatWith (labels, ", ") ^ "} (spec R2)", pos)
-          else Ok ((), State (vars, next, sels, labels :: recs, eqs))
+          else Ok ((), State (vars, next, sels, (labels, arity, body) :: recs, eqs))
         end
     | _ => Ok ((), st)
 

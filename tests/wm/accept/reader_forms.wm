@@ -1,0 +1,9 @@
+// Lambdas with one bare parameter and an unbraced body, a pipeline lambda as an argument,
+// `Text.of`, and a field whose one declared record type decides its receiver.
+record User = { score: Int32.Int, level: Int32.Int };
+let add = a => b => a + b;
+let constant = _ => 0;
+let apply = (f) => f(2);
+let doubled = apply(=> :> add 2);
+let scoreOf = user => user.score;
+let label = (n: Int32.Int) => Text.of(n);

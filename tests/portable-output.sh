@@ -29,6 +29,13 @@ let _ = print([1, 2], Some(3.5), failed, .{ x = -1, s = "q" }, (0.1 + 0.2, [Some
 let shout = (text: String) => { text ++ "!" };
 let _ = List.forEach(["one", "two"], (word) => { print(shout(word)) });
 let _ = print(`${[1, 2]} ${.{ x = -2, s = "q" }} ${(1, Some(2.5))} ${failed}`);
+type Chain = End | Link<Chain>;
+type Shape<T> = Dot | Box<T, T> | Tagged<String, Option<T>>;
+let _ = print(Link(Link(End)), Box(1, 2), Tagged("t", Some(2.5)), Dot, `${Link(End)}`);
+let _ = print(None, []);
+record User = { score: Int32.Int, level: Int32.Int };
+let scoreOf = user => user.score;
+let _ = print(List.map([Some(1), None], Text.of), scoreOf(User(7, 1)), (a => b => a + b)(1)(2));
 ''')
     adapters = []
     for name, structure in [('subset_host', 'SubsetHost'), ('subset_text_host', 'SubsetTextHost'),
@@ -42,7 +49,10 @@ let _ = print(`${[1, 2]} ${.{ x = -2, s = "q" }} ${(1, Some(2.5))} ${failed}`);
                 b'(1, a, true)\nvoid\n'
                 b'([1, 2], Some(3.5), Err(e), { s = q, x = -1 }, (0.30000000000000004, [Some(1), None]))\n'
                 b'one!\ntwo!\n'
-                b'[1, 2] { s = q, x = -2 } (1, Some(2.5)) Err(e)\n')
+                b'[1, 2] { s = q, x = -2 } (1, Some(2.5)) Err(e)\n'
+                b'(Link(Link(End)), Box(1, 2), Tagged(t, Some(2.5)), Dot, Link(End))\n'
+                b'(None, [])\n'
+                b'([Some(1), None], 7, 3)\n')
     assert result.stdout == expected, result.stdout
     # A module that binds its own `print` is rejected rather than misread.
     shadow = root / 'shadow.wm'
@@ -51,7 +61,7 @@ let _ = print(`${[1, 2]} ${.{ x = -2, s = "q" }} ${(1, Some(2.5))} ${failed}`);
     assert rejected.returncode != 0 and b"reads `print` as Workman's print" in rejected.stderr, rejected.stderr
     # A value with no type to show it by is an error that says what to do.
     generic = root / 'generic.wm'
-    generic.write_text('let show = (x) => { `${x}` };\nlet _ = print(show(1));\n')
+    generic.write_text('let show = (x) => { `${x}` };\nlet _ = print(show(1));\nlet each = (x) => { print(x) };\n')
     rejected = subprocess.run([compiler, 'sml-entry', root / 'generic', '--basis', wm, generic], capture_output=True)
     assert rejected.returncode != 0 and b'annotate it' in rejected.stderr, rejected.stderr
 print('portable output: Basis spellings pass check-portable and print as Workman does')

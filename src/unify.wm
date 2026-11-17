@@ -42,19 +42,26 @@ type Var = Free<Kind, Int32.Int> | Bound<Ty>; // kind, level
    position, level, record type, label, field type. */
 type Selection = (Syntax.Pos, Int32.Int, Ty, String, Ty);
 
-/* A recorded site: an identifier or equality operand with its type, or a binding whose
-   numeric class was closed by SML's integer default. Workman defaults to Number instead,
-   so translation to Workman must not rely on the second kind. */
-type Site = Operand<Syntax.Pos, Ty> | Defaulted<Syntax.Pos> | Literal<Syntax.Pos, Ty>;
-/* A Workman integer literal and its type: an int-or-real class until context decides,
-   as in Workman, whose integer literals take a real type from their context. */
+/* A recorded site: an operand with its type, a Workman literal, or a type variable a
+   binding's scheme generalized. */
+type Site =
+  | Operand<Syntax.Pos, Ty>
+  /* A Workman integer literal and its type: an int-or-real class until context decides,
+     as in Workman, whose integer literals take a real type from their context. */
+  | Literal<Syntax.Pos, Ty>
+  /* A type variable some binding's scheme took. One never generalized and never decided, in
+     a closed value, stands for no value at all (Translate.displayOf). */
+  | Generalized<Int32.Int>
+  /* A `# lab` whose record type was known only from the one declared record type with that
+     label, as Workman resolves `user.score`: the selection's position and the labels. */
+  | FieldRecord<Syntax.Pos, List<String>>;
 
 /* Variables, the next fresh number (also used for type name stamps), pending selections,
    the label sets of the record type declarations so far (spec R2), and, when translating
    from Workman, equality sites plus resolved numeric/library identifier sites
    used by native integer emission (see `lenient`). */
 type State =
-  | State<IntMap.Map<Var>, Int32.Int, List<Selection>, List<List<String>>, Option<List<Site>>>;
+  | State<IntMap.Map<Var>, Int32.Int, List<Selection>, List<(List<String>, Int32.Int, Ty)>, Option<List<Site>>>;
 
 let initial = State(IntMap.empty, firstStamp, [], [], None);
 
