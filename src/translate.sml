@@ -546,8 +546,8 @@ structure Translate = struct
           EApp (EId (p, ([], opr)), a) =>
             if (opr = "=" orelse opr = "<>") andalso SmlList.exists (fn q => (p = q)) positions
             then
-              (if hasStructure (env, "SubsetReal") then
-                 let val equal = EApp (EId (p, (["SubsetReal"], "equal")), a) in
+              (if hasStructure (env, "SubsetReal64") then
+                 let val equal = EApp (EId (p, (["SubsetReal64"], "equal")), a) in
                    if opr = "=" then equal else EApp (EId (p, (["SubsetBool"], "not")), equal)
                  end
                else EApp (EId (p, (["Real"], if opr = "=" then "==" else "!=")), a))
@@ -599,7 +599,7 @@ structure Translate = struct
     end
 
   (* A backtick string's `${ e }`: the text of e by its resolved type. *)
-  (* Workman's `%`, once its operand type is known: `SubsetInt32.rem` or `SubsetReal.rem`.
+  (* Workman's `%`, once its operand type is known: `SubsetInt32.rem` or `SubsetReal64.rem`.
      Int64 is MLton-only, like the other sized numbers, and keeps `Int64.rem`. *)
   val remainders = fn (env, st, prog) =>
     let
@@ -624,7 +624,7 @@ structure Translate = struct
              | SOME found =>
                  let val (_, n) = found in
                    if Unify.sameName (n, Types.realName) then
-                     EId (p, (if hasStructure (env, "SubsetReal") then ["SubsetReal"] else ["Real"], "rem"))
+                     EId (p, (if hasStructure (env, "SubsetReal64") then ["SubsetReal64"] else ["Real"], "rem"))
                    else (if Unify.sameName (n, Types.int64Name) then EId (p, (["Int64"], "rem"))
                    else integer p)
                  end)
@@ -667,7 +667,7 @@ structure Translate = struct
               else (if Unify.sameName (n, Types.charName) then SOME (EId (p, (["SubsetString"], "fromChar")))
               else (if Unify.sameName (n, Types.intName) then SOME (EId (p, (["SubsetInt32"], "toString")))
               else (if Unify.sameName (n, Types.int64Name) then SOME (EId (p, (["Int64"], "toString")))
-              else (if Unify.sameName (n, Types.realName) then SOME (EId (p, (["SubsetReal"], "toString")))
+              else (if Unify.sameName (n, Types.realName) then SOME (EId (p, (["SubsetReal64"], "toString")))
               else (if Unify.sameName (n, Types.boolName)
                 then one (EIf (EId (variable 0), text (p, "true"), text (p, "false")))
               else NONE)))))
@@ -783,7 +783,7 @@ structure Translate = struct
                    else (if is Types.charName then call (p, spelled ("SubsetString", "fromChar", (["String"], "str")), value)
                    else (if is Types.intName then call (p, spelled ("SubsetInt32", "toString", (["Int"], "toString")), value)
                    else (if is Types.int64Name then call (p, (["Int64"], "toString"), value)
-                   else (if is Types.realName then call (p, spelled ("SubsetReal", "toString", (["Real"], "toString")), value)
+                   else (if is Types.realName then call (p, spelled ("SubsetReal64", "toString", (["Real"], "toString")), value)
                    else (if is Types.boolName
                      then EIf (value, EScon (p, SString "true"), EScon (p, SString "false"))
                    else e)))))

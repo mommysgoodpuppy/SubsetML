@@ -865,8 +865,8 @@ let realEquality = (env, st, prog) => {
     match(e) {
       EApp(EId(p, ([], Var(opr))), a) => {
         if (if (if (opr == "=") { true } else { opr == "<>" }) { SmlList.exists((q) => { p == q })(positions) } else { false }) {
-          if (hasStructure(env, "SubsetReal")) {
-            let equal = EApp(EId(p, (["SubsetReal"], "equal")), a);
+          if (hasStructure(env, "SubsetReal64")) {
+            let equal = EApp(EId(p, (["SubsetReal64"], "equal")), a);
             if (opr == "=") { equal } else { EApp(EId(p, (["SubsetBool"], "not")), equal) }
           } else {
             EApp(EId(p, (["Real"], if (opr == "=") { "==" } else { "!=" })), a)
@@ -939,7 +939,7 @@ let recordUpdates = (st, prog) => {
 };
 
 // A backtick string's `${ e }`: the text of e by its resolved type.
-/* Workman's `%`, once its operand type is known: `SubsetInt32.rem` or `SubsetReal.rem`.
+/* Workman's `%`, once its operand type is known: `SubsetInt32.rem` or `SubsetReal64.rem`.
    Int64 is MLton-only, like the other sized numbers, and keeps `Int64.rem`. */
 let remainders = (env, st, prog) => {
   let Unify.State(_, _, _, _, sites) = st;
@@ -989,7 +989,7 @@ let remainders = (env, st, prog) => {
               EId(
                 p,
                 (
-                  if (hasStructure(env, "SubsetReal")) { ["SubsetReal"] } else { ["Real"] },
+                  if (hasStructure(env, "SubsetReal64")) { ["SubsetReal64"] } else { ["Real"] },
                   "rem"
                 )
               )
@@ -1049,7 +1049,7 @@ let printing = (env, st, prog) => {
           if (Unify.sameName(n, Types.charName)) { Some(EId(p, (["SubsetString"], "fromChar"))) } else {
             if (Unify.sameName(n, Types.intName)) { Some(EId(p, (["SubsetInt32"], "toString"))) } else {
               if (Unify.sameName(n, Types.int64Name)) { Some(EId(p, (["Int64"], "toString"))) } else {
-                if (Unify.sameName(n, Types.realName)) { Some(EId(p, (["SubsetReal"], "toString"))) } else {
+                if (Unify.sameName(n, Types.realName)) { Some(EId(p, (["SubsetReal64"], "toString"))) } else {
                   if (Unify.sameName(n, Types.boolName)) {
                     one(EIf(EId(variable(0)), text(p, "true"), text(p, "false")))
                   } else { None }
@@ -1251,7 +1251,7 @@ let templateText = (env, st, prog) => {
                 } else {
                   if (is(Types.int64Name)) { call(p, (["Int64"], "toString"), value) } else {
                     if (is(Types.realName)) {
-                      call(p, spelled("SubsetReal", "toString", (["Real"], "toString")), value)
+                      call(p, spelled("SubsetReal64", "toString", (["Real"], "toString")), value)
                     } else {
                       if (is(Types.boolName)) {
                         EIf(value, EScon(p, SString("true")), EScon(p, SString("false")))

@@ -155,7 +155,7 @@ structure WmProject = struct
             defaultOpen ("result", ["Result", "Ok", "Err"])]
           val used = uses (tokens, bareUses (tokens, []))
           (* The reader spells some Workman forms with Basis functions: `!` is SubsetBool.not,
-             `%` and `==` on reals and backtick text use SubsetInt32, SubsetReal and
+             `%` and `==` on reals and backtick text use SubsetInt32, SubsetReal64 and
              SubsetString, and `print` is SubsetIo.printLine over a display that names SubsetList and
              the Option and Result constructors. Import each module, under its
              structure name, when its form occurs and the module isn't imported already. *)
@@ -177,7 +177,7 @@ structure WmProject = struct
           val forms = SubsetList.concat [
             formImport ("bool", "SubsetBool", [WmLexer.WKey "!", WmLexer.WKey "!=", print]),
             formImport ("int32", "SubsetInt32", [WmLexer.WKey "%", text, print]),
-            formImport ("real", "SubsetReal", [WmLexer.WKey "%", WmLexer.WKey "==", WmLexer.WKey "!=", text, print]),
+            formImport ("real64", "SubsetReal64", [WmLexer.WKey "%", WmLexer.WKey "==", WmLexer.WKey "!=", text, print]),
             formImport ("string", "SubsetString", [text, print]),
             formImport ("io", "SubsetIo", [print]),
             formImport ("list", "SubsetList", [print]),

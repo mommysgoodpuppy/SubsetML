@@ -11,8 +11,8 @@
       "sourceDependencies": [],
       "primitives": []
     },
-    "SubsetReal": {
-      "source": "src/subset_real.sml",
+    "SubsetReal64": {
+      "source": "src/subset_real64.sml",
       "sourceDependencies": [],
       "primitives": [
         "SubsetRealHost.rem",
