@@ -52,6 +52,9 @@ structure WmLexer = struct
      "(", ")", "[", "]", "{", "}", ",", ";", ":", ".", "<", ">", "=", "+", "-", "*", "/", "%",
      "!", "|", "@", "~"]
 
+  (* Each symbol with its bytes, so lexing compares bytes in place. *)
+  val symbolBytes = SmlList.map (fn s => (s, CompilerText.explode s)) symbols
+
   val member = fn (x, xs) => SmlList.exists (fn y => y = x) xs
 
   val isIdentChar = fn c => SubsetChar.isAlphaNum c orelse c = #"_" orelse c = #"'"
@@ -73,8 +76,15 @@ structure WmLexer = struct
 
       val rec skipWhile = fn (p, i) => if i < n andalso p (at i) then skipWhile (p, i + 1) else i
 
-      val startsWith = fn (i, s) =>
-        i + CompilerText.size s <= n andalso CompilerText.substring (source, i, CompilerText.size s) = s
+      (* Compared byte by byte in place: slicing the source for every candidate symbol at every
+         offset dominated lexing. *)
+      val startsWithBytes = fn (i, cs) =>
+        let val rec go = fn (k, cs) => case cs of
+            [] => true
+          | c :: rest => i + k < n andalso at (i + k) = c andalso go (k + 1, rest)
+        in go (0, cs) end
+
+      val startsWith = fn (i, s) => startsWithBytes (i, CompilerText.explode s)
 
       (* Whether code precedes offset i on its line. *)
       val trailing = fn i =>
@@ -220,8 +230,8 @@ structure WmLexer = struct
       val lexSymbol = fn i =>
         (* Binding `=`, immediately followed by a bare lambda's `=>`, is legal WM. *)
         if startsWith (i, "==>") then Ok (WKey "=", i + 1)
-        else case SmlList.find (fn s => startsWith (i, s)) symbols of
-          SOME s => Ok (WKey s, i + CompilerText.size s)
+        else case SmlList.find (fn (s, cs) => startsWithBytes (i, cs)) symbolBytes of
+          SOME (s, cs) => Ok (WKey s, i + SubsetList.length cs)
         | NONE => Err ("unexpected character", i)
 
       (* Backtick text from i up to the closing backtick (true) or a `${` (false). Text may span

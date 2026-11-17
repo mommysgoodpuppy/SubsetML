@@ -20,14 +20,14 @@ from "./lexer.sml" import * as Lexer;
 from "./subset_option_value.wm" import * as SubsetOptionValue;
 from "./syntax.wm" import * as Syntax;
 from "./sml_list.wm" import * as SmlList;
+from "./compiler_text.wm" import * as CompilerText;
 from "./subset_char.wm" import * as SubsetChar;
 from "./subset_source.wm" import * as SubsetSource;
 from "./subset_result.wm" import * as SubsetResult;
 from "./subset_string.wm" import * as SubsetString;
-from "./compiler_text.wm" import * as CompilerText;
 from "./lexer.wm" import * as Lexer;
-from "./subset_bool.wm" import * as SubsetBool;
 from "./subset_list.wm" import * as SubsetList;
+from "./subset_bool.wm" import * as SubsetBool;
 
 export from "./subset_option_value.wm" import *;
 
@@ -107,6 +107,9 @@ let symbols = [
   "~"
 ];
 
+// Each symbol with its bytes, so lexing compares bytes in place.
+let symbolBytes = SmlList.map((s) => { (s, CompilerText.explode(s)) })(symbols);
+
 let member = (x, xs) => { SmlList.exists((y) => { y == x })(xs) };
 
 let isIdentChar = (c) => {
@@ -131,9 +134,21 @@ let lex = (src) => {
         if (if (i < n) { p(at(i)) } else { false }) { skipWhile(p, i + 1) } else { i }
       };
 
-      let startsWith = (i, s) => {
-        if (i + CompilerText.size(s) <= n) { CompilerText.substring(source, i, CompilerText.size(s)) == s } else { false }
+      /* Compared byte by byte in place: slicing the source for every candidate symbol at every
+         offset dominated lexing. */
+      let startsWithBytes = (i, cs) => {
+        let rec go = (k, cs) => {
+          match(cs) {
+            [] => { true },
+            [c, ..rest] => {
+              if (if (i + k < n) { at(i + k) == c } else { false }) { go(k + 1, rest) } else { false }
+            }
+          }
+        };
+        go(0, cs)
       };
+
+      let startsWith = (i, s) => { startsWithBytes(i, CompilerText.explode(s)) };
 
       // Whether code precedes offset i on its line.
       let trailing = (i) => {
@@ -294,8 +309,8 @@ let lex = (src) => {
       let lexSymbol = (i) => {
         // Binding `=`, immediately followed by a bare lambda's `=>`, is legal WM.
         if (startsWith(i, "==>")) { Ok(WKey("="), i + 1) } else {
-          match(SmlList.find((s) => { startsWith(i, s) })(symbols)) {
-            Some(s) => { Ok(WKey(s), i + CompilerText.size(s)) },
+          match(SmlList.find((s, cs) => { startsWithBytes(i, cs) })(symbolBytes)) {
+            Some(s, cs) => { Ok(WKey(s), i + SubsetList.length(cs)) },
             None => { Err("unexpected character", i) }
           }
         }
