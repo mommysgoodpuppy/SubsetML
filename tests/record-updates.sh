@@ -20,7 +20,8 @@ let main = () => {
   };
   let box = Records.Box { value = "old" };
   let updated = Records.Box { ..box, value = "new" };
-  print(if (point.x == 1 && point.y == 2 && updated.value == "new") {"OK"} else {"BAD"});
+  let shifted = .{ ..base("E"), x = mark("F", 7) };
+  print(if (point.x == 1 && point.y == 2 && updated.value == "new" && shifted.x == 7 && shifted.y == 2) {"OK"} else {"BAD"});
 };
 WM
 "$compiler" sml "$tmp/sml" "$tmp/updates.wm" "$tmp/records.wm"
@@ -30,10 +31,10 @@ SML
 printf '$(SML_LIB)/basis/basis.mlb\n%s\n%s\n%s\n%s\n' \
   "$PWD/lib/num.sml" "$tmp/sml/records.sml" "$tmp/sml/updates.sml" "$tmp/run.sml" > "$tmp/test.mlb"
 mlton -output "$tmp/test" "$tmp/test.mlb"
-[ "$("$tmp/test")" = ABCDOK ]
+[ "$("$tmp/test")" = ABCDEFOK ]
 if command -v wm >/dev/null 2>&1; then
   wm run "$tmp/updates.wm" > "$tmp/result"
-  [ "$(tr -d '\r\n' < "$tmp/result")" = ABCDOK ]
+  [ "$(tr -d '\r\n' < "$tmp/result")" = ABCDEFOK ]
 fi
 reject() {
   printf '%s\n' 'from "./records.wm" import * as Records;' "$1" > "$tmp/bad.wm"
@@ -44,11 +45,13 @@ reject() {
   [ -z "$(ls -A "$tmp/reject")" ]
 }
 reject 'let bad = () => { record Local = { x: Int32.Int }; Local { x = 1 } };' 'record layout declarations must be top-level'
-reject 'let bad = .{..value, x = 3};' 'record updates must name their record type'
+# An unnamed update needs its source's record type; a spread must come first.
+reject 'let bad = (value) => { .{..value, x = 3} };' 'cannot determine the record type'
+reject 'let bad = (value: Records.Point) => { .{ x = 3, ..value } };' 'spread must come first'
 reject 'let bad = Missing { x = 3 };' 'unknown record layout'
 reject 'let bad = Records.Point { x = 3 };' 'missing record field y'
 reject 'let bad = Records.Point { x = 3, x = 4, y = 2 };' 'duplicate record field x'
 reject 'let bad = Records.Point { x = 3, z = 4 };' 'has no field z'
 reject 'let bad = Records.Point { x = "wrong", ..Records.Point { x = 1, y = 2 } };' 'expected int|type annotation|argument'
 reject 'let bad = Records.Box { ..Records.Box { value = "text" }, value = true };' 'argument|expected'
-echo 'named record updates: ok'
+echo 'named and unnamed record updates: ok'

@@ -347,6 +347,30 @@ structure Elab = struct
     let val (env, level, _) = ctx in
       case e of
         EScon (q, c) => literalConst (q, c, level, false, st)
+      (* A backtick string's `${ e }`, read from Workman: text of a string, char, int, real or
+         bool, resolved by type during translation (Translate.templateText). *)
+      | EId (q, ([], "`show")) =>
+          let
+            val (a, st') = fresh (st, KClass [stringName, charName, intName, int64Name, realName, boolName], level)
+            val t = TArrow (a, stringTy)
+            val State (vs, nx, sels, recs, sites) = st'
+          in
+            case sites of
+              SOME xs => Ok (t, State (vs, nx, sels, recs, SOME (Operand (q, t) :: xs)))
+            | NONE => Err ("a backtick string has no SML counterpart outside translation from Workman", q)
+          end
+      (* A record update read from Workman, `.{ ..source, x = e }`: the identity on the
+         source's record type, expanded by Translate.recordUpdates once that type is known. *)
+      | EId (q, ([], "`update")) =>
+          let
+            val (a, st') = fresh (st, KPlain, level)
+            val t = TArrow (a, a)
+            val State (vs, nx, sels, recs, sites) = st'
+          in
+            case sites of
+              SOME xs => Ok (t, State (vs, nx, sels, recs, SOME (Operand (q, t) :: xs)))
+            | NONE => Err ("a record update has no SML counterpart outside translation from Workman", q)
+          end
       | EId (q, id) =>
           (case Env.value (env, id) of
              SOME entry =>
@@ -439,7 +463,8 @@ structure Elab = struct
           let
             val what =
               case f of
-                EId (_, id) => "argument of " ^ longName id
+                EId (_, ([], "`show")) => "value in a backtick string's ${ }"
+              | EId (_, id) => "argument of " ^ longName id
               | _ => "function argument"
             val pos = at (0, case expPos a of SOME q => SOME q | NONE => expPos f)
           in
@@ -690,14 +715,19 @@ structure Elab = struct
           let val names = case lookup (st, v) of Free (KClass ns, _) => ns | _ => [intName]
               val has = fn n => SmlList.exists (fn m => sameName (m, n)) names
           in
-            if has intName then bind (unifyAt (st, pos, "integer default", TVar v, intTy)) (fn _ => fn st => settle (rest, st))
+            (* Only a backtick string's `${ }` has string in its class: SML has no generic
+               text conversion, so its type must be known. *)
+            if has stringName then
+              Err ("the type of a value in a backtick string's ${ } is undecided; annotate it as "
+                   ^ "String, Char, Int32, Int64, Real64 or Bool", pos)
+            else (if has intName then bind (unifyAt (st, pos, "integer default", TVar v, intTy)) (fn _ => fn st => settle (rest, st))
             else (if has realName then bind (unifyAt (st, pos, "real default", TVar v, realTy)) (fn _ => fn st => settle (rest, st))
             else (case names of
                 [only] => if sameName (only, int64Name)
                   then Err ("integer constant outside signed 32-bit range; annotate it as Int64.int", pos)
                   else Err ("the type of this numeric constant or operation is undecided; annotate it as " ^ nameOf only, pos)
               | _ => Err ("the type of this numeric constant or operation is undecided; annotate it as one of "
-                      ^ SubsetString.concatWith (SmlList.map nameOf names, ", "), pos)))
+                      ^ SubsetString.concatWith (SmlList.map nameOf names, ", "), pos))))
           end
       (* Only a default no Workman literal decides is recorded: Workman would choose Real64. *)
       val noteDefault = fn st => case (SmlList.filter (fn v => SubsetBool.not (literalVar (st, v))) defaults, st) of

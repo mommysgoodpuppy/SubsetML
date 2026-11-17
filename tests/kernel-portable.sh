@@ -27,7 +27,7 @@ end
 ''')
 PY
 modules=$(python scripts/basis-sources.py)
-modules="$modules src/sml_list.sml src/sml_list_pair.sml src/sml_option.sml src/syntax.sml src/compiler_text.sml src/lexer.sml src/parser.sml src/types.sml src/int_map.sml src/unify.sml src/env.sml src/elab.sml src/basis.sml src/doc.sml src/sml_print.sml src/wm_print.sml src/wm_lexer.sml src/backend_names.sml src/wm_parse.sml src/normalize.sml src/translate.sml"
+modules="$modules src/sml_list.sml src/sml_list_pair.sml src/sml_option.sml src/syntax.sml src/compiler_text.sml src/lexer.sml src/parser.sml src/types.sml src/int_map.sml src/unify.sml src/env.sml src/elab.sml src/basis_source.sml src/basis.sml src/doc.sml src/sml_print.sml src/wm_print.sml src/wm_lexer.sml src/backend_names.sml src/wm_parse.sml src/normalize.sml src/translate.sml"
 fixtures="$tmp/natural_vectors.sml tests/basis/kernel_portable.sml"
 bin/subsetml check $modules $fixtures
 {

@@ -534,6 +534,83 @@ structure Translate = struct
       mapProgram (rewrite, prog)
     end
 
+  (* A record update read from Workman, `.{ ..source, x = e }`, once the source's record type is
+     known: `let val u = source val x' = e in {x = x', y = #y u, ...} end`. The source and the
+     replacements are evaluated once, in source order. *)
+  val recordUpdates = fn (st, prog) =>
+    let
+      val Unify.State (_, _, _, _, sites) = st
+      val resolved = SmlList.mapPartial (fn site => case site of
+          Unify.Operand (p, t) => (case Unify.prune (st, t) of
+             Types.TArrow (a, _) => (case Unify.prune (st, a) of
+               Types.TRecord fields => SOME (p, SmlList.map (fn (l, _) => l) fields)
+             | _ => NONE)
+           | _ => NONE)
+        | _ => NONE) (case sites of SOME xs => xs | NONE => [])
+      val update = fn check => case check of
+          EList [EApp (ESelect (_, label), _), value] => SOME (label, value)
+        | _ => NONE
+      val rewrite = fn e =>
+        case e of
+          EApp (EId (p, ([], "`update")),
+                ELet ([DVal (q, [], [(PId (_, ([], u)), source)], [])], items)) =>
+            (case (SmlList.find (fn (r, _) => (p = r)) resolved, SubsetList.reverse items) of
+               (SOME found, _ :: reversedChecks) =>
+                 let
+                   val (_, labels) = found
+                   val updates = SmlList.mapPartial update (SubsetList.reverse reversedChecks)
+                   val temporary = fn label => u ^ "_" ^ label
+                   val bindings = SmlList.map (fn (label, value) =>
+                     DVal (q, [], [(PId (p, ([], temporary label)), value)], [])) updates
+                   val fieldFor = fn label =>
+                     if SmlList.exists (fn (l, _) => l = label) updates then (label, EId (p, ([], temporary label)))
+                     else (label, EApp (ESelect (p, label), EId (p, ([], u))))
+                 in
+                   ELet (DVal (q, [], [(PId (p, ([], u)), source)], []) :: bindings,
+                         [ERecord (p, SmlList.map fieldFor labels)])
+                 end
+             | _ => e)
+        | _ => e
+    in
+      mapProgram (rewrite, prog)
+    end
+
+  (* A backtick string's `${ e }`: the text of e by its resolved type. *)
+  val templateText = fn (st, prog) =>
+    let
+      val Unify.State (_, _, _, _, sites) = st
+      val resolved = SmlList.mapPartial (fn site => case site of
+          Unify.Operand (p, t) => (case Unify.prune (st, t) of
+             Types.TArrow (a, _) => (case Unify.prune (st, a) of
+               Types.TCon (n, []) => SOME (p, n)
+             | _ => NONE)
+           | _ => NONE)
+        | _ => NONE) (case sites of SOME xs => xs | NONE => [])
+      val call = fn (p, path, e) => EApp (EId (p, path), e)
+      val rewrite = fn e =>
+        case e of
+          EApp (EId (p, ([], "`show")), value) =>
+            (case SmlList.find (fn (q, _) => (p = q)) resolved of
+               NONE => e
+             | SOME found =>
+                 let
+                   val (_, n) = found
+                   val is = fn m => Unify.sameName (n, m)
+                 in
+                   if is Types.stringName then value
+                   else (if is Types.charName then call (p, (["String"], "str"), value)
+                   else (if is Types.intName then call (p, (["Int"], "toString"), value)
+                   else (if is Types.int64Name then call (p, (["Int64"], "toString"), value)
+                   else (if is Types.realName then call (p, (["Real"], "toString"), value)
+                   else (if is Types.boolName
+                     then EIf (value, EScon (p, SString "true"), EScon (p, SString "false"))
+                   else e)))))
+                 end)
+        | _ => e
+    in
+      mapProgram (rewrite, prog)
+    end
+
   (* A Workman integer literal whose context made it real or a word is printed as an SML real or
      word constant: `1` as `1.0`, `0x1F` as `0wx1F`. *)
   val realLiterals = fn (st, prog) =>
@@ -737,7 +814,7 @@ structure Translate = struct
             let val Unify.State (vars, next, sels, recs, _) = st in
               Unify.bind (portableValues (env, prog, Unify.State (vars, next, sels, recs, SOME [])))
                 (fn (env, prog) => fn st => Unify.bind (wmNumbers st) (fn _ => fn st =>
-                  elaborate (env, rest, st, SubsetList.append (acc, [(path, src, realLiterals (st, realEquality (st, prog)), comments)]))))
+                  elaborate (env, rest, st, SubsetList.append (acc, [(path, src, recordUpdates (st, templateText (st, realLiterals (st, realEquality (st, prog)))), comments)]))))
             end
       val rec strict = fn
           (_, [], st) => Unify.Ok ((), st)
@@ -803,7 +880,7 @@ structure Translate = struct
                   Unify.Err (message, pos) => Unify.Err (located (path, message), pos)
                 | Unify.Ok ((body, rewritten), next) =>
                     rewrite (basis, rest, (name, body) :: cache, next,
-                      (name, dependencies, (path, src, realLiterals (next, realEquality (next, rewritten)), cs)) :: acc)
+                      (name, dependencies, (path, src, recordUpdates (next, templateText (next, realLiterals (next, realEquality (next, rewritten)))), cs)) :: acc)
               end)
       val rec strict = fn (basis, remaining, cache, st) =>
         case remaining of

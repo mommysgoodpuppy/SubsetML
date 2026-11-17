@@ -103,8 +103,11 @@ their current SML-shaped APIs are transitional. SubsetML does not support the SM
 as its standard library. See [basis.md](basis.md).
 
 Named Workman record literals and updates, such as `Token.Token { ..token, marks = marks }`,
-are reconstructed from declaration layouts supplied with the input files. Anonymous spread
-updates are rejected. Evaluation order and field types are preserved, including overridden
+are reconstructed from declaration layouts supplied with the input files. An unnamed update,
+`.{ ..point, x = 1 }`, takes its layout from the source's inferred type and becomes
+`let val u = point val u_x = 1 in {x = u_x, y = #y u} end`; the source's record type must be
+fixed within the declaration (annotate the receiver otherwise), and the spread must come first.
+Evaluation order and field types are preserved, including overridden
 entries. Eligible pure literals retain let-polymorphism, including Result-style carriers and
 polymorphic empty lists. Eligible module-level function-record copies and field aliases also preserve generalization.
 Other literal shapes and nested or computed copies/aliases still have limitations;
@@ -187,6 +190,14 @@ type.
 | `op +` | `(left, right) => { left + right }`: Workman has no operator values; `op div` is `Int32.div` |
 | `(e : t)` | `(e: T)` |
 | `#"c"` | `'c'` |
+
+Reading Workman, a backtick string becomes a `^` chain of its text pieces, and each `${ e }` the
+text of `e` by its inferred type: `e` itself for a string, `String.str` for a char,
+`Int.toString`, `Int64.toString` or `Real.toString` for a number, and `"true"`/`"false"` for a
+bool. Other types have no SML text conversion and are errors, as is a `${ x }` whose type nothing
+decides; annotate it. SML's number text differs from Workman's display in places (`~3` for
+`-3`); the portable Basis has no Workman-matching number formatting yet. A backtick string
+without `${ }` is a plain string constant.
 
 Workman's operator precedences differ from SML's (for example, `==` binds looser than `<`), so
 the printer adds parentheses wherever the Workman grammar needs them.
@@ -278,8 +289,9 @@ They are evaluated once when reached; a later mismatch does not skip earlier eff
 outside the arm's binders retains outer lexical names without evaluating the expression early.
 Cond-style `match { =(condition) => { value }, _ => { fallback } } true` uses the same lowering.
 
-With `sml-entry --basis DIR`, `DIR/subset_process.wm` is the default panic provider when present;
-`--panic-runtime` overrides it. Source-list translation without a Basis still requires an
+With `sml-entry --basis DIR`, `DIR/subset_process.wm` is the default panic provider when present
+and some module in the entry graph spells `Panic`; a graph that never panics doesn't gain the
+runtime or its host adapter. `--panic-runtime` overrides it. Source-list translation without a Basis still requires an
 explicit provider. Native host adapters remain explicit target choices.
 
 The compiler-only `PPinned` representation does not add syntax to authored SubsetML. It must

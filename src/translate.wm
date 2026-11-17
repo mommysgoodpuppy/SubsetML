@@ -846,6 +846,118 @@ let realEquality = (st, prog) => {
   mapProgram(rewrite, prog)
 };
 
+/* A record update read from Workman, `.{ ..source, x = e }`, once the source's record type is
+   known: `let val u = source val x' = e in {x = x', y = #y u, ...} end`. The source and the
+   replacements are evaluated once, in source order. */
+let recordUpdates = (st, prog) => {
+  let Unify.State(_, _, _, _, sites) = st;
+  let resolved = SmlList.mapPartial((site) => {
+    match(site) {
+      Unify.Operand(p, t) => {
+        match(Unify.prune(st, t)) {
+          Types.TArrow(a, _) => {
+            match(Unify.prune(st, a)) {
+              Types.TRecord(fields) => { Some(p, SmlList.map((l, _) => { l })(fields)) },
+              _ => { None }
+            }
+          },
+          _ => { None }
+        }
+      },
+      _ => { None }
+    }
+  })(match(sites) {
+    Some(xs) => { xs },
+    None => { [] }
+  });
+  let update = (check) => {
+    match(check) {
+      EList([EApp(ESelect(_, label), _), value]) => { Some(label, value) },
+      _ => { None }
+    }
+  };
+  let rewrite = (e) => {
+    match(e) {
+      EApp(
+        EId(p, ([], "`update")),
+        ELet([DVal(q, [], [(PId(_, ([], Var(u))), Var(source))], [])], items)
+      ) => {
+        match(SmlList.find((r, _) => { p == r })(resolved), SubsetList.reverse(items)) {
+          (Some(found), [_, ..reversedChecks]) => {
+            let (_, labels) = found;
+            let updates = SmlList.mapPartial(update)(SubsetList.reverse(reversedChecks));
+            let temporary = (label) => { u ++ "_" ++ label };
+            let bindings = SmlList.map((label, value) => { DVal(q, [], [(PId(p, ([], temporary(label))), value)], []) })(updates);
+            let fieldFor = (label) => {
+              if (SmlList.exists((l, _) => { l == label })(updates)) { (label, EId(p, ([], temporary(label)))) } else { (label, EApp(ESelect(p, label), EId(p, ([], u)))) }
+            };
+            ELet(
+              [DVal(q, [], [(PId(p, ([], u)), source)], []), ..bindings],
+              [ERecord(p, SmlList.map(fieldFor)(labels))]
+            )
+          },
+          _ => { e }
+        }
+      },
+      _ => { e }
+    }
+  };
+  mapProgram(rewrite, prog)
+};
+
+// A backtick string's `${ e }`: the text of e by its resolved type.
+let templateText = (st, prog) => {
+  let Unify.State(_, _, _, _, sites) = st;
+  let resolved = SmlList.mapPartial((site) => {
+    match(site) {
+      Unify.Operand(p, t) => {
+        match(Unify.prune(st, t)) {
+          Types.TArrow(a, _) => {
+            match(Unify.prune(st, a)) {
+              Types.TCon(n, []) => { Some(p, n) },
+              _ => { None }
+            }
+          },
+          _ => { None }
+        }
+      },
+      _ => { None }
+    }
+  })(match(sites) {
+    Some(xs) => { xs },
+    None => { [] }
+  });
+  let call = (p, path, e) => { EApp(EId(p, path), e) };
+  let rewrite = (e) => {
+    match(e) {
+      EApp(EId(p, ([], "`show")), value) => {
+        match(SmlList.find((q, _) => { p == q })(resolved)) {
+          None => { e },
+          Some(found) => {
+            let (_, n) = found;
+            let is = (m) => { Unify.sameName(n, m) };
+            if (is(Types.stringName)) { value } else {
+              if (is(Types.charName)) { call(p, (["String"], "str"), value) } else {
+                if (is(Types.intName)) { call(p, (["Int"], "toString"), value) } else {
+                  if (is(Types.int64Name)) { call(p, (["Int64"], "toString"), value) } else {
+                    if (is(Types.realName)) { call(p, (["Real"], "toString"), value) } else {
+                      if (is(Types.boolName)) {
+                        EIf(value, EScon(p, SString("true")), EScon(p, SString("false")))
+                      } else { e }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      _ => { e }
+    }
+  };
+  mapProgram(rewrite, prog)
+};
+
 /* A Workman integer literal whose context made it real or a word is printed as an SML real or
    word constant: `1` as `1.0`, `0x1F` as `0wx1F`. */
 let realLiterals = (st, prog) => {
@@ -1265,7 +1377,17 @@ let recover = (modules, target) => {
             env,
             rest,
             st,
-            SubsetList.append(acc, [(path, src, realLiterals(st, realEquality(st, prog)), comments)])
+            SubsetList.append(
+              acc,
+              [
+                (
+                  path,
+                  src,
+                  recordUpdates(st, templateText(st, realLiterals(st, realEquality(st, prog)))),
+                  comments
+                )
+              ]
+            )
           )
         })
       })
@@ -1372,7 +1494,12 @@ let recoverProjectWithRuntime = (runtime, modules) => {
                   (
                     name,
                     dependencies,
-                    (path, src, realLiterals(next, realEquality(next, rewritten)), cs)
+                    (
+                      path,
+                      src,
+                      recordUpdates(next, templateText(next, realLiterals(next, realEquality(next, rewritten)))),
+                      cs
+                    )
                   ),
                   ..acc
                 ]

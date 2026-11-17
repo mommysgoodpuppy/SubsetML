@@ -773,9 +773,30 @@ structure WmParse = struct
       bind (parsePrimary ts) (fn value => fn rest => calls (value, NONE, rest))
     end
 
+  (* A backtick string: its text pieces joined with `^`, each `${ e }` converted to text by
+     the internal `\`show`, which elaboration types and translation resolves by type. *)
+  and parseTemplate = fn (p, ts) =>
+    let
+      val concat = fn (a, b) => EApp (EId (p, ([], "^")), ETuple [a, b])
+      val rec parts = fn (acc, ts) =>
+        case peek ts of
+          (WScon (SString text), q) =>
+            parts ((if text = "" then acc else EScon (q, SString text) :: acc), advance ts)
+        | (WKey "${", q) =>
+            bind (parseExp (advance ts)) (fn e => fn ts =>
+              bind (expect ("}$", ts)) (fn _ => fn ts =>
+                parts (EApp (EId (q, ([], "`show")), e) :: acc, ts)))
+        | (WKey "`)", _) =>
+            (case SmlList.rev acc of
+               [] => Done (EScon (p, SString ""), advance ts)
+             | first :: rest => Done (SmlList.foldl (fn (e, joined) => concat (joined, e)) first rest, advance ts))
+        | _ => expected ("the rest of a backtick string", ts)
+    in parts ([], ts) end
+
   and parsePrimary = fn ts =>
     case peek ts of
       (WScon c, p) => Done (EScon (p, c), advance ts)
+    | (WKey "`(", p) => parseTemplate (p, advance ts)
     | (WKey "true", p) => Done (EId (p, ([], "true")), advance ts)
     | (WKey "false", p) => Done (EId (p, ([], "false")), advance ts)
     | (WKey "void", _) => Done (ETuple [], advance ts)
@@ -800,12 +821,29 @@ structure WmParse = struct
                 if isKey ("=", advance ts) then
                   bind (parseExp (advance (advance ts))) (fn e => fn ts => Done ((l, e), ts))
                 else Done ((l, EId (lp, ([], l))), advance ts)
-            | (WKey "..", offset) => Fail
-                ("record updates must name their record type: use Point { ..value, field = replacement }", offset)
+            | (WKey "..", offset) => Fail ("a record spread must come first: .{ ..value, field = replacement }", offset)
             | _ => expected ("a record field", ts)
+          val fields = fn ts =>
+            if isKey ("}", ts) then Done ([], ts) else separated (field, ",", "}", ts)
         in
-          bind (separated (field, ",", "}", advance ts)) (fn fields => fn ts =>
-            bind (expect ("}", ts)) (fn _ => fn ts => Done (ERecord (p, fields), ts)))
+          if isKey ("..", advance ts) then
+            (* `.{ ..source, x = e }`: an update whose layout is the source's inferred type.
+               `\`update` keeps the source's type; each `[#x u, e]` makes e's type that of x.
+               Translate.recordUpdates expands it once the type is known. *)
+            bind (parseExp (advance (advance ts))) (fn source => fn ts =>
+              bind (if isKey (",", ts) then fields (advance ts) else Done ([], ts)) (fn updates => fn ts =>
+                bind (expect ("}", ts)) (fn _ => fn ts =>
+                  let
+                    val u = fresh ("subsetmlUpdate" ^ CompilerText.natural p)
+                    val value = EId (p, ([], u))
+                    val checks = SmlList.map (fn (l, e) => EList [EApp (ESelect (p, l), value), e]) updates
+                  in
+                    Done (EApp (EId (p, ([], "`update")),
+                      ELet ([DVal (p, [], [(PId (p, ([], u)), source)], [])], SubsetList.append (checks, [value]))), ts)
+                  end)))
+          else
+            bind (separated (field, ",", "}", advance ts)) (fn fields => fn ts =>
+              bind (expect ("}", ts)) (fn _ => fn ts => Done (ERecord (p, fields), ts)))
         end
     | (WKey "{", _) => parseBlock ts
     | (WKey "(", _) =>

@@ -14,6 +14,7 @@ from "./translate.sml" import * as Translate;
 from "./sml_list_pair.sml" import * as SmlListPair;
 from "./wm_project.sml" import * as WmProject;
 from "./wm_parse.sml" import * as WmParse;
+from "./wm_lexer.sml" import * as WmLexer;
 from "./backend_names.sml" import * as BackendNames;
 from "./unify.sml" import * as Unify;
 from "./module_project.sml" import * as ModuleProject;
@@ -56,6 +57,7 @@ from "./wm_parse.wm" import * as WmParse;
 from "./backend_names.wm" import * as BackendNames;
 from "./unify.wm" import * as Unify;
 from "./module_project.wm" import * as ModuleProject;
+from "./wm_lexer.wm" import * as WmLexer;
 from "./print.wm" import * as Print;
 from "./normalize.wm" import * as Normalize;
 from "./elab.wm" import * as Elab;
@@ -432,31 +434,60 @@ let fromWm = (outDir, runtimePath, files) => {
   )
 };
 
+/* Whether any discovered module spells `Panic`. A shadowing binding still counts; the runtime
+   is then only an unused dependency. */
+let mentionsPanic = (sources) => {
+  SmlList.exists((_, src) => {
+    match(WmLexer.lex(src)) {
+      WmLexer.Tokens(tokens, _) => {
+        SmlList.exists((token, _) => { token == WmLexer.WName(["Panic"]) })(tokens)
+      },
+      WmLexer.LexError(_) => { false }
+    }
+  })(sources)
+};
+
 let fromWmEntry = (outDir, basis, runtimePath, adapterSpecs, entry) => {
-  let selectedRuntime = match(runtimePath) {
-    Some(path) => { Some(path) },
-    None => {
-      match(basis) {
-        None => { None },
-        Some(directory) => {
+  let report = match {
+    WmProject.Error(path, src, message, pos) => { (eprint(errorLine(path, src, message, pos)); false) }
+  };
+  /* With --basis, the Basis process module is the default Panic runtime, but only for a
+     graph that uses Panic: the runtime brings its host adapter with it. */
+  let defaultRuntime = (sources) => {
+    match(basis) {
+      None => { None },
+      Some(directory) => {
+        if (mentionsPanic(sources)) {
           match(ModuleProject.identify(directory ++ "/subset_process.wm")) {
             SubsetResult.Ok(_) => { Some(directory ++ "/subset_process.wm") },
             SubsetResult.Err(_) => { None }
           }
-        }
+        } else { None }
       }
     }
   };
-  match(WmProject.discover(
-    basis,
-    match(selectedRuntime) {
-      None => { [entry] },
-      Some(runtime) => { [runtime, entry] }
+  let withRuntime = (runtime) => {
+    match(WmProject.discover(basis, [runtime, entry])) {
+      SubsetResult.Err(error) => { report(error) },
+      SubsetResult.Ok(sources) => {
+        fromWmLoaded(outDir, basis, Some(runtime), Some(entry), adapterSpecs, sources)
+      }
     }
-  )) {
-    SubsetResult.Err(WmProject.Error(path, src, message, pos)) => { (eprint(errorLine(path, src, message, pos)); false) },
-    SubsetResult.Ok(sources) => {
-      fromWmLoaded(outDir, basis, selectedRuntime, Some(entry), adapterSpecs, sources)
+  };
+  match(runtimePath) {
+    Some(runtime) => { withRuntime(runtime) },
+    None => {
+      match(WmProject.discover(basis, [entry])) {
+        SubsetResult.Err(error) => { report(error) },
+        SubsetResult.Ok(sources) => {
+          match(defaultRuntime(sources)) {
+            Some(runtime) => { withRuntime(runtime) },
+            None => {
+              fromWmLoaded(outDir, basis, None, Some(entry), adapterSpecs, sources)
+            }
+          }
+        }
+      }
     }
   }
 };

@@ -222,55 +222,95 @@ structure WmLexer = struct
           SOME s => Ok (WKey s, i + CompilerText.size s)
         | NONE => Err ("unexpected character", i)
 
-      val rec loop = fn (i, acc, cs) =>
-        if i >= n then Tokens (SmlList.rev ((WEOF, n) :: acc), SmlList.rev cs)
+      (* Backtick text from i up to the closing backtick (true) or a `${` (false). Text may span
+         lines; \` and \$ escape the delimiters. *)
+      val rec templateText = fn (start, i, acc) =>
+        if i >= n then Err ("unterminated backtick string", start)
         else
+          case at i of
+            #"`" => Ok ((CompilerText.implode (SmlList.rev acc), true), i + 1)
+          | #"\\" =>
+              if has (i + 1, #"`") then templateText (start, i + 2, #"`" :: acc)
+              else (if has (i + 1, #"$") then templateText (start, i + 2, #"$" :: acc)
+              else (case escape (i + 1) of
+                      Ok (NONE, j) => templateText (start, j, acc)
+                    | Ok (SOME c, j) => templateText (start, j, c :: acc)
+                    | Err (message, offset) => Err (message, offset)))
+          | #"$" =>
+              if has (i + 1, #"{") then Ok ((CompilerText.implode (SmlList.rev acc), false), i + 2)
+              else templateText (start, i + 1, #"$" :: acc)
+          | c => templateText (start, i + 1, c :: acc)
+
+      (* Brace depth inside each open `${ … }`, innermost first. *)
+      val nest = fn (tok, depths) =>
+        case (tok, depths) of
+          (WKey "{", d :: rest) => d + 1 :: rest
+        | (WKey ".{", d :: rest) => d + 1 :: rest
+        | (WKey "}", d :: rest) => d - 1 :: rest
+        | _ => depths
+
+      (* A template is `( text (${ exp }$ text)* `): each text piece is a string token. *)
+      val rec template = fn (i, acc, cs, depths) =>
+        case templateText (i, i, []) of
+          Ok ((text, true), j) => loop (j, (WKey "`)", j - 1) :: (WScon (SString text), i) :: acc, cs, depths)
+        | Ok ((text, false), j) => loop (j, (WKey "${", j - 2) :: (WScon (SString text), i) :: acc, cs, 0 :: depths)
+        | Err (message, offset) => LexError (message, offset)
+
+      and loop = fn (i, acc, cs, depths) =>
+        if i >= n then
+          (case depths of
+             [] => Tokens (SmlList.rev ((WEOF, n) :: acc), SmlList.rev cs)
+           | _ => LexError ("unterminated `${` in a backtick string", n))
+        else
+          case (depths, at i) of
+            (0 :: rest, #"}") => template (i + 1, (WKey "}$", i) :: acc, cs, rest)
+          | _ =>
           case (at i, startsWith (i, "//") orelse startsWith (i, "--"), startsWith (i, "/*")) of
             (_, true, _) => let
               val j = skipWhile (fn d => d <> #"\n", i)
               val body = CompilerText.substring (source, i + 2, j - i - 2)
             in
-              loop (j, acc, (i, body, trailing i) :: cs)
+              loop (j, acc, (i, body, trailing i) :: cs, depths)
             end
           | (_, _, true) =>
               (case blockComment (i, i + 2, 1) of
-                 Ok (_, j) => loop (j, acc, (i, CompilerText.substring (source, i + 2, j - i - 4), trailing i) :: cs)
+                 Ok (_, j) => loop (j, acc, (i, CompilerText.substring (source, i + 2, j - i - 4), trailing i) :: cs, depths)
                | Err (message, offset) => LexError (message, offset))
           | (#"\"", _, _) =>
               (case quoted (#"\"", i, i + 1, []) of
-                 Ok (s, j) => loop (j, (WScon (SString s), i) :: acc, cs)
+                 Ok (s, j) => loop (j, (WScon (SString s), i) :: acc, cs, depths)
                | Err (message, offset) => LexError (message, offset))
           | (#"'", _, _) =>
               (case quoted (#"'", i, i + 1, []) of
                  Ok (s, j) =>
-                   if (CompilerText.size s = 1) then loop (j, (WScon (SChar ((let val SubsetResult.Ok decoded = SubsetSource.fromNative s in CompilerText.sub (decoded, 0) end))), i) :: acc, cs)
+                   if (CompilerText.size s = 1) then loop (j, (WScon (SChar ((let val SubsetResult.Ok decoded = SubsetSource.fromNative s in CompilerText.sub (decoded, 0) end))), i) :: acc, cs, depths)
                    else LexError ("a character literal must contain exactly one character", i)
                | Err (message, offset) => LexError (message, offset))
-          | (#"`", _, _) => LexError ("backtick strings have no SubsetML counterpart", i)
+          | (#"`", _, _) => template (i + 1, (WKey "`(", i) :: acc, cs, depths)
           | (#"#", _, _) =>
               let val j = skipWhile (SubsetChar.isAlphaNum, i + 1) in
-                if j > i + 1 then loop (j, (WSelect (CompilerText.substring (source, i + 1, j - i - 1)), i) :: acc, cs)
+                if j > i + 1 then loop (j, (WSelect (CompilerText.substring (source, i + 1, j - i - 1)), i) :: acc, cs, depths)
                 else LexError ("expected a label after `#`", i)
               end
           | (#"_", _, _) =>
               if i + 1 < n andalso isIdentChar (at (i + 1))
               then LexError ("identifiers starting with `_` are not SubsetML", i)
-              else loop (i + 1, (WKey "_", i) :: acc, cs)
+              else loop (i + 1, (WKey "_", i) :: acc, cs, depths)
           | (c, _, _) =>
               case (isSpace c, SubsetChar.isDigit c, SubsetChar.isAlpha c) of
-                (true, _, _) => loop (i + 1, acc, cs)
+                (true, _, _) => loop (i + 1, acc, cs, depths)
               | (_, true, _) => (case lexNumber i of
-                     Ok (tok, j) => loop (j, (tok, i) :: acc, cs)
+                     Ok (tok, j) => loop (j, (tok, i) :: acc, cs, depths)
                    | Err (message, offset) => LexError (message, offset))
               | (_, _, true) =>
                   (case lexPath i of
-                     Ok (tok, j) => loop (j, (tok, i) :: acc, cs)
+                     Ok (tok, j) => loop (j, (tok, i) :: acc, cs, depths)
                    | Err (message, offset) => LexError (message, offset))
               | _ => (case lexSymbol i of
-                     Ok (tok, j) => loop (j, (tok, i) :: acc, cs)
+                     Ok (tok, j) => loop (j, (tok, i) :: acc, cs, nest (tok, depths))
                    | Err (message, offset) => LexError (message, offset))
     in
-      loop (0, [], [])
+      loop (0, [], [], [])
     end
 
 end

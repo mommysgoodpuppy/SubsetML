@@ -13,6 +13,7 @@ from "./translate.sml" import * as Translate;
 from "./sml_list_pair.sml" import * as SmlListPair;
 from "./wm_project.sml" import * as WmProject;
 from "./wm_parse.sml" import * as WmParse;
+from "./wm_lexer.sml" import * as WmLexer;
 from "./backend_names.sml" import * as BackendNames;
 from "./unify.sml" import * as Unify;
 from "./module_project.sml" import * as ModuleProject;
@@ -241,18 +242,41 @@ structure Main = struct
     fromWmLoaded (outDir, NONE, runtimePath, NONE, [], SmlList.map (fn path => (path, readFile path))
       (case runtimePath of NONE => files | SOME path => path :: files))
 
+  (* Whether any discovered module spells `Panic`. A shadowing binding still counts; the runtime
+     is then only an unused dependency. *)
+  val mentionsPanic = fn sources =>
+    SmlList.exists (fn (_, src) =>
+      case WmLexer.lex src of
+        WmLexer.Tokens (tokens, _) => SmlList.exists (fn (token, _) => token = WmLexer.WName ["Panic"]) tokens
+      | WmLexer.LexError _ => false) sources
+
   val fromWmEntry = fn (outDir, basis, runtimePath, adapterSpecs, entry) =>
-    let val selectedRuntime = case runtimePath of
-        SOME path => SOME path
-      | NONE => (case basis of
+    let
+      val report = fn (WmProject.Error (path, src, message, pos)) => (eprint (errorLine (path, src, message, pos)); false)
+      (* With --basis, the Basis process module is the default Panic runtime, but only for a
+         graph that uses Panic: the runtime brings its host adapter with it. *)
+      val defaultRuntime = fn sources => case basis of
           NONE => NONE
-        | SOME directory => (case ModuleProject.identify (directory ^ "/subset_process.wm") of
-            SubsetResult.Ok _ => SOME (directory ^ "/subset_process.wm")
-          | SubsetResult.Err _ => NONE))
-    in case WmProject.discover (basis, case selectedRuntime of NONE => [entry] | SOME runtime => [runtime, entry]) of
-      SubsetResult.Err (WmProject.Error (path, src, message, pos)) =>
-        (eprint (errorLine (path, src, message, pos)); false)
-    | SubsetResult.Ok sources => fromWmLoaded (outDir, basis, selectedRuntime, SOME entry, adapterSpecs, sources)
+        | SOME directory =>
+            if mentionsPanic sources then
+              (case ModuleProject.identify (directory ^ "/subset_process.wm") of
+                SubsetResult.Ok _ => SOME (directory ^ "/subset_process.wm")
+              | SubsetResult.Err _ => NONE)
+            else NONE
+      val withRuntime = fn runtime =>
+        case WmProject.discover (basis, [runtime, entry]) of
+          SubsetResult.Err error => report error
+        | SubsetResult.Ok sources => fromWmLoaded (outDir, basis, SOME runtime, SOME entry, adapterSpecs, sources)
+    in
+      case runtimePath of
+        SOME runtime => withRuntime runtime
+      | NONE =>
+          case WmProject.discover (basis, [entry]) of
+            SubsetResult.Err error => report error
+          | SubsetResult.Ok sources =>
+              (case defaultRuntime sources of
+                 SOME runtime => withRuntime runtime
+               | NONE => fromWmLoaded (outDir, basis, NONE, SOME entry, adapterSpecs, sources))
     end
 
   (* SML -> Workman -> SML must give back the same declarations, up to Normalize. *)

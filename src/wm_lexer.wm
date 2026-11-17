@@ -297,88 +297,153 @@ let lex = (src) => {
         }
       };
 
-      let rec loop = (i, acc, cs) => {
-        if (i >= n) { Tokens(SmlList.rev([(WEOF, n), ..acc]), SmlList.rev(cs)) } else {
-          match(at(i), if (startsWith(i, "//")) { true } else { startsWith(i, "--") }, startsWith(i, "/*")) {
-            (_, true, _) => {
-              let j = skipWhile((d) => { d != '\n' }, i);
-              let body = CompilerText.substring(source, i + 2, j - i - 2);
-              loop(j, acc, [(i, body, trailing(i)), ..cs])
-            },
-            (_, _, true) => {
-              match(blockComment(i, i + 2, 1)) {
-                Ok(_, j) => {
-                  loop(
-                    j,
-                    acc,
-                    [(i, CompilerText.substring(source, i + 2, j - i - 4), trailing(i)), ..cs]
-                  )
-                },
-                Err(message, offset) => { LexError(message, offset) }
-              }
-            },
-            ('"', _, _) => {
-              match(quoted('"', i, i + 1, [])) {
-                Ok(s, j) => { loop(j, [(WScon(SString(s)), i), ..acc], cs) },
-                Err(message, offset) => { LexError(message, offset) }
-              }
-            },
-            ('\'', _, _) => {
-              match(quoted('\'', i, i + 1, [])) {
-                Ok(s, j) => {
-                  if (CompilerText.size(s) == 1) {
-                    loop(
-                      j,
-                      [
-                        (
-                          WScon(SChar({
-                            let SubsetResult.Ok(decoded) = SubsetSource.fromNative(s);
-                            CompilerText.sub(decoded, 0)
-                          })),
-                          i
-                        ),
-                        ..acc
-                      ],
-                      cs
-                    )
-                  } else {
-                    LexError("a character literal must contain exactly one character", i)
+      /* Backtick text from i up to the closing backtick (true) or a `${` (false). Text may span
+         lines; \` and \$ escape the delimiters. */
+      let rec templateText = (start, i, acc) => {
+        if (i >= n) { Err("unterminated backtick string", start) } else {
+          match(at(i)) {
+            '`' => { Ok((CompilerText.implode(SmlList.rev(acc)), true), i + 1) },
+            '\\' => {
+              if (has(i + 1, '`')) { templateText(start, i + 2, ['`', ..acc]) } else {
+                if (has(i + 1, '$')) { templateText(start, i + 2, ['$', ..acc]) } else {
+                  match(escape(i + 1)) {
+                    Ok(None, j) => { templateText(start, j, acc) },
+                    Ok(Some(c), j) => { templateText(start, j, [c, ..acc]) },
+                    Err(message, offset) => { Err(message, offset) }
                   }
-                },
-                Err(message, offset) => { LexError(message, offset) }
+                }
               }
             },
-            ('`', _, _) => { LexError("backtick strings have no SubsetML counterpart", i) },
-            ('#', _, _) => {
-              let j = skipWhile(SubsetChar.isAlphaNum, i + 1);
-              if (j > i + 1) {
-                loop(j, [(WSelect(CompilerText.substring(source, i + 1, j - i - 1)), i), ..acc], cs)
-              } else { LexError("expected a label after `#`", i) }
+            '$' => {
+              if (has(i + 1, '{')) { Ok((CompilerText.implode(SmlList.rev(acc)), false), i + 2) } else { templateText(start, i + 1, ['$', ..acc]) }
             },
-            ('_', _, _) => {
-              if (if (i + 1 < n) { isIdentChar(at(i + 1)) } else { false }) {
-                LexError("identifiers starting with `_` are not SubsetML", i)
-              } else { loop(i + 1, [(WKey("_"), i), ..acc], cs) }
-            },
-            (Var(c), _, _) => {
-              match(isSpace(c), SubsetChar.isDigit(c), SubsetChar.isAlpha(c)) {
-                (true, _, _) => { loop(i + 1, acc, cs) },
+            Var(c) => { templateText(start, i + 1, [c, ..acc]) }
+          }
+        }
+      };
+
+      // Brace depth inside each open `${ … }`, innermost first.
+      let nest = (tok, depths) => {
+        match(tok, depths) {
+          (WKey("{"), [d, ..rest]) => { [d + 1, ..rest] },
+          (WKey(".{"), [d, ..rest]) => { [d + 1, ..rest] },
+          (WKey("}"), [d, ..rest]) => { [d - 1, ..rest] },
+          _ => { depths }
+        }
+      };
+
+      // A template is `( text (${ exp }$ text)* `): each text piece is a string token.
+      let rec template = (i, acc, cs, depths) => {
+        match(templateText(i, i, [])) {
+          Ok((Var(text), true), j) => {
+            loop(j, [(WKey("`)"), j - 1), (WScon(SString(text)), i), ..acc], cs, depths)
+          },
+          Ok((Var(text), false), j) => {
+            loop(j, [(WKey("${"), j - 2), (WScon(SString(text)), i), ..acc], cs, [0, ..depths])
+          },
+          Err(message, offset) => { LexError(message, offset) }
+        }
+      }
+
+      and loop = (i, acc, cs, depths) => {
+        if (i >= n) {
+          match(depths) {
+            [] => { Tokens(SmlList.rev([(WEOF, n), ..acc]), SmlList.rev(cs)) },
+            _ => { LexError("unterminated `${` in a backtick string", n) }
+          }
+        } else {
+          match(depths, at(i)) {
+            ([0, ..rest], '}') => { template(i + 1, [(WKey("}$"), i), ..acc], cs, rest) },
+            _ => {
+              match(at(i), if (startsWith(i, "//")) { true } else { startsWith(i, "--") }, startsWith(i, "/*")) {
                 (_, true, _) => {
-                  match(lexNumber(i)) {
-                    Ok(tok, j) => { loop(j, [(tok, i), ..acc], cs) },
-                    Err(message, offset) => { LexError(message, offset) }
-                  }
+                  let j = skipWhile((d) => { d != '\n' }, i);
+                  let body = CompilerText.substring(source, i + 2, j - i - 2);
+                  loop(j, acc, [(i, body, trailing(i)), ..cs], depths)
                 },
                 (_, _, true) => {
-                  match(lexPath(i)) {
-                    Ok(tok, j) => { loop(j, [(tok, i), ..acc], cs) },
+                  match(blockComment(i, i + 2, 1)) {
+                    Ok(_, j) => {
+                      loop(
+                        j,
+                        acc,
+                        [(i, CompilerText.substring(source, i + 2, j - i - 4), trailing(i)), ..cs],
+                        depths
+                      )
+                    },
                     Err(message, offset) => { LexError(message, offset) }
                   }
                 },
-                _ => {
-                  match(lexSymbol(i)) {
-                    Ok(tok, j) => { loop(j, [(tok, i), ..acc], cs) },
+                ('"', _, _) => {
+                  match(quoted('"', i, i + 1, [])) {
+                    Ok(s, j) => { loop(j, [(WScon(SString(s)), i), ..acc], cs, depths) },
                     Err(message, offset) => { LexError(message, offset) }
+                  }
+                },
+                ('\'', _, _) => {
+                  match(quoted('\'', i, i + 1, [])) {
+                    Ok(s, j) => {
+                      if (CompilerText.size(s) == 1) {
+                        loop(
+                          j,
+                          [
+                            (
+                              WScon(SChar({
+                                let SubsetResult.Ok(decoded) = SubsetSource.fromNative(s);
+                                CompilerText.sub(decoded, 0)
+                              })),
+                              i
+                            ),
+                            ..acc
+                          ],
+                          cs,
+                          depths
+                        )
+                      } else {
+                        LexError("a character literal must contain exactly one character", i)
+                      }
+                    },
+                    Err(message, offset) => { LexError(message, offset) }
+                  }
+                },
+                ('`', _, _) => { template(i + 1, [(WKey("`("), i), ..acc], cs, depths) },
+                ('#', _, _) => {
+                  let j = skipWhile(SubsetChar.isAlphaNum, i + 1);
+                  if (j > i + 1) {
+                    loop(
+                      j,
+                      [(WSelect(CompilerText.substring(source, i + 1, j - i - 1)), i), ..acc],
+                      cs,
+                      depths
+                    )
+                  } else { LexError("expected a label after `#`", i) }
+                },
+                ('_', _, _) => {
+                  if (if (i + 1 < n) { isIdentChar(at(i + 1)) } else { false }) {
+                    LexError("identifiers starting with `_` are not SubsetML", i)
+                  } else { loop(i + 1, [(WKey("_"), i), ..acc], cs, depths) }
+                },
+                (Var(c), _, _) => {
+                  match(isSpace(c), SubsetChar.isDigit(c), SubsetChar.isAlpha(c)) {
+                    (true, _, _) => { loop(i + 1, acc, cs, depths) },
+                    (_, true, _) => {
+                      match(lexNumber(i)) {
+                        Ok(tok, j) => { loop(j, [(tok, i), ..acc], cs, depths) },
+                        Err(message, offset) => { LexError(message, offset) }
+                      }
+                    },
+                    (_, _, true) => {
+                      match(lexPath(i)) {
+                        Ok(tok, j) => { loop(j, [(tok, i), ..acc], cs, depths) },
+                        Err(message, offset) => { LexError(message, offset) }
+                      }
+                    },
+                    _ => {
+                      match(lexSymbol(i)) {
+                        Ok(tok, j) => { loop(j, [(tok, i), ..acc], cs, nest(tok, depths)) },
+                        Err(message, offset) => { LexError(message, offset) }
+                      }
+                    }
                   }
                 }
               }
@@ -386,7 +451,7 @@ let lex = (src) => {
           }
         }
       };
-      loop(0, [], [])
+      loop(0, [], [], [])
     }
   }
 };

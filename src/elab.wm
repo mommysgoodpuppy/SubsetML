@@ -584,6 +584,40 @@ let rec exp = (ctx, e, st) => {
   let (env, level, _) = ctx;
   match(e) {
     EScon(q, c) => { literalConst(q, c, level, false, st) },
+    /* A backtick string's `${ e }`, read from Workman: text of a string, char, int, real or
+       bool, resolved by type during translation (Translate.templateText). */
+    EId(q, ([], "`show")) => {
+      let (a, st') = fresh(
+        st,
+        KClass([stringName, charName, intName, int64Name, realName, boolName]),
+        level
+      );
+      let t = TArrow(a, stringTy);
+      let State(vs, nx, sels, recs, sites) = st';
+      match(sites) {
+        Some(xs) => {
+          Ok(t, State(vs, nx, sels, recs, Some([Operand(q, t), ..xs])))
+        },
+        None => {
+          Err("a backtick string has no SML counterpart outside translation from Workman", q)
+        }
+      }
+    },
+    /* A record update read from Workman, `.{ ..source, x = e }`: the identity on the
+       source's record type, expanded by Translate.recordUpdates once that type is known. */
+    EId(q, ([], "`update")) => {
+      let (a, st') = fresh(st, KPlain, level);
+      let t = TArrow(a, a);
+      let State(vs, nx, sels, recs, sites) = st';
+      match(sites) {
+        Some(xs) => {
+          Ok(t, State(vs, nx, sels, recs, Some([Operand(q, t), ..xs])))
+        },
+        None => {
+          Err("a record update has no SML counterpart outside translation from Workman", q)
+        }
+      }
+    },
     EId(q, id) => {
       match(Env.value(env, id)) {
         Some(entry) => {
@@ -735,6 +769,7 @@ and application = (ctx, f, a, st) => {
   bind(exp(ctx, f, st))((tf) => (st) => {
     bind(exp(ctx, a, st))((ta) => (st) => {
       let what = match(f) {
+        EId(_, ([], "`show")) => { "value in a backtick string's ${ }" },
         EId(_, id) => { "argument of " ++ longName(id) },
         _ => { "function argument" }
       };
@@ -1146,28 +1181,37 @@ and closeBinding = (level, explicit, generalizable, pos, x, t, st) => {
           _ => { [intName] }
         };
         let has = (n) => { SmlList.exists((m) => { sameName(m, n) })(names) };
-        if (has(intName)) {
-          bind(unifyAt(st, pos, "integer default", TVar(v), intTy))((_) => (st) => { settle(rest, st) })
+        /* Only a backtick string's `${ }` has string in its class: SML has no generic
+           text conversion, so its type must be known. */
+        if (has(stringName)) {
+          Err(
+            "the type of a value in a backtick string's ${ } is undecided; annotate it as " ++ "String, Char, Int32, Int64, Real64 or Bool",
+            pos
+          )
         } else {
-          if (has(realName)) {
-            bind(unifyAt(st, pos, "real default", TVar(v), realTy))((_) => (st) => { settle(rest, st) })
+          if (has(intName)) {
+            bind(unifyAt(st, pos, "integer default", TVar(v), intTy))((_) => (st) => { settle(rest, st) })
           } else {
-            match(names) {
-              [only] => {
-                if (sameName(only, int64Name)) {
-                  Err("integer constant outside signed 32-bit range; annotate it as Int64.int", pos)
-                } else {
+            if (has(realName)) {
+              bind(unifyAt(st, pos, "real default", TVar(v), realTy))((_) => (st) => { settle(rest, st) })
+            } else {
+              match(names) {
+                [only] => {
+                  if (sameName(only, int64Name)) {
+                    Err("integer constant outside signed 32-bit range; annotate it as Int64.int", pos)
+                  } else {
+                    Err(
+                      "the type of this numeric constant or operation is undecided; annotate it as " ++ nameOf(only),
+                      pos
+                    )
+                  }
+                },
+                _ => {
                   Err(
-                    "the type of this numeric constant or operation is undecided; annotate it as " ++ nameOf(only),
+                    "the type of this numeric constant or operation is undecided; annotate it as one of " ++ SubsetString.concatWith(SmlList.map(nameOf)(names), ", "),
                     pos
                   )
                 }
-              },
-              _ => {
-                Err(
-                  "the type of this numeric constant or operation is undecided; annotate it as one of " ++ SubsetString.concatWith(SmlList.map(nameOf)(names), ", "),
-                  pos
-                )
               }
             }
           }

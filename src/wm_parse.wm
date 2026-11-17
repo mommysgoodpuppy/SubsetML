@@ -1057,9 +1057,38 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
     bind(parsePrimary(ts))((value) => (rest) => { calls(value, None, rest) })
   }
 
+  /* A backtick string: its text pieces joined with `^`, each `${ e }` converted to text by
+     the internal `\`show`, which elaboration types and translation resolves by type. */
+  and parseTemplate = (p, ts) => {
+    let concat = (a, b) => { EApp(EId(p, ([], "^")), ETuple([a, b])) };
+    let rec parts = (acc, ts) => {
+      match(peek(ts)) {
+        (WScon(SString(text)), Var(q)) => {
+          parts(if (text == "") { acc } else { [EScon(q, SString(text)), ..acc] }, advance(ts))
+        },
+        (WKey("${"), Var(q)) => {
+          bind(parseExp(advance(ts)))((e) => (ts) => {
+            bind(expect("}$", ts))((_) => (ts) => { parts([EApp(EId(q, ([], "`show")), e), ..acc], ts) })
+          })
+        },
+        (WKey("`)"), _) => {
+          match(SmlList.rev(acc)) {
+            [] => { Done(EScon(p, SString("")), advance(ts)) },
+            [first, ..rest] => {
+              Done(SmlList.foldl((e, joined) => { concat(joined, e) })(first)(rest), advance(ts))
+            }
+          }
+        },
+        _ => { expected("the rest of a backtick string", ts) }
+      }
+    };
+    parts([], ts)
+  }
+
   and parsePrimary = (ts) => {
     match(peek(ts)) {
       (WScon(c), Var(p)) => { Done(EScon(p, c), advance(ts)) },
+      (WKey("`("), Var(p)) => { parseTemplate(p, advance(ts)) },
       (WKey("true"), Var(p)) => { Done(EId(p, ([], "true")), advance(ts)) },
       (WKey("false"), Var(p)) => { Done(EId(p, ([], "false")), advance(ts)) },
       (WKey("void"), _) => { Done(ETuple([]), advance(ts)) },
@@ -1089,17 +1118,42 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix) => {
               } else { Done((l, EId(lp, ([], l))), advance(ts)) }
             },
             (WKey(".."), Var(offset)) => {
-              Fail(
-                "record updates must name their record type: use Point { ..value, field = replacement }",
-                offset
-              )
+              Fail("a record spread must come first: .{ ..value, field = replacement }", offset)
             },
             _ => { expected("a record field", ts) }
           }
         };
-        bind(separated(field, ",", "}", advance(ts)))((fields) => (ts) => {
-          bind(expect("}", ts))((_) => (ts) => { Done(ERecord(p, fields), ts) })
-        })
+        let fields = (ts) => {
+          if (isKey("}", ts)) { Done([], ts) } else { separated(field, ",", "}", ts) }
+        };
+        if (isKey("..", advance(ts))) {
+          /* `.{ ..source, x = e }`: an update whose layout is the source's inferred type.
+             `\`update` keeps the source's type; each `[#x u, e]` makes e's type that of x.
+             Translate.recordUpdates expands it once the type is known. */
+          bind(parseExp(advance(advance(ts))))((source) => (ts) => {
+            bind(if (isKey(",", ts)) { fields(advance(ts)) } else { Done([], ts) })((updates) => (ts) => {
+              bind(expect("}", ts))((_) => (ts) => {
+                let u = fresh("subsetmlUpdate" ++ CompilerText.natural(p));
+                let value = EId(p, ([], u));
+                let checks = SmlList.map((l, e) => { EList([EApp(ESelect(p, l), value), e]) })(updates);
+                Done(
+                  EApp(
+                    EId(p, ([], "`update")),
+                    ELet(
+                      [DVal(p, [], [(PId(p, ([], u)), source)], [])],
+                      SubsetList.append(checks, [value])
+                    )
+                  ),
+                  ts
+                )
+              })
+            })
+          })
+        } else {
+          bind(separated(field, ",", "}", advance(ts)))((fields) => (ts) => {
+            bind(expect("}", ts))((_) => (ts) => { Done(ERecord(p, fields), ts) })
+          })
+        }
       },
       (WKey("{"), _) => { parseBlock(ts) },
       (WKey("("), _) => {
