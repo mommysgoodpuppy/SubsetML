@@ -1,3 +1,0 @@
-// `_x` translates to `x'`, which this module also names.
-let x' = 1;
-let _x = 2;

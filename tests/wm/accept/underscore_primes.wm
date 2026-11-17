@@ -1,0 +1,4 @@
+// `_x` reads as `x'` unless the module writes `x'` itself; then it takes the next free spelling.
+let x' = 1;
+let _x = 2;
+let sum = x' + _x;

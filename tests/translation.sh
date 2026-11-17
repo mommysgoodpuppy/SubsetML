@@ -19,6 +19,8 @@ $bin check "$tmp/sml/remainder.sml"
 $bin check "$tmp/sml/defaulted_overload.sml"
 $bin check "$tmp/sml/underscore_names.sml"
 $bin check "$tmp/sml/reader_forms.sml"
+$bin check "$tmp/sml/underscore_primes.sml"
+grep -q "val x'' = 2" "$tmp/sml/underscore_primes.sml" || { echo "FAIL: _x did not take a free spelling"; exit 1; }
 cat > "$tmp/assert.sml" <<'SML'
 val _ = if RealFunctions.same andalso RealFunctions.passed
   andalso RealFunctions.equal (2.0, 2.0) andalso RealFunctions.unequal (2.0, 3.0)

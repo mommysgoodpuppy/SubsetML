@@ -4,6 +4,7 @@ from "./subset_option_value.sml" import * as SubsetOptionValue;
 from "./syntax.sml" import * as Syntax;
 from "./sml_list.sml" import * as SmlList;
 from "./subset_bool.sml" import * as SubsetBool;
+from "./subset_list.sml" import * as SubsetList;
 from "./subset_char.sml" import * as SubsetChar;
 from "./subset_source.sml" import * as SubsetSource;
 from "./subset_result.sml" import * as SubsetResult;
@@ -26,6 +27,7 @@ from "./subset_string.wm" import * as SubsetString;
 from "./compiler_text.wm" import * as CompilerText;
 from "./lexer.wm" import * as Lexer;
 from "./subset_bool.wm" import * as SubsetBool;
+from "./subset_list.wm" import * as SubsetList;
 
 export from "./subset_option_value.wm" import *;
 
@@ -420,9 +422,10 @@ let lex = (src) => {
                     )
                   } else { LexError("expected a label after `#`", i) }
                 },
-                /* SML reserves a leading `_`, so Workman's `_name` reads as `name'`; `unprimed` rejects a
-                   module that also writes `name'` itself. A lone `_name` is marked (`bind`), because in a
-                   match pattern it binds where a bare name is pinned; the parser's `peek` drops the mark. */
+                /* SML reserves a leading `_`, so Workman's `_name` reads as `name'`, or with more primes
+                   when the module writes `name'` itself (`unprimed`). A lone `_name` is marked (`bind`),
+                   because in a match pattern it binds where a bare name is pinned; the parser's `peek`
+                   drops the mark. */
                 ('_', _, _) => {
                   if (if (i + 1 < n) { isIdentChar(at(i + 1)) } else { false }) {
                     if (SubsetBool.not(SubsetChar.isAlpha(at(i + 1)))) {
@@ -472,34 +475,37 @@ let lex = (src) => {
           }
         }
       };
+      /* Each `_name` takes the first of `name'`, `name''`, ... that the module doesn't write
+         itself, so it never captures or shadows a name of the module. */
       let unprimed = (result) => {
         match(result) {
           Tokens(tokens, cs) => {
-            let renamed = (token, i) => {
+            let fromUnderscore = (token, i) => {
               match(token) {
-                WName(["`bind", only]) => { Some(only) },
-                WName([first, .._]) => { if (at(i) == '_') { Some(first) } else { None } },
-                _ => { None }
-              }
-            };
-            let names = SmlList.mapPartial(renamed)(tokens);
-            let clash = SmlList.find((token, i) => {
-              match(token) {
-                WName([first, .._]) => {
-                  if (at(i) != '_') { SmlList.exists((m) => { m == first })(names) } else { false }
-                },
+                WName(["`bind", _]) => { true },
+                WName(_) => { at(i) == '_' },
                 _ => { false }
               }
-            })(tokens);
-            match(clash) {
-              Some(WName([first, .._]), i) => {
-                LexError(
-                  "`" ++ first ++ "` is also how this module's `_` name of the same spelling translates; " ++ "rename one of them",
-                  i
-                )
-              },
-              _ => { result }
-            }
+            };
+            let written = SubsetList.concat(SmlList.map((token, i) => {
+              match(token) {
+                WName(parts) => { if (fromUnderscore(token, i)) { [] } else { parts } },
+                _ => { [] }
+              }
+            })(tokens));
+            let rec free = (name) => {
+              if (SmlList.exists((m) => { m == name })(written)) { free(name ++ "'") } else { name }
+            };
+            let rename = (token, i) => {
+              match(token) {
+                WName(["`bind", primed]) => { (WName(["`bind", free(primed)]), i) },
+                WName([first, ..rest]) => {
+                  if (at(i) == '_') { (WName([free(first), ..rest]), i) } else { (token, i) }
+                },
+                _ => { (token, i) }
+              }
+            };
+            Tokens(SmlList.map(rename)(tokens), cs)
           },
           _ => { result }
         }
