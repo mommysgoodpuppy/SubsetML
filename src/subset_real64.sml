@@ -1,4 +1,5 @@
 (* @subsetml
+from "./subset_numeric.sml" import * as SubsetNumeric;
 from "./subset_real_host.sml" import * as SubsetRealHost;
 *)
 
@@ -14,4 +15,12 @@ structure SubsetReal64 = struct
 
   (* Text as Workman shows a Real64: `1`, `0.5`, `1e+21`, `NaN`. *)
   val toString = SubsetRealHost.toString
+
+  val math : real SubsetNumeric.arithmetic = {
+    zero = 0.0, one = 1.0,
+    add = fn (a : real, b : real) => a + b,
+    mul = fn (a : real, b : real) => a * b
+  }
+  val carrier = math
+
 end

@@ -32,20 +32,20 @@ structure SubsetText = struct
   val explode = fn value => SubsetResult.andThen (toUtf8 value, SubsetUtf8.decode)
   val implode = fn scalars => SubsetResult.andThen (SubsetUtf8.encode scalars, fromUtf8)
   val str = fn scalar => implode [scalar]
-  val size = fn value => SubsetResult.map (explode value, SubsetList.length)
+  val size32 = fn value => SubsetResult.map (explode value, SubsetList.length32)
 
   (* Text indices and counts are Unicode scalars, never bytes or UTF-16 units. *)
-  val extract = fn (value, start, count) =>
+  val extract32 = fn (value, start, count) =>
     SubsetResult.andThen (SubsetResult.mapErr (explode value, UnicodeError), fn scalars =>
-      SubsetResult.andThen (SubsetResult.mapErr (SubsetList.drop (scalars, start), fn error => InvalidIndex), fn rest =>
+      SubsetResult.andThen (SubsetResult.mapErr (SubsetList.drop32 (scalars, start), fn error => InvalidIndex), fn rest =>
         let
           val selected = case count of
               SubsetOptionValue.NONE => SubsetResult.Ok rest
-            | SubsetOptionValue.SOME size =>
-                SubsetResult.mapErr (SubsetList.take (rest, size), fn error => InvalidIndex)
+            | SubsetOptionValue.SOME size32 =>
+                SubsetResult.mapErr (SubsetList.take32 (rest, size32), fn error => InvalidIndex)
         in SubsetResult.andThen (selected, fn chosen =>
           SubsetResult.mapErr (implode chosen, UnicodeError)) end))
-  val substring = fn (value, start, count) => extract (value, start, SubsetOptionValue.SOME count)
+  val substring32 = fn (value, start, count) => extract32 (value, start, SubsetOptionValue.SOME count)
 
   val map = fn (value, transform) =>
     SubsetResult.andThen (explode value, fn scalars => implode (SubsetList.map (scalars, transform)))
@@ -77,7 +77,7 @@ structure SubsetText = struct
     in SubsetResult.andThen (explode left, fn xs =>
       SubsetResult.map (explode right, fn ys => order (xs, ys))) end
 
-  (* Valid UTF-8 substring matches cannot start or end inside a scalar encoding. *)
+  (* Valid UTF-8 substring32 matches cannot start or end inside a scalar encoding. *)
   val isPrefix = fn (value, prefix) =>
     SubsetResult.andThen (toUtf8 value, fn bytes =>
       SubsetResult.map (toUtf8 prefix, fn wanted => SubsetBytes.isPrefix (bytes, wanted)))

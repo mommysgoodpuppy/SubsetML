@@ -316,7 +316,7 @@ let captureClause = (ts) => {
         if (SubsetList.exists(
           names,
           (name) => {
-            SubsetList.length(SubsetList.filter(names, (other) => { other == name })) > 1
+            SubsetList.length32(SubsetList.filter(names, (other) => { other == name })) > 1
           }
         )) { Fail("a capture is listed more than once", posOf(ts)) } else {
           bind(expect("|", rest))((_) => (rest) => { Done(void, rest) })
@@ -645,7 +645,7 @@ let parseModuleLowering = (layouts, owner, src, lexed, fieldPrefix, recordResolv
   let literalLayout = (variables, fields) => {
     let occurrences = SmlList.concat(SmlList.map((_, t) => { variablesIn(t) })(fields));
     if (SmlList.all((v) => {
-      SubsetList.length(SmlList.filter((n) => { n == v })(occurrences)) == 1
+      SubsetList.length32(SmlList.filter((n) => { n == v })(occurrences)) == 1
     })(variables)) {
       SmlList.all((_, t) => {
         if (SubsetList.isEmpty(variablesIn(t))) { true } else {

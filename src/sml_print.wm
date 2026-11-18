@@ -261,7 +261,7 @@ and exp = (e) => {
 /* Match rules one per line; `aligned` indents the first so that its pattern lines up with
    the others after their `| `. */
 and matchRules = (aligned, rules) => {
-  let count = SubsetList.length(rules);
+  let count = SubsetList.length32(rules);
   let rule = (i, (p, e)) => {
     let body = if (if (i < count - 1) { endsInMatch(e) } else { false }) { parenAt(1, expL(e)) } else { exp(e) };
     let head = cats([

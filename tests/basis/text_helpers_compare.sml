@@ -19,12 +19,12 @@ local
     andalso List.all (fn start =>
       let val suffix = (SubsetResult.Ok (String.extract (value, start, NONE))
             handle Subscript => SubsetResult.Err SubsetString.InvalidIndex)
-      in SubsetString.extract (value, start, SubsetOptionValue.NONE) = suffix
+      in SubsetString.extract32 (value, start, SubsetOptionValue.NONE) = suffix
         andalso List.all (fn count =>
           let val expected = (SubsetResult.Ok (String.substring (value, start, count))
                 handle Subscript => SubsetResult.Err SubsetString.InvalidIndex)
-          in SubsetString.substring (value, start, count) = expected
-            andalso SubsetString.extract (value, start, SubsetOptionValue.SOME count) = expected end) ranges
+          in SubsetString.substring32 (value, start, count) = expected
+            andalso SubsetString.extract32 (value, start, SubsetOptionValue.SOME count) = expected end) ranges
       end) ranges) values
   val integerInputs = ["", "-", "~", "+", "  12tail", "123", "000", "-0", "~12", "+7",
     "2147483647", "2147483648", "-2147483648", "-2147483649", "\t+123abc", "abc", "9.9"]
@@ -35,8 +35,8 @@ local
           handle Overflow => SubsetResult.Err SubsetInt32.Overflow
     in SubsetInt32.fromString text = expected end) integerInputs
   val paddingOracle = List.all (fn text => List.all (fn width =>
-    SubsetStringCvt.padLeft (text, width, #" ") = SubsetResult.Ok (StringCvt.padLeft #" " width text)
-    andalso SubsetStringCvt.padRight (text, width, #"0") = SubsetResult.Ok (StringCvt.padRight #"0" width text))
+    SubsetStringCvt.padLeft32 (text, width, #" ") = SubsetResult.Ok (StringCvt.padLeft #" " width text)
+    andalso SubsetStringCvt.padRight32 (text, width, #"0") = SubsetResult.Ok (StringCvt.padRight #"0" width text))
       [~2147483648, ~1, 0, 1, 2, 12]) values
   val visited = ref ([] : int list)
   val delimiter = fn scalar => (visited := scalar :: !visited; scalar = 47)
@@ -50,8 +50,8 @@ local
     andalso not (SubsetResult.isOk (SubsetText.isSubstring ("", value)))
     andalso not (SubsetResult.isOk (SubsetText.fields (value, delimiter)))
     andalso not (SubsetResult.isOk (SubsetText.tokens (value, delimiter)))
-    andalso not (SubsetResult.isOk (SubsetText.substring (value, 0, 0)))
-    andalso not (SubsetResult.isOk (SubsetText.extract (value, 0, SubsetOptionValue.NONE)))
+    andalso not (SubsetResult.isOk (SubsetText.substring32 (value, 0, 0)))
+    andalso not (SubsetResult.isOk (SubsetText.extract32 (value, 0, SubsetOptionValue.NONE)))
     andalso not (SubsetResult.isOk (SubsetText.map (value, fn scalar => (visited := scalar :: !visited; scalar))))
     andalso not (SubsetResult.isOk (SubsetText.translate (value, fn scalar => (visited := scalar :: !visited; ""))))) malformed
 in

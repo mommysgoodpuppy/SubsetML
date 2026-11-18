@@ -26,8 +26,8 @@ from "./sml_list.wm" import * as SmlList;
 from "./subset_list.wm" import * as SubsetList;
 from "./sml_option.wm" import * as SmlOption;
 from "./compiler_text.wm" import * as CompilerText;
-from "./subset_bytes.wm" import * as SubsetBytes;
 from "./subset_char.wm" import * as SubsetChar;
+from "./subset_bytes.wm" import * as SubsetBytes;
 from "./subset_result.wm" import * as SubsetResult;
 from "./subset_source.wm" import * as SubsetSource;
 from "./subset_bool.wm" import * as SubsetBool;
@@ -110,14 +110,15 @@ let join = (sep, ds) => {
 let group = (openD, sep, closeD, ds) => {
   let oneLine = cats([text(openD), join(sep ++ " ", ds), text(closeD)]);
   if (if (fits(oneLine)) { true } else { SmlList.null(ds) }) { oneLine } else {
-    let count = SubsetList.length(ds);
+    let count = SubsetList.length32(ds);
+    let openLine = CompilerText.stringOf(SubsetList.reverse(SubsetList.dropWhile(SubsetList.reverse(CompilerText.characters(openD)), SubsetChar.isSpace)));
     let rec items = match {
       (_, []) => { [] },
       (Var(i), [d, ..rest]) => {
         [if (i < count - 1) { cat(d, text(sep)) } else { d }, ..items(i + 1, rest)]
       }
     };
-    stack([text(openD), indent(2, stack(items(0, ds))), text(closeD)])
+    stack([text(openLine), indent(2, stack(items(0, ds))), text(closeD)])
   }
 };
 
@@ -129,7 +130,7 @@ let trim = (s) => {
 };
 
 let spaces = (n) => {
-  let SubsetResult.Ok(bytes) = SubsetList.repeat(' ', n);
+  let SubsetResult.Ok(bytes) = SubsetList.repeat32(' ', n);
   CompilerText.stringOf(bytes)
 };
 

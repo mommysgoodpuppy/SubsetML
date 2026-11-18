@@ -73,8 +73,8 @@ structure CustomBasis = struct
   val nonAscii = SubsetChar.compareAscii (#"\255", #"a") = SubsetResult.Err SubsetChar.NonAscii
   val helpersOk = SubsetBool.not false andalso not (SubsetBool.not true)
     andalso SubsetList.map ([true, false], SubsetBool.not) = [false, true]
-    andalso SubsetString.size "" = SubsetResult.Ok 0
-    andalso SubsetString.size "a\000\255" = SubsetResult.Ok 3
+    andalso SubsetString.size32 "" = SubsetResult.Ok 0
+    andalso SubsetString.size32 "a\000\255" = SubsetResult.Ok 3
     andalso SubsetString.str #"\000" = SubsetResult.Ok "\000"
     andalso SubsetString.str #"\255" = SubsetResult.Ok "\255"
     andalso SubsetList.all (SubsetChar.byteChars, fn c =>

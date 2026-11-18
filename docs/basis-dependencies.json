@@ -11,9 +11,16 @@
       "sourceDependencies": [],
       "primitives": []
     },
+    "SubsetNumeric": {
+      "source": "src/subset_numeric.sml",
+      "sourceDependencies": [],
+      "primitives": []
+    },
     "SubsetReal64": {
       "source": "src/subset_real64.sml",
-      "sourceDependencies": [],
+      "sourceDependencies": [
+        "SubsetNumeric"
+      ],
       "primitives": [
         "SubsetRealHost.rem",
         "SubsetRealHost.toString"
@@ -50,7 +57,8 @@
       "source": "src/subset_list.sml",
       "sourceDependencies": [
         "SubsetOptionValue",
-        "SubsetResult"
+        "SubsetResult",
+        "SubsetNumeric"
       ],
       "primitives": []
     },
@@ -161,7 +169,8 @@
         "SubsetString",
         "SubsetList",
         "SubsetChar",
-        "SubsetOptionValue"
+        "SubsetOptionValue",
+        "SubsetNumeric"
       ],
       "primitives": [
         "SubsetRealHost.fromInt",

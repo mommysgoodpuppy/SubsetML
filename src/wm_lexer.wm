@@ -310,7 +310,7 @@ let lex = (src) => {
         // Binding `=`, immediately followed by a bare lambda's `=>`, is legal WM.
         if (startsWith(i, "==>")) { Ok(WKey("="), i + 1) } else {
           match(SmlList.find((s, cs) => { startsWithBytes(i, cs) })(symbolBytes)) {
-            Some(s, cs) => { Ok(WKey(s), i + SubsetList.length(cs)) },
+            Some(s, cs) => { Ok(WKey(s), i + SubsetList.length32(cs)) },
             None => { Err("unexpected character", i) }
           }
         }

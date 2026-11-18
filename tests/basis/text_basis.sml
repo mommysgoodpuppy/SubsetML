@@ -122,17 +122,17 @@ structure TextBasis = struct
     andalso SubsetText.isSuffix ("", "") = SubsetResult.Ok true
     andalso SubsetText.isSubstring ("ababac", "abac") = SubsetResult.Ok true
     andalso SubsetText.isSubstring ("ababa", "abac") = SubsetResult.Ok false
-  val stringEdits = SubsetString.substring ("a\000\255b", 1, 2) = SubsetResult.Ok "\000\255"
-    andalso SubsetString.extract ("abc", 1, NONE) = SubsetResult.Ok "bc"
-    andalso SubsetString.extract ("abc", 1, SOME 1) = SubsetResult.Ok "b"
-    andalso SubsetString.extract ("abc", 3, NONE) = SubsetResult.Ok ""
-    andalso SubsetString.substring ("abc", 3, 0) = SubsetResult.Ok ""
-    andalso SubsetString.substring ("", 0, 0) = SubsetResult.Ok ""
-    andalso SubsetString.substring ("abc", ~1, 0) = SubsetResult.Err SubsetString.InvalidIndex
-    andalso SubsetString.substring ("abc", 0, ~1) = SubsetResult.Err SubsetString.InvalidIndex
-    andalso SubsetString.substring ("abc", 3, 1) = SubsetResult.Err SubsetString.InvalidIndex
-    andalso SubsetString.substring ("abc", 1, 2147483647) = SubsetResult.Err SubsetString.InvalidIndex
-    andalso SubsetString.extract ("abc", 2147483647, NONE) = SubsetResult.Err SubsetString.InvalidIndex
+  val stringEdits = SubsetString.substring32 ("a\000\255b", 1, 2) = SubsetResult.Ok "\000\255"
+    andalso SubsetString.extract32 ("abc", 1, NONE) = SubsetResult.Ok "bc"
+    andalso SubsetString.extract32 ("abc", 1, SOME 1) = SubsetResult.Ok "b"
+    andalso SubsetString.extract32 ("abc", 3, NONE) = SubsetResult.Ok ""
+    andalso SubsetString.substring32 ("abc", 3, 0) = SubsetResult.Ok ""
+    andalso SubsetString.substring32 ("", 0, 0) = SubsetResult.Ok ""
+    andalso SubsetString.substring32 ("abc", ~1, 0) = SubsetResult.Err SubsetString.InvalidIndex
+    andalso SubsetString.substring32 ("abc", 0, ~1) = SubsetResult.Err SubsetString.InvalidIndex
+    andalso SubsetString.substring32 ("abc", 3, 1) = SubsetResult.Err SubsetString.InvalidIndex
+    andalso SubsetString.substring32 ("abc", 1, 2147483647) = SubsetResult.Err SubsetString.InvalidIndex
+    andalso SubsetString.extract32 ("abc", 2147483647, NONE) = SubsetResult.Err SubsetString.InvalidIndex
     andalso SubsetString.map ("a|b", fn c => if c = #"|" then #"/" else c) = SubsetResult.Ok "a/b"
     andalso SubsetString.translate ("a|b||", fn c => if c = #"|" then "::" else "") = SubsetResult.Ok "::::::"
     andalso SubsetString.map ("", fn c => #"x") = SubsetResult.Ok ""
@@ -144,22 +144,22 @@ structure TextBasis = struct
         andalso (case SubsetText.str 129418 of
           SubsetResult.Err error => false
         | SubsetResult.Ok fox =>
-            SubsetText.substring (text, 1, 1) = SubsetResult.Ok fox
-            andalso SubsetText.extract (text, 1, SOME 1) = SubsetResult.Ok fox
+            SubsetText.substring32 (text, 1, 1) = SubsetResult.Ok fox
+            andalso SubsetText.extract32 (text, 1, SOME 1) = SubsetResult.Ok fox
             andalso SubsetText.map (text, fn scalar => if scalar = 129418 then 47 else scalar)
               = SubsetResult.map (SubsetText.str 233, fn last => "a/" ^ last)
             andalso SubsetText.translate (text, fn scalar => if scalar = 129418 then "XY" else "")
               = SubsetResult.Ok "XY")
-        andalso SubsetText.extract (text, 3, NONE) = SubsetResult.Ok ""
-        andalso SubsetText.substring (text, 3, 0) = SubsetResult.Ok ""
-        andalso SubsetText.substring (text, 0, ~1) = SubsetResult.Err SubsetText.InvalidIndex
-        andalso SubsetText.substring (text, ~1, 0) = SubsetResult.Err SubsetText.InvalidIndex
-        andalso SubsetText.substring (text, 3, 1) = SubsetResult.Err SubsetText.InvalidIndex
-        andalso SubsetText.substring (text, 1, 2147483647) = SubsetResult.Err SubsetText.InvalidIndex
-        andalso SubsetText.extract (text, 2147483647, NONE) = SubsetResult.Err SubsetText.InvalidIndex
+        andalso SubsetText.extract32 (text, 3, NONE) = SubsetResult.Ok ""
+        andalso SubsetText.substring32 (text, 3, 0) = SubsetResult.Ok ""
+        andalso SubsetText.substring32 (text, 0, ~1) = SubsetResult.Err SubsetText.InvalidIndex
+        andalso SubsetText.substring32 (text, ~1, 0) = SubsetResult.Err SubsetText.InvalidIndex
+        andalso SubsetText.substring32 (text, 3, 1) = SubsetResult.Err SubsetText.InvalidIndex
+        andalso SubsetText.substring32 (text, 1, 2147483647) = SubsetResult.Err SubsetText.InvalidIndex
+        andalso SubsetText.extract32 (text, 2147483647, NONE) = SubsetResult.Err SubsetText.InvalidIndex
         andalso fails (SubsetText.map (text, fn scalar => if scalar = 129418 then 55296 else scalar),
           SubsetUnicode.Surrogate, 1)
-  val scalarEdges = SubsetText.substring ("", 0, 0) = SubsetResult.Ok ""
+  val scalarEdges = SubsetText.substring32 ("", 0, 0) = SubsetResult.Ok ""
     andalso SubsetText.map ("", fn scalar => 55296) = SubsetResult.Ok ""
     andalso SubsetText.translate ("", fn scalar => "x") = SubsetResult.Ok ""
     andalso fails (SubsetText.str 55296, SubsetUnicode.Surrogate, 0)

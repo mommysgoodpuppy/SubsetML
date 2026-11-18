@@ -3,19 +3,19 @@ structure KernelPortable = struct
   open SubsetOptionValue
 
   val lists =
-    (case SubsetList.at (["a", "b"], 1) of SubsetResult.Ok "b" => true | other => false)
-    andalso (case SubsetList.at (["a"], 1) of SubsetResult.Err SubsetList.OutOfBounds => true | other => false)
-    andalso (case SubsetList.splitAt (["a", "b"], 2) of
+    (case SubsetList.at32 (["a", "b"], 1) of SubsetResult.Ok "b" => true | other => false)
+    andalso (case SubsetList.at32 (["a"], 1) of SubsetResult.Err SubsetList.OutOfBounds => true | other => false)
+    andalso (case SubsetList.splitAt32 (["a", "b"], 2) of
       SubsetResult.Ok pair => let val (prefix, rest) = pair in prefix = ["a", "b"] andalso rest = [] end
     | other => false)
-    andalso (case SubsetList.take (["a", "b"], 1) of SubsetResult.Ok ["a"] => true | other => false)
-    andalso (case SubsetList.drop (["a", "b"], 1) of SubsetResult.Ok ["b"] => true | other => false)
-    andalso (case SubsetList.drop (["a"], 2) of SubsetResult.Err SubsetList.OutOfBounds => true | other => false)
+    andalso (case SubsetList.take32 (["a", "b"], 1) of SubsetResult.Ok ["a"] => true | other => false)
+    andalso (case SubsetList.drop32 (["a", "b"], 1) of SubsetResult.Ok ["b"] => true | other => false)
+    andalso (case SubsetList.drop32 (["a"], 2) of SubsetResult.Err SubsetList.OutOfBounds => true | other => false)
     andalso SubsetList.all ([~1, ~2147483648], fn index =>
-      (case SubsetList.at (["a"], index) of SubsetResult.Err SubsetList.InvalidIndex => true | other => false)
-      andalso (case SubsetList.tabulate (index, fn i => "unexpected") of
+      (case SubsetList.at32 (["a"], index) of SubsetResult.Err SubsetList.InvalidIndex => true | other => false)
+      andalso (case SubsetList.tabulate32 (index, fn i => "unexpected") of
         SubsetResult.Err SubsetList.InvalidCount => true | other => false))
-  val indexed = SubsetList.tabulate (3, fn i =>
+  val indexed = SubsetList.tabulate32 (3, fn i =>
     let val text = CompilerText.natural i in print ("index " ^ text ^ "\n"); text end)
   val callbacks = case indexed of SubsetResult.Ok ["0", "1", "2"] => true | other => false
   val original = SubsetList.foldLeft (NaturalVectors.cases, IntMap.empty, fn (entry, map) =>

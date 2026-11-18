@@ -67,7 +67,7 @@ let slice = (value, start, count) => {
   stringOf(bytes)
 };
 let drop = (value, count) => {
-  let SubsetResult.Ok(bytes) = SubsetList.drop(characters(value), count);
+  let SubsetResult.Ok(bytes) = SubsetList.drop32(characters(value), count);
   stringOf(bytes)
 };
 let firstIs = (value, predicate) => {
@@ -132,8 +132,8 @@ let signedLiteral = (text, hexBounds, decimalBounds) => {
       _ => { false }
     }
   };
-  let size = SubsetList.length(normalized);
-  let limitSize = SubsetList.length(bound);
+  let size = SubsetList.length32(normalized);
+  let limitSize = SubsetList.length32(bound);
   if (size < limitSize) { true } else {
     if (size == limitSize) { within(normalized, bound) } else { false }
   }

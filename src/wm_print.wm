@@ -553,7 +553,7 @@ and arms = (rules) => {
   let arm = (p, e) => {
     cats([pat(true, false, p), text(" => "), block(blockParts(e))])
   };
-  let count = SubsetList.length(rules);
+  let count = SubsetList.length32(rules);
   let rec go = match {
     (_, []) => { [] },
     (Var(i), [r, ..rest]) => {
@@ -568,7 +568,7 @@ and arms = (rules) => {
 
 // `{ decs; e1; ...; en }`, on one line when it is a single short expression.
 and block = (ds, es) => {
-  let count = SubsetList.length(es);
+  let count = SubsetList.length32(es);
   let rec exps = match {
     (_, []) => { [] },
     (Var(i), [e, ..rest]) => {

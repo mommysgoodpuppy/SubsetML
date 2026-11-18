@@ -193,7 +193,7 @@ let withParsed = (files, f) => {
     SubsetResult.Err(error) => { (eprint(sourceErrorText(error)); []) }
   })(loaded));
   if (SmlList.null(files)) { usage() } else {
-    if (SubsetList.length(parsed) == SubsetList.length(files)) { finish(f(parsed)) } else { finish(false) }
+    if (SubsetList.length32(parsed) == SubsetList.length32(files)) { finish(f(parsed)) } else { finish(false) }
   }
 };
 

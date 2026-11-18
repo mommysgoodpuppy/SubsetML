@@ -265,7 +265,7 @@ let validate = match {
         bindings,
         match {
           Binding(source, _, _) => {
-            SubsetList.length(SubsetList.filter(
+            SubsetList.length32(SubsetList.filter(
               bindings,
               match {
                 Binding(other, _, _) => { source == other }

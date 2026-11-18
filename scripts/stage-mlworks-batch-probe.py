@@ -37,8 +37,8 @@ require "subset_result";
 require "subset_list";
 structure BatchProbe = struct
   fun run () =
-    if SubsetList.length [true, false, true] = 3 andalso
-      (case SubsetList.at (["a", "b"], 1) of SubsetResult.Ok "b" => true | _ => false)
+    if SubsetList.length32 [true, false, true] = 3 andalso
+      (case SubsetList.at32 (["a", "b"], 1) of SubsetResult.Ok "b" => true | _ => false)
     then print "SUBSETML_BATCH_OBJECT_OK\\n"
     else raise Fail "batch object assertion"
 end

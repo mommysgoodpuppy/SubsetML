@@ -83,8 +83,8 @@ structure SubsetWonSyntax = struct
       val (hi, lo) = split (code, 0)
     in
       native [
-        SubsetResult.getOr (SubsetList.at (hexDigits, hi), #"0"),
-        SubsetResult.getOr (SubsetList.at (hexDigits, lo), #"0")
+        SubsetResult.getOr (SubsetList.at32 (hexDigits, hi), #"0"),
+        SubsetResult.getOr (SubsetList.at32 (hexDigits, lo), #"0")
       ]
     end
 

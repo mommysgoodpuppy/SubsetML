@@ -189,9 +189,9 @@ let rec elabTy = (env, tyvar, pos, t, st) => {
       match(Env.tycon(env, id)) {
         None => { Err("unbound type constructor " ++ longName(id), pos) },
         Some(TyStr(arity, body, _)) => {
-          if (arity != SubsetList.length(args)) {
+          if (arity != SubsetList.length32(args)) {
             Err(
-              "type constructor " ++ longName(id) ++ " takes " ++ CompilerText.natural(arity) ++ " argument(s), given " ++ CompilerText.natural(SubsetList.length(args)),
+              "type constructor " ++ longName(id) ++ " takes " ++ CompilerText.natural(arity) ++ " argument(s), given " ++ CompilerText.natural(SubsetList.length32(args)),
               pos
             )
           } else {
@@ -750,7 +750,7 @@ let rec exp = (ctx, e, st) => {
           let State(_, _, _, rs, sites) = st;
           let labels = SmlList.map((l, _) => { l })(fields);
           let same = (declared) => {
-            if (SubsetList.length(declared) == SubsetList.length(labels)) {
+            if (SubsetList.length32(declared) == SubsetList.length32(labels)) {
               SmlList.all((l) => { SmlList.exists((m) => { m == l })(declared) })(labels)
             } else { false }
           };
@@ -1028,7 +1028,7 @@ and localLeak = (private, visible, priorState, st) => {
   let Env(_, hiddenTypes, _) = private;
   let Env(_, visibleTypes, visibleValues) = visible;
   let sameLabels = (a, b) => {
-    if (SubsetList.length(a) == SubsetList.length(b)) {
+    if (SubsetList.length32(a) == SubsetList.length32(b)) {
       SmlList.all((l) => { SmlList.exists((m) => { m == l })(b) })(a)
     } else { false }
   };
@@ -1179,7 +1179,7 @@ and valDec = ((env, level, scoped), pos, tyvars, plain, recs, st) => {
 and closeValBindings = (level, explicit, pos, results, st) => {
   let names = concatMap((vars, _) => { SmlList.map((x, _) => { x })(vars) }, results);
   match(SmlList.find((x) => {
-    SubsetList.length(SmlList.filter((y) => { y == x })(names)) > 1
+    SubsetList.length32(SmlList.filter((y) => { y == x })(names)) > 1
   })(names), SmlList.find((x) => { member(x, unbindable) })(names)) {
     (Some(x), _) => { Err("`" ++ x ++ "` is bound twice in this declaration", pos) },
     (_, Some(x)) => { Err("`" ++ x ++ "` cannot be rebound", pos) },
@@ -1276,7 +1276,7 @@ and settleSelections = (level, st) => {
                 Free(_, l) => { l > level },
                 Bound(_) => { false }
               }) {
-                SubsetList.length(SmlList.filter((labels, _, _) => { SmlList.exists((m) => { m == lab })(labels) })(rs)) == 1
+                SubsetList.length32(SmlList.filter((labels, _, _) => { SmlList.exists((m) => { m == lab })(labels) })(rs)) == 1
               } else { false }
             },
             _ => { false }
@@ -1496,7 +1496,7 @@ and rigidNames = (t) => {
 and typeDec = ((env, _, _), pos, binds, st) => {
   let names = SmlList.map((_, name, _) => { name })(binds);
   let dup = SmlList.find((n) => {
-    SubsetList.length(SmlList.filter((m) => { m == n })(names)) > 1
+    SubsetList.length32(SmlList.filter((m) => { m == n })(names)) > 1
   })(names);
   match(dup) {
     Some(n) => { Err("type " ++ n ++ " is bound twice", pos) },
@@ -1506,11 +1506,11 @@ and typeDec = ((env, _, _), pos, binds, st) => {
           bind(paramScope(pos, params, st))((tyvar) => (st) => {
             bind(elabTy(env, tyvar, pos, t, st))((body) => (st) => {
               bind(match(t) {
-                TyRecord(_) => { recordDeclared(pos, SubsetList.length(params), body, st) },
+                TyRecord(_) => { recordDeclared(pos, SubsetList.length32(params), body, st) },
                 _ => { Ok(void, st) }
               })((_) => (st) => {
                 Ok(
-                  SubsetList.append(acc, [(name, TyStr(SubsetList.length(params), body, []))]),
+                  SubsetList.append(acc, [(name, TyStr(SubsetList.length32(params), body, []))]),
                   st
                 )
               })
@@ -1528,7 +1528,7 @@ and typeDec = ((env, _, _), pos, binds, st) => {
 // Maps a declaration's type parameters to TGen.
 and paramScope = (pos, params, st) => {
   match(SmlList.find((v) => {
-    SubsetList.length(SmlList.filter((w) => { w == v })(params)) > 1
+    SubsetList.length32(SmlList.filter((w) => { w == v })(params)) > 1
   })(params)) {
     Some(v) => { Err("type parameter " ++ v ++ " appears twice", pos) },
     None => {
@@ -1564,16 +1564,18 @@ and datatypeDec = ((env, _, _), pos, binds, st) => {
   let names = SmlList.map((_, name, _) => { name })(binds);
   let cons = concatMap((_, _, cs) => { SmlList.map((_, c, _) => { c })(cs) }, binds);
   let dupIn = (xs) => {
-    SmlList.find((n) => { SubsetList.length(SmlList.filter((m) => { m == n })(xs)) > 1 })(xs)
+    SmlList.find((n) => {
+      SubsetList.length32(SmlList.filter((m) => { m == n })(xs)) > 1
+    })(xs)
   };
   // Fresh type names, first assuming every one admits equality.
   let (stamps, st1) = SmlList.foldl((_, (acc, st)) => {
     let (s, st') = freshStamp(st);
     (SubsetList.append(acc, [s]), st')
   })([], st)(binds);
-  let nameFor = (eqs, (params, name, _), s) => { (s, name, SubsetList.length(params), memberInt(s, eqs)) };
+  let nameFor = (eqs, (params, name, _), s) => { (s, name, SubsetList.length32(params), memberInt(s, eqs)) };
   let tyFor = (tn) => {
-    let SubsetResult.Ok(args) = SubsetList.tabulate(arityOf(tn), TGen);
+    let SubsetResult.Ok(args) = SubsetList.tabulate32(arityOf(tn), TGen);
     TCon(tn, args)
   };
   // The constructors' argument types, with the group's names given the equality flags.
@@ -1630,7 +1632,7 @@ and datatypeDec = ((env, _, _), pos, binds, st) => {
           }
         })(group)
       })(eqs);
-      if (SubsetList.length(eqs') == SubsetList.length(eqs)) { Ok(group, st) } else { fixpoint(eqs', st) }
+      if (SubsetList.length32(eqs') == SubsetList.length32(eqs)) { Ok(group, st) } else { fixpoint(eqs', st) }
     })
   };
   match(dupIn(names), dupIn(cons), SmlList.find((c) => { if (member(c, unbindable)) { true } else { c == "it" } })(cons)) {
@@ -1642,7 +1644,7 @@ and datatypeDec = ((env, _, _), pos, binds, st) => {
         let conEntries = concatMap(
           (tn, cs) => {
             SmlList.map((c, arg) => {
-              let SubsetResult.Ok(kinds) = SubsetList.tabulate(arityOf(tn), (_) => { KPlain });
+              let SubsetResult.Ok(kinds) = SubsetList.tabulate32(arityOf(tn), (_) => { KPlain });
               match(arg) {
                 None => { (c, ((kinds, tyFor(tn)), SCon)) },
                 Some(t) => { (c, ((kinds, TArrow(t, tyFor(tn))), SCon)) }

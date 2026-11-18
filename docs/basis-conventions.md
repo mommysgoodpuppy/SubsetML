@@ -89,6 +89,14 @@ Other naming rules:
 - When an operation validates its input, validation finishes before the first callback runs.
   A failed validation runs no callbacks.
 
+For collection traversals whose callbacks must return a carrier value, use a `With` variant:
+`operationWith (data, domain, ..., callback)`. Callbacks receive plain values; the operation
+sequences them through the supplied carrier and returns one carried result. Preserve the pure
+operation's callback argument order, traversal direction and decisive-answer behavior. Errors
+remain in the carrier; callers unify different error types explicitly with `mapErr`. Lifting
+an outer input with `via` does not lift the callbacks inside an ordinary traversal. Pure
+operations with no callback, such as list concatenation, can be mapped over the outer carrier.
+
 ## 6. Failure
 
 Exceptions are not available, so every partial SML operation becomes total:
@@ -126,8 +134,11 @@ Exceptions are not available, so every partial SML operation becomes total:
 
 ## 8. Numbers
 
-- Counts, sizes, indices, offsets and character codes are `int` (signed 32-bit, see
-  [integers.md](integers.md)). Never `real`.
+- Shared collection count/index operations carry a `32` suffix and use `int` (signed 32-bit,
+  see [integers.md](integers.md)). WM std extensions supply unsuffixed Int64 defaults through
+  arithmetic-parameterized traversal cores, without changing the shared subset. Fixed-format
+  offsets and character/scalar codes retain their explicit int contract. Never use `real`
+  for a count or index.
 - Indices are zero-based. A position equal to the length is valid for splitting, slicing and
   taking (an empty remainder), and out of bounds for element access.
 - A negative count or index is `InvalidIndex` or `InvalidCount`, checked before any work or

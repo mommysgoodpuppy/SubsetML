@@ -154,7 +154,7 @@ structure SubsetWon = struct
               let
                 val path = indexStep (#path node, position)
               in
-                case SubsetList.at (items, position) of
+                case SubsetList.at32 (items, position) of
                     SubsetResult.Ok item => SubsetResult.Ok (SubsetWonValue.makeNode (path, item))
                   | SubsetResult.Err _ => SubsetResult.Err (SubsetWonValue.Missing (pathText path))
               end

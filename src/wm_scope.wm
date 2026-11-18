@@ -309,7 +309,7 @@ let recordResolver = (owner, imports, defaultTypes, defaultNamespaces, lexed) =>
           put(WmParse.decapitalize(name), None, records),
           namespaces,
           stack,
-          Some(SubsetList.length(stack)),
+          Some(SubsetList.length32(stack)),
           found
         )
       },
@@ -318,7 +318,7 @@ let recordResolver = (owner, imports, defaultTypes, defaultNamespaces, lexed) =>
           rest,
           match(typeGroup) {
             Some(depth) => {
-              if (depth == SubsetList.length(stack)) { put(WmParse.decapitalize(name), None, records) } else { records }
+              if (depth == SubsetList.length32(stack)) { put(WmParse.decapitalize(name), None, records) } else { records }
             },
             None => { records }
           },

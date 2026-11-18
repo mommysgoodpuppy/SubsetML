@@ -16,7 +16,7 @@ structure WonProbe = struct
         ("allBytes", SubsetWonValue.Blob SubsetChar.byteChars),
         (
           "asciiText",
-          SubsetWonValue.Text (SubsetResult.getOr (SubsetList.take (SubsetChar.byteChars, 128), []))
+          SubsetWonValue.Text (SubsetResult.getOr (SubsetList.take32 (SubsetChar.byteChars, 128), []))
         ),
         ("precise", SubsetWonValue.Number "-0.12345678901234567890123456789e400"),
         ("payload", SubsetWonValue.Blob [#"\^@", #"\255", #"\128", #"\"", #"\\", #"\n"]),
@@ -106,11 +106,11 @@ structure WonProbe = struct
         ),
         is (SubsetWon.optional wrong, SubsetResult.Err "items: expected record"),
         is (
-          SubsetResult.map (SubsetWon.items items, fn xs => (SubsetList.length xs = 2)),
+          SubsetResult.map (SubsetWon.items items, fn xs => (SubsetList.length32 xs = 2)),
           SubsetResult.Ok true
         ),
         is (
-          SubsetResult.map (SubsetWon.entries doc, fn xs => (SubsetList.length xs = 4)),
+          SubsetResult.map (SubsetWon.entries doc, fn xs => (SubsetList.length32 xs = 4)),
           SubsetResult.Ok true
         ),
         is (SubsetWon.number (SubsetWon.root SubsetWonValue.Null), SubsetResult.Err "document: expected number"),

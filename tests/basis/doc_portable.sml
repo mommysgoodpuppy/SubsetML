@@ -28,13 +28,13 @@ structure DocPortable = struct
       = [[], [#"a"], [], [#"b"], []]
     andalso SubsetBytes.trim ([#" ", #"a", #" ", #"b", #"\t"], SubsetChar.isSpace)
       = [#"a", #" ", #"b"]
-  val counts = SubsetList.repeat (#"x", ~0) = SubsetResult.Ok []
-    andalso SubsetList.repeat (#"x", 3) = SubsetResult.Ok [#"x", #"x", #"x"]
-    andalso (case SubsetList.repeat (#"x", 128) of
-      SubsetResult.Ok bytes => (SubsetList.length bytes = 128) andalso SubsetList.all (bytes, fn c => c = #"x")
+  val counts = SubsetList.repeat32 (#"x", ~0) = SubsetResult.Ok []
+    andalso SubsetList.repeat32 (#"x", 3) = SubsetResult.Ok [#"x", #"x", #"x"]
+    andalso (case SubsetList.repeat32 (#"x", 128) of
+      SubsetResult.Ok bytes => (SubsetList.length32 bytes = 128) andalso SubsetList.all (bytes, fn c => c = #"x")
     | SubsetResult.Err error => false)
     andalso SubsetList.all ([~1, ~2147483648],
-      fn count => SubsetList.repeat (#"x", count) = SubsetResult.Err SubsetList.InvalidCount)
+      fn count => SubsetList.repeat32 (#"x", count) = SubsetResult.Err SubsetList.InvalidCount)
     andalso SubsetList.dropWhile (["x", "stop", "late"], fn text =>
       if text = "x" then true else (if text = "stop" then false else (print "BAD\n"; true))) = ["stop", "late"]
   val _ = if layout andalso positions andalso comments andalso fields andalso counts

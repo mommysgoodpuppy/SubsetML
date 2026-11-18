@@ -146,7 +146,7 @@ let libraryImport = (specifier) => {
       };
       match(stripPrefix(cs, chars(jsHostImportPrefix))) {
         Some(host) => {
-          Some(.{ 
+          Some(.{
             path = jsHostModulePath(text(host)),
             description = "host module js.host(" ++ quoted(text(host)) ++ ")"
            })
@@ -375,6 +375,8 @@ let primitiveTypeNames = [
 /* Unqualified library values in every module. Portable operations belong to the SubsetML
    Basis; std contributes only its extra facilities. */
 let pervasives = SubsetList.concat([
+  namesOf("std/list.wm", ["length"]),
+  namesOf("subml-basis/subset_list.wm", ["length32"]),
   namesOf(
     "subml-basis/subset_list.wm",
     [
@@ -385,7 +387,6 @@ let pervasives = SubsetList.concat([
       "foldRight",
       "head",
       "tail",
-      "length",
       "isEmpty",
       "reverse",
       "concat"
@@ -400,7 +401,8 @@ let pervasives = SubsetList.concat([
     renamed("subml-basis/subset_string.wm", "explode", "fromNative"),
     renamed("subml-basis/subset_string.wm", "implode", "toNative")
   ],
-  namesOf("subml-basis/subset_string.wm", ["size", "str"]),
+  namesOf("std/string.wm", ["size"]),
+  namesOf("subml-basis/subset_string.wm", ["size32", "str"]),
   namesOf("std/general.wm", ["before", "ignore", "o"]),
   namesOf("std/real64.wm", ["ceil", "floor", "round", "trunc"]),
   [renamed("std/vector.wm", "vector", "fromList")],

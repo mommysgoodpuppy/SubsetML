@@ -448,7 +448,7 @@ let generalize = (st, level, rigid, t) => {
       Bound(_) => { KPlain }
     }
   })(vars);
-  let count = SubsetList.length(vars);
+  let count = SubsetList.length32(vars);
   // The position of x in a list, by the given equality.
   let indexIn = (same, x, xs) => {
     let rec go = match {

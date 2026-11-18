@@ -139,14 +139,14 @@ let tupleComponents = (fields) => {
       if (l == tupleLabel(digits)) { check(nextTupleLabel(digits), rest) } else { false }
     }
   };
-  if (if (SubsetList.length(fields) >= 2) { check(['1'], fields) } else { false }) { Some(SmlList.map((_, t) => { t })(fields)) } else { None }
+  if (if (SubsetList.length32(fields) >= 2) { check(['1'], fields) } else { false }) { Some(SmlList.map((_, t) => { t })(fields)) } else { None }
 };
 
 // Replaces TGen i by the i-th argument.
 let rec substGen = (args, t) => {
   match(t) {
     TGen(i) => {
-      let SubsetResult.Ok(t) = SubsetList.at(args, i);
+      let SubsetResult.Ok(t) = SubsetList.at32(args, i);
       t
     },
     TCon(n, ts) => { TCon(n, SmlList.map((a) => { substGen(args, a) })(ts)) },

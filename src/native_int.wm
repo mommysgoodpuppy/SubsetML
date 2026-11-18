@@ -179,7 +179,7 @@ let project = (files) => {
   };
   let names = SmlList.map((path, _, _, _) => { basename(path) })(files);
   let duplicate = SmlList.find((name) => {
-    SubsetList.length(SmlList.filter((other) => { name == other })(names)) > 1
+    SubsetList.length32(SmlList.filter((other) => { name == other })(names)) > 1
   })(names);
   match(duplicate) {
     Some(name) => { Unify.Err("duplicate native output filename: " ++ name, 0) },

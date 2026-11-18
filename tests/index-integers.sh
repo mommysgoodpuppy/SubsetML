@@ -8,9 +8,9 @@ from pathlib import Path
 import random, sys
 root = Path(sys.argv[1])
 checks = ['''fun check true = () | check false = raise Fail "integer Basis assertion"
-val _ = check (SubsetList.length [true, false] = 2)
-val _ = check (case SubsetList.at ([true], ~1) of SubsetResult.Err SubsetList.InvalidIndex => true | _ => false)
-val _ = check (case SubsetList.tabulate (~1, fn i => i) of SubsetResult.Err SubsetList.InvalidCount => true | _ => false)
+val _ = check (SubsetList.length32 [true, false] = 2)
+val _ = check (case SubsetList.at32 ([true], ~1) of SubsetResult.Err SubsetList.InvalidIndex => true | _ => false)
+val _ = check (case SubsetList.tabulate32 (~1, fn i => i) of SubsetResult.Err SubsetList.InvalidCount => true | _ => false)
 val _ = check (case SubsetNatural.divide (1, 0) of SubsetResult.Err SubsetNatural.InvalidDivisor => true | _ => false)
 val _ = check (case SubsetSource.fromNative "abc" of SubsetResult.Ok source =>
   (case SubsetSource.slice (source, 1, 2147483647) of SubsetResult.Err SubsetBytes.InvalidIndex => true | _ => false) | _ => false)

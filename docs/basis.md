@@ -227,23 +227,24 @@ translation to Workman.
 | `filter (xs, predicate)`, `partition (xs, predicate)` | Preserve order within retained/rejected lists; predicates run left to right. |
 | `find (xs, predicate)`, `exists (xs, predicate)`, `all (xs, predicate)` | Stop at the first decisive predicate result. Empty find is NONE, exists is false, all is true. |
 | `dropWhile (xs, predicate)` | Drop a prefix; invoke the predicate left to right, stopping at the first false result. |
-| `repeat (value, count)` | Ok list of count copies, or Err InvalidCount. |
-| `splitAt (xs, index)` | Ok (prefix, suffix), with exactly index elements in prefix. |
-| `at (xs, index)` | Ok element at the zero-based index. |
-| `take (xs, count)`, `drop (xs, count)` | Ok prefix or suffix; never silently truncate. |
-| `tabulate (count, f)` | Ok generated list; invoke f at integer indices 0 through count−1, left to right. |
+| `repeat32 (value, count)` | Ok list of count copies, or Err InvalidCount. |
+| `splitAt32 (xs, index)` | Ok (prefix, suffix), with exactly index elements in prefix. |
+| `at32 (xs, index)` | Ok element at the zero-based index. |
+| `take32 (xs, count)`, `drop32 (xs, count)` | Ok prefix or suffix; never silently truncate. |
+| `unfold (initial, step)` | Generate from arbitrary state; `step state` returns `SOME (value, nextState)` or `NONE` to finish. |
+| `tabulate32 (count, f)` | Ok generated list; invoke f at integer indices 0 through count−1, left to right. |
 | `head xs`, `tail xs`, `last xs` | Return Ok on a nonempty list; Err EmptyList on an empty list. |
 | `traverse (xs, f)` | Invoke a Result-producing f left to right; stop at its first Err, preserving that error. Successful output order matches the input. |
 
 These operations are in `SubsetList`. Its error type is `datatype error = EmptyList | InvalidCount | InvalidIndex | OutOfBounds`.
-`repeat` and `tabulate` accept nonnegative signed 32-bit integer counts.
+`repeat32` and `tabulate32` accept nonnegative signed 32-bit integer counts.
 Negative counts return InvalidCount before allocation or callbacks. Fractional
 and non-finite arguments are type errors. Allocation exhaustion and arithmetic
 overflow remain runtime failures, not InvalidCount.
-Invalid indices/counts for `splitAt`, `at`, `take`, and `drop` return `InvalidIndex`;
+Invalid indices/counts for `splitAt32`, `at32`, `take32`, and `drop32` return `InvalidIndex`;
 valid integral positions beyond the list return `OutOfBounds`. Splitting/taking/dropping
 at the list's length succeeds; accessing an element there returns `OutOfBounds`.
-`tabulate` validates its count before invoking any callback. These operations are source-only.
+`tabulate32` validates its count before invoking any callback. These operations are source-only.
 
 An unsuccessful traverse returns no partial output list. Callback effects already performed
 remain; the library does not roll them back or catch exceptions from callbacks.
@@ -443,7 +444,7 @@ strings, like `^`, and do not inspect or validate foreign text. They need no add
 Allocation exhaustion remains a
 runtime failure; these Results describe invalid data, not available memory.
 
-`SubsetString.size value` validates the complete byte string through `fromNative`, then
+`SubsetString.size32 value` validates the complete byte string through `fromNative`, then
 returns its `int` byte count in `Ok`; a non-byte native element returns `NonByte offset`.
 It takes linear time. `SubsetString.str c` delegates to `toNative [c]`, preserving NUL
 and all high bytes and rejecting a foreign non-byte character with `NonByte 0`.
@@ -463,7 +464,7 @@ substring search uses a simple scan, worst-case O(value bytes * pattern bytes).
 `SubsetBytes.isPrefix/isSuffix/isSubstring` supply the underlying sequence
 operations and, like `fields` and `trim`, expect already validated byte input.
 
-`SubsetString.extract (value, start, count)` and `substring (value, start, count)`
+`SubsetString.extract32 (value, start, count)` and `substring (value, start, count)`
 follow SML `STRING` range rules with byte indices and `int` counts. `extract` takes
 `SubsetOptionValue.NONE` for the suffix, or `SOME count` for a bounded substring.
 A zero-length range at EOF succeeds. Negative or out-of-bounds indices/counts
@@ -621,7 +622,7 @@ Unicode scalar `int` lists; `str scalar` is the singleton form of `implode`.
 They use the strict codecs and return `SubsetUnicode.error` Results. No
 normalization or grapheme segmentation is performed.
 
-`SubsetText.extract (value, start, count)` and `substring (value, start, count)`
+`SubsetText.extract32 (value, start, count)` and `substring (value, start, count)`
 follow the byte-string APIs' range rules but count **Unicode scalars**, not UTF-8
 bytes, UTF-16 units or graphemes. They validate the entire input before checking
 bounds and use `slice_error = InvalidIndex | UnicodeError of SubsetUnicode.error`.
@@ -662,13 +663,22 @@ uses no SML Basis scanner or host number parser.
 
 `SubsetInt32` also carries the operations Workman's `Int32` namespace has always had, so
 Workman and SML share one definition of each: `minimum` and `maximum`; `checkedAdd`,
-`checkedSub` and `checkedMul (a, b)`, which return `NONE` where the operator would overflow;
-`toReal64 value`, which is exact; and `fromReal64 value`, `SOME` the int an integral real in
-range is and `NONE` for fractions, NaN, infinities and reals out of range. The conversions use
+`checkedSub` and `checkedMul (a, b)`, which return `Err Overflow` where the operator would overflow;
+`toReal64 value`, which is exact; and `fromReal64 value`, which returns `Ok` for integral reals
+in range, `Err InvalidInteger` for fractions, NaN and infinities, and `Err Overflow` for
+out-of-range integers. The conversions use
 the real host's `fromInt` and `toInt` (docs/runtime-dependencies.md).
 
-`SubsetStringCvt.padLeft/padRight (value, width, c)` implement the `STRING_CVT`
-padding counterparts with byte widths and byte characters. `padTextLeft/padTextRight
+`SubsetInt32.range (first, last)` builds an inclusive ascending list of integer values;
+reversed bounds produce `[]`. It uses `SubsetList.unfold`, independently of collection counts
+and indices. `foldRange (first, last, initial, f)` visits the same values in ascending order,
+calling `f (value, accumulator)` without constructing a list. Reversed bounds return `initial`
+without calling `f`. Both stop before incrementing the final value, so the maximum integer
+is a valid endpoint. They require no new host operations.
+
+
+`SubsetStringCvt.padLeft32/padRight32 (value, width, c)` implement the `STRING_CVT`
+padding counterparts with byte widths and byte characters. `padTextLeft32/padTextRight32
 (value, width, scalar)` provide Unicode host-text variants counting scalars.
 Input and padding characters are validated even if no padding is needed. If
 width is at most the input length, including negative widths, return the input;
@@ -686,7 +696,7 @@ inference. This explicitly lexical profile returns `SubsetUnicode.error` on
 malformed host text. An application can layer its own empty-parent policy over
 that result, as pakman does for compatibility.
 
-`SubsetText.size` counts scalars. `trim (value, predicate)` removes the maximal
+`SubsetText.size32` counts scalars. `trim (value, predicate)` removes the maximal
 prefix and suffix whose scalars satisfy the predicate; interior characters are
 preserved. Boundary predicates may be evaluated twice when prefix and suffix
 meet. `compare (left, right)` validates both operands and returns `SubsetOrder` in
@@ -947,3 +957,36 @@ negation use shared source functions, and the native compiler build no longer
 loads the legacy `lib/num.sml` adapter. `check` retains its separate SML-compatible
 library environment for external fixtures; that environment is not used for
 compiler source self-checking.
+
+
+## Collection widths in Workman
+
+The shared collection count/index entry points use explicit `32` names (`length32`,
+`tabulate32`, `splitAt32`, `size32`, `substring32`, and the other count/index variants).
+`SubsetList.lengthWith`, `repeatWith`, `splitAtWith`, and `tabulateWith` receive progression
+functions instead of choosing a numeric representation. WM std extensions supply unsuffixed
+Int64 list, string, text, and padding operations using these cores. Shared SML compiler code
+uses the 32-bit names explicitly. No new host primitive or Int64 requirement is introduced
+to the shared subset. Native Int64 runtime support remains separate work.
+
+## Arithmetic dictionaries and numeric folds
+
+`SubsetNumeric.arithmetic` is a portable record type with `zero`, `one`, `add`, and `mul` fields,
+all sharing the selected element type. `SubsetInt32.math` and `.carrier` name its Int32 instance;
+`SubsetReal64` supplies the real instance. WM numeric extensions supply the other sized instances.
+
+`SubsetList.sumWith (items, math)` folds left using `#zero math` and `#add math (total, item)`;
+`productWith` uses `#one math` and `#mul math`. They preserve supplied overflow, wrapping and
+rounding behavior, and return the identity for an empty input. These are ordinary functions over
+ordinary records. Different SML structures can define differently typed values named `carrier`;
+a single such value cannot change its record shape by expected type. No host operation is added.
+
+## Carrier iteration
+
+`SubsetMonad.step` is `Continue state | Stop output`. `SubsetResult.loop (initial, advance)`
+invokes a Result-returning advance function, directly tail-recursing on successful Continue,
+returning the output on Stop, and preserving Err without another advance. The Result carrier
+exports loop as an independently instantiated field. `SubsetMonad.loop` delegates to
+that field; no host primitive or higher-rank record field is introduced. WM Task supplies its
+own loop through its asynchronous sequencing boundary. WM std deferred list generators capture
+the carrier at construction and use this operation to consume only the required input prefix.

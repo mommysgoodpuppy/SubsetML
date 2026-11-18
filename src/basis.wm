@@ -40,7 +40,7 @@ export from "./env.wm" import *;
 // Types
 
 let arguments = (tn) => {
-  let SubsetResult.Ok(args) = SubsetList.tabulate(arityOf(tn), TGen);
+  let SubsetResult.Ok(args) = SubsetList.tabulate32(arityOf(tn), TGen);
   args
 };
 let tyStr = (tn) => { TyStr(arityOf(tn), TCon(tn, arguments(tn)), []) };
